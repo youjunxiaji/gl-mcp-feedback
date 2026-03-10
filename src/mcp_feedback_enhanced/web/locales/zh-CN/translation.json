@@ -1,0 +1,566 @@
+{
+    "app": {
+        "title": "MCP 交互反馈系统",
+        "subtitle": "AI 助手交互反馈平台",
+        "projectDirectory": "项目目录",
+        "clickToCopyPath": "点击复制完整路径",
+        "clickToCopySessionId": "点击复制完整会话ID",
+        "pathCopied": "项目路径已复制到剪贴板",
+        "pathCopyFailed": "复制路径失败",
+        "sessionIdCopied": "会话ID已复制到剪贴板",
+        "sessionIdCopyFailed": "复制会话ID失败",
+        "updateFailed": "更新内容失败，请手动刷新页面以查看新的 AI 工作摘要"
+    },
+    "tabs": {
+        "summary": "📋 AI 总结",
+        "sessions": "📋 会话管理",
+        "settings": "⚙️ 设置",
+        "combined": "📝 工作区",
+        "about": "ℹ️ 关于"
+    },
+    "feedback": {
+        "title": "💬 提供反馈",
+        "description": "请提供您对 AI 工作成果的反馈意见。您可以输入文字反馈并上传相关图片。",
+        "textLabel": "文字反馈",
+        "placeholder": "请在这里输入您的反馈...",
+        "detailedPlaceholder": "请在这里输入您的反馈...\n\n💡 小提示：\n• 按 Ctrl+Enter/Cmd+Enter (支持数字键盘) 可快速提交\n• 按 Ctrl+I/Cmd+I 可聚焦输入框\n• 按 Ctrl+V/Cmd+V 可直接粘贴剪贴板图片",
+        "imageLabel": "图片附件（可选）",
+        "imageUploadText": "📎 点击选择图片或拖放图片到此处\n支持 PNG、JPG、JPEG、GIF、BMP、WebP 等格式",
+        "submit": "✅ 提交反馈",
+        "uploading": "上传中...",
+        "dragdrop": "拖放图片到这里或点击上传",
+        "selectfiles": "选择文件",
+        "processing": "处理中...",
+        "success": "反馈已成功提交！",
+        "error": "提交反馈时发生错误",
+        "shortcuts": {
+            "submit": "Ctrl+Enter 提交 (Mac 用 Cmd+Enter，支持数字键盘)",
+            "clear": "Ctrl+Delete 清除 (Mac 用 Cmd+Delete)",
+            "paste": "Ctrl+V 粘贴图片 (Mac 用 Cmd+V)"
+        },
+        "submitSuccess": "反馈提交成功！",
+        "submittedWaiting": "已送出反馈，等待下次 MCP 调用...",
+        "waitingForUser": "等待用户反馈...",
+        "alreadySubmitted": "反馈已提交，请等待下次 MCP 调用",
+        "processingFeedback": "正在处理中，请稍候",
+        "connectingMessage": "WebSocket 连接中，反馈将在连接就绪后自动提交...",
+        "invalidState": "当前状态不允许提交",
+        "sendFailed": "发送失败，请重试",
+        "noContent": "没有可复制的内容",
+        "copySuccess": "内容已复制到剪贴板",
+        "copyFailed": "复制失败",
+        "provideTextOrImage": "请提供反馈文字或上传图片"
+    },
+    "summary": {
+        "title": "📋 AI 工作摘要",
+        "description": "以下是 AI 助手完成的工作摘要，请仔细查看并提供您的反馈意见。",
+        "placeholder": "AI 工作摘要将在这里显示...",
+        "empty": "目前没有摘要内容",
+        "lastupdate": "最后更新",
+        "refresh": "刷新"
+    },
+    "combined": {
+        "summaryTitle": "📋 AI 工作摘要",
+        "feedbackTitle": "💬 提供反馈"
+    },
+    "settingsUI": {
+        "title": "⚙️ 设定",
+        "language": "🌍 语言",
+        "currentLanguage": "当前语言",
+        "languageDesc": "选择界面显示语言",
+        "interface": "🎨 界面设定",
+        "layoutMode": "界面布局模式",
+        "layoutModeDesc": "选择 AI 摘要和反馈输入的显示方式",
+        "combinedVertical": "垂直布局",
+        "combinedVerticalDesc": "AI 摘要在上，反馈输入在下，适合标准屏幕使用",
+        "combinedHorizontal": "水平布局",
+        "combinedHorizontalDesc": "AI 摘要在左，反馈输入在右，适合宽屏幕使用",
+        "autoClose": "自动关闭页面",
+        "autoCloseDesc": "提交回馈后自动关闭页面",
+        "theme": "主题",
+        "notifications": "通知",
+        "advanced": "🔧 进阶设定",
+        "save": "储存设定",
+        "reset": "重置设定",
+        "resetDesc": "清除所有已保存的设定，恢复到预设状态",
+        "resetConfirm": "确定要重置所有设定吗？这将清除所有已保存的偏好设定。",
+        "resetSuccess": "设定已重置为预设值",
+        "resetError": "重置设定时发生错误",
+        "timeout": "连线逾时 (秒)",
+        "autorefresh": "自动重新整理",
+        "debug": "除错模式",
+        "autoCommitNoPrompt": "请先选择一个提示词作为自动提交内容",
+        "sessionTimeoutTitle": "⏱️ 会话超时设置",
+        "sessionTimeoutEnable": "启用会话超时",
+        "sessionTimeoutEnableDesc": "启用后，会话将在指定时间后自动关闭",
+        "sessionTimeoutDuration": "超时时间（秒）",
+        "sessionTimeoutDurationDesc": "设置会话超时时间，范围：300-86400 秒（5分钟-24小时）",
+        "sessionTimeoutSeconds": "秒"
+    },
+    "languages": {
+        "zh-TW": "繁體中文",
+        "zh-CN": "简体中文",
+        "en": "English"
+    },
+    "themes": {
+        "dark": "深色",
+        "light": "浅色",
+        "auto": "自动"
+    },
+    "timeUnits": {
+        "seconds": "秒",
+        "minutes": "分钟",
+        "hours": "小时",
+        "days": "天",
+        "ago": "前",
+        "justNow": "刚刚",
+        "about": "约"
+    },
+    "status": {
+        "connected": "已连接",
+        "connecting": "连接中...",
+        "disconnected": "已断开连接",
+        "reconnecting": "重新连接中...",
+        "error": "连接错误",
+        "waiting": {
+            "title": "等待反馈",
+            "message": "请提供您的反馈意见"
+        },
+        "processing": {
+            "title": "处理中",
+            "message": "正在提交您的反馈..."
+        },
+        "submitted": {
+            "title": "反馈已提交",
+            "message": "等待下次 MCP 调用"
+        },
+        "completed": {
+            "title": "已完成",
+            "message": "会话已完成"
+        }
+    },
+    "notifications": {
+        "feedback_sent": "反馈已发送",
+        "settings_saved": "设置已保存",
+        "connection_lost": "连接中断",
+        "connection_restored": "连接已恢复"
+    },
+    "connection": {
+        "waiting": "已连接 - 等待反馈",
+        "submitted": "已连接 - 反馈已提交",
+        "processing": "已连接 - 处理中"
+    },
+    "errors": {
+        "connection_failed": "连接失败",
+        "upload_failed": "上传失败",
+        "invalid_input": "输入内容无效",
+        "timeout": "请求超时"
+    },
+    "buttons": {
+        "ok": "确定",
+        "cancel": "❌ 取消",
+        "submit": "✅ 提交反馈",
+        "processing": "处理中...",
+        "submitted": "已提交",
+        "retry": "重试",
+        "close": "关闭",
+        "upload": "上传",
+        "download": "下载"
+    },
+    "sessionTimeout": {
+        "timeout": "⏰ 会话已超时，界面将自动关闭",
+        "timeoutWarning": "会话即将超时",
+        "timeoutDescription": "由于长时间无响应，会话已超时。界面将在 3 秒后自动关闭。",
+        "closing": "正在关闭...",
+        "label": "会话超时:"
+    },
+    "autoRefresh": {
+        "enable": "自动检测",
+        "seconds": "秒",
+        "disabled": "停用",
+        "enabled": "检测中",
+        "checking": "检查中",
+        "detected": "已检测",
+        "error": "失败"
+    },
+    "sessionManagement": {
+        "title": "会话管理",
+        "description": "管理当前会话和历史会话记录，查看会话统计信息。",
+        "currentSession": "当前会话",
+        "sessionHistory": "会话历史",
+        "statistics": "统计信息",
+        "sessionId": "会话 ID",
+        "status": "状态",
+        "activeTime": "活跃时间",
+        "switchSession": "切换会话",
+        "viewDetails": "详细信息",
+        "refresh": "重新整理",
+        "noHistory": "暂无历史会话",
+        "todaySessions": "今日会话",
+        "todayAverageDuration": "今日平均时长",
+        "createdTime": "建立时间",
+        "project": "项目",
+        "aiSummary": "AI 总结",
+        "noSummary": "无总结",
+        "loading": "加载中...",
+        "collapsePanel": "收合面板",
+        "expandPanel": "展开面板",
+        "sessionPanel": "会话",
+        "sessionDetails": {
+            "title": "会话详细信息",
+            "close": "关闭",
+            "duration": "持续时间",
+            "projectDirectory": "项目目录",
+            "summary": "总结",
+            "noSummary": "暂无总结",
+            "unknown": "未知"
+        },
+        "copySessionContent": "复制会话内容",
+        "copyUserContent": "复制用户内容",
+        "exportSession": "导出此会话"
+    },
+    "sessionHistory": {
+        "management": {
+            "title": "📚 会话历史管理",
+            "retentionPeriod": "保存期限",
+            "retentionHours": "小时",
+            "export": "导出",
+            "clear": "清空",
+            "exportAll": "导出全部",
+            "exportAllTitle": "导出所有会话历史到文件",
+            "exportSingle": "导出此会话",
+            "confirmClear": "确定要清空所有会话历史吗？",
+            "exportSuccess": "会话历史已导出",
+            "clearSuccess": "会话历史已清空",
+            "clearTitle": "清空所有会话历史记录",
+            "description": "管理本地存储的会话历史记录，包括保存期限设定和数据导出功能",
+            "exportDescription": "导出或清空本地存储的会话历史记录",
+            "exportFailed": "导出失败: {error}",
+            "clearFailed": "清空失败: {error}",
+            "clearFailedGeneric": "清空失败"
+        },
+        "retention": {
+            "24hours": "24 小时",
+            "72hours": "72 小时",
+            "168hours": "7 天",
+            "720hours": "30 天",
+            "custom": "自定义"
+        },
+        "userMessages": {
+            "title": "用户消息记录",
+            "description": "控制是否记录用户提交的反馈消息到会话历史中",
+            "recordingEnabled": "启用消息记录",
+            "privacyLevel": "隐私等级",
+            "privacyLevels": {
+                "full": "完整记录",
+                "basic": "基本统计",
+                "disabled": "停用记录"
+            },
+            "privacyDescription": {
+                "full": "记录完整的消息内容和图片信息",
+                "basic": "仅记录消息长度、图片数量等统计信息",
+                "disabled": "不记录任何用户消息内容"
+            },
+            "messageCount": "消息数量",
+            "submissionMethod": "提交方式",
+            "manual": "手动提交",
+            "auto": "自动提交",
+            "contentLength": "内容长度",
+            "imageCount": "图片数量",
+            "timestamp": "时间戳",
+            "clearAll": "清空消息记录",
+            "clearAllTitle": "清空所有会话的用户消息记录",
+            "confirmClearAll": "确定要清空所有会话的用户消息记录吗？此操作无法撤销。",
+            "clearSuccess": "用户消息记录已清空"
+        },
+        "noActiveSession": "目前没有活跃的会话数据",
+        "sessionNotFound": "找不到会话资料",
+        "currentSession": {
+            "noData": "没有当前会话数据",
+            "noUserMessages": "当前会话没有用户消息记录",
+            "copyFailed": "复制失败，请重试",
+            "dataManagerNotInit": "数据管理器未初始化"
+        }
+    },
+    "connectionMonitor": {
+        "connecting": "连接中...",
+        "connected": "已连接",
+        "disconnected": "已断线",
+        "reconnecting": "重连中... (第{attempt}次)",
+        "connectionFailed": "连接失败",
+        "connectionError": "连接错误",
+        "noActiveSession": "没有活跃会话",
+        "maxReconnectReached": "WebSocket 连接失败，请刷新页面重试",
+        "latency": "延迟",
+        "connectionTime": "连线时间",
+        "reconnectCount": "重连",
+        "messageCount": "消息",
+        "sessionCount": "会话",
+        "statusText": "状态",
+        "waiting": "等待中",
+        "times": "次",
+        "quality": {
+            "excellent": "优秀",
+            "good": "良好",
+            "fair": "一般",
+            "poor": "较差",
+            "unknown": "未知"
+        },
+        "metrics": {
+            "messages": "消息",
+            "latencyMs": "延迟",
+            "sessions": "会话",
+            "reconnects": "重连"
+        }
+    },
+
+    "dynamic": {
+        "aiSummary": "测试 Web UI 功能\n\n🎯 **功能测试项目：**\n- Web UI 服务器启动和运行\n- WebSocket 实时通讯\n- 反馈提交功能\n- 图片上传和预览\n- 智能 Ctrl+V 图片粘贴\n- 多语言界面功能\n\n📋 **测试步骤：**\n1. 测试图片上传（拖拽、选择文件、剪贴板）\n2. 在文本框内按 Ctrl+V 测试智能粘贴\n3. 尝试切换语言（繁中/简中/英文）\n4. 提交反馈和图片\n\n请测试这些功能并提供反馈！"
+    },
+    "prompts": {
+        "management": {
+            "title": "📝 常用提示词管理",
+            "description": "管理您的常用提示词模板，可在反馈输入时快速选用",
+            "addNew": "新增提示词",
+            "edit": "编辑",
+            "delete": "删除",
+            "confirmDelete": "确定要删除此提示词吗？",
+            "emptyState": "尚未建立任何常用提示词",
+            "emptyHint": "点击上方「新增提示词」按钮开始建立您的第一个提示词模板",
+            "created": "建立于",
+            "lastUsed": "最近使用",
+            "autoSubmit": "自动提交",
+            "setAutoSubmit": "设定为自动提交",
+            "cancelAutoSubmit": "取消自动提交",
+            "autoSubmitSet": "已设定为自动提交提示词：",
+            "autoSubmitCancelled": "已取消自动提交设定",
+            "notFound": "找不到指定的提示词",
+            "addSuccess": "提示词已新增",
+            "updateSuccess": "提示词已更新",
+            "deleteSuccess": "提示词已删除"
+        },
+        "buttons": {
+            "selectPrompt": "常用提示",
+            "useLastPrompt": "上次提示",
+            "noPrompts": "尚无常用提示词，请先在设置中新增",
+            "noLastPrompt": "尚无最近使用的提示词",
+            "lastPromptApplied": "已套用上次使用的提示词",
+            "promptNotFound": "找不到指定的提示词",
+            "promptApplied": "已套用提示词：",
+            "selectPromptTooltipEmpty": "尚无常用提示词",
+            "selectPromptTooltipAvailable": "选择常用提示词 ({count} 个可用)",
+            "lastPromptTooltipEmpty": "尚无最近使用的提示词",
+            "lastPromptTooltipAvailable": "使用上次提示词：{name}"
+        },
+        "select": {
+            "title": "选择常用提示词"
+        },
+        "modal": {
+            "addTitle": "新增提示词",
+            "editTitle": "编辑提示词",
+            "nameLabel": "提示词名称",
+            "contentLabel": "提示词内容",
+            "namePlaceholder": "请输入提示词名称...",
+            "contentPlaceholder": "请输入提示词内容...",
+            "save": "保存",
+            "cancel": "取消",
+            "emptyFields": "请填写所有必填栏位"
+        }
+    },
+    "about": {
+        "title": "ℹ️ 关于",
+        "description": "一个强大的 MCP 服务器，为 AI 辅助开发工具提供人在回路的互动反馈功能。支持 Web UI 界面，并具备图片上传、多语言等丰富功能。",
+        "appInfo": "应用程序信息",
+        "version": "版本",
+        "projectLinks": "项目链接",
+        "githubProject": "GitHub 项目",
+        "visitGithub": "访问 GitHub",
+        "contact": "联系与支持",
+        "discordSupport": "Discord 支持",
+        "joinDiscord": "加入 Discord",
+        "contactDescription": "如需技术支持、问题反馈或功能建议，欢迎通过 Discord 社群或 GitHub Issues 与我们联系。",
+        "thanks": "致谢与贡献",
+        "thanksText": "感谢原作者 Fábio Ferreira (@fabiomlferreira) 创建了原始的 interactive-feedback-mcp 项目。\n\n本增强版本由 Minidoracat 开发和维护，大幅扩展了项目功能，新增了 Web UI 界面、图片支持、多语言能力以及许多其他改进功能。\n\n同时感谢 sanshao85 的 mcp-feedback-collector 项目提供的 UI 设计灵感。\n\n开源协作让技术变得更美好！"
+    },
+    "images": {
+        "settings": {
+            "title": "🖼️ 图片设置",
+            "sizeLimit": "图片大小限制",
+            "sizeLimitDesc": "设定上传图片的最大文件大小限制",
+            "sizeLimitOptions": {
+                "unlimited": "无限制",
+                "1mb": "1MB",
+                "3mb": "3MB",
+                "5mb": "5MB"
+            }
+        },
+        "sizeLimitExceeded": "图片 {filename} 大小为 {size}，超过 {limit} 限制！",
+        "sizeLimitExceededAdvice": "建议使用图片编辑软件压缩后再上传，或调整图片大小限制设置。"
+    },
+    "autoSubmit": {
+        "title": "⏰ 自动定时提交",
+        "enable": "启用自动提交",
+        "enableDesc": "启用后将在指定时间自动提交选定的提示词内容",
+        "timeout": "倒数时间（秒）",
+        "timeoutDesc": "设定自动提交的倒数时间，范围：1-86400 秒",
+        "seconds": "秒",
+        "prompt": "自动提交提示词",
+        "promptDesc": "选择要自动提交的提示词内容",
+        "selectPrompt": "请选择提示词",
+        "status": "当前状态",
+        "enabled": "已启用",
+        "disabled": "已停用",
+        "executing": "正在执行自动提交...",
+        "countdownLabel": "提交倒数",
+        "pauseCountdown": "暂停倒数",
+        "resumeCountdown": "恢复倒数",
+        "paused": "自动提交已暂停"
+    },
+    "audio": {
+        "notification": {
+            "title": "🔊 音效通知设定",
+            "description": "设定会话更新时的音效通知",
+            "enabled": "启用音效通知",
+            "enabledDesc": "启用后将在有新会话更新时播放音效通知",
+            "volume": "音量",
+            "selectAudio": "选择音效",
+            "testPlay": "测试播放",
+            "uploadCustom": "上传自定义音效",
+            "chooseFile": "选择文件",
+            "supportedFormats": "支持 MP3、WAV、OGG 格式",
+            "customAudios": "自定义音效",
+            "defaultBeep": "经典提示音",
+            "notificationDing": "通知铃声",
+            "softChime": "轻柔钟声",
+            "default": "默认",
+            "customAudio": "自定义音效",
+            "noCustomAudios": "尚未上传任何自定义音效",
+            "created": "创建于",
+            "format": "格式",
+            "enterAudioName": "输入音效名称",
+            "audioName": "音效名称",
+            "audioNamePlaceholder": "请输入音效名称...",
+            "audioNameHint": "留空将使用默认文件名称",
+            "nameRequired": "音效名称不能为空",
+            "uploading": "上传中...",
+            "uploadSuccess": "音效上传成功: ",
+            "deleteConfirm": "确定要删除音效 \"{name}\" 吗？",
+            "deleteSuccess": "音效已删除",
+            "enabledChanged": "音效通知设定已更新",
+            "audioSelected": "音效已选择",
+            "testPlaying": "正在播放测试音效",
+            "audioNotFound": "找不到选择的音效"
+        }
+    },
+    "stats": {
+        "detailedStats": "详细统计信息"
+    },
+    "notification": {
+        "title": "浏览器通知",
+        "settingLabel": "浏览器通知",
+        "description": "新会话建立时通知（仅在后台运行时）",
+        "enabled": "通知已启用 ✅",
+        "disabled": "通知已关闭",
+        "permissionRequired": "需要通知权限才能启用此功能",
+        "permissionDenied": "浏览器已封锁通知，请在浏览器设置中允许",
+        "permissionGranted": "已授权",
+        "permissionDeniedStatus": "已拒绝（请在浏览器设置中修改）",
+        "permissionDefault": "尚未设置",
+        "notSupported": "您的浏览器不支持通知功能",
+        "enableFailed": "启用通知失败",
+        "test": "发送测试通知",
+        "testTitle": "测试通知",
+        "testDescription": "发送测试通知以确认功能正常",
+        "autoplayBlocked": "浏览器阻止音效自动播放，请点击页面以启用音效通知",
+        "triggerTitle": "通知触发场景",
+        "triggerDescription": "选择何时接收通知",
+        "triggerModeUpdated": "通知触发模式已更新",
+        "trigger": {
+            "focusLost": "窗口失去焦点时（切换到其他应用程序）",
+            "tabSwitch": "切换到其他标签页时",
+            "background": "窗口最小化或隐藏时",
+            "always": "总是通知（包括前景）"
+        },
+        "browser": {
+            "title": "MCP Feedback - 新会话",
+            "ready": "准备就绪",
+            "unknownProject": "未知项目",
+            "testTitle": "测试通知",
+            "testBody": "这是一个测试通知，5秒后将自动关闭",
+            "notSupported": "您的浏览器不支持通知功能",
+            "permissionRequired": "请先授权通知权限",
+            "criticalTitle": "MCP Feedback - 警告"
+        }
+    },
+    "system": {
+        "connectionEstablished": "WebSocket 连接已建立",
+        "connectionLost": "WebSocket 连接已断开",
+        "connectionReconnecting": "正在重新连接...",
+        "connectionReconnected": "已重新连接",
+        "connectionFailed": "连接失败",
+        "websocketError": "WebSocket 错误"
+    },
+    "session": {
+        "noActiveSession": "没有活跃会话",
+        "created": "新的 MCP 会话已创建，页面将自动刷新",
+        "updated": "会话已更新",
+        "expired": "会话已过期",
+        "timeout": "会话已超时",
+        "cleaned": "会话已清理",
+        "feedbackSubmitted": "反馈已成功提交",
+        "userMessageRecorded": "用户消息已记录",
+        "historySaved": "会话历史已保存（{{count}} 个会话）",
+        "historyLoaded": "会话历史已载入"
+    },
+    "settingsAPI": {
+        "saved": "设置已保存",
+        "loaded": "设置已载入",
+        "cleared": "设置已清除",
+        "saveFailed": "保存失败",
+        "loadFailed": "加载失败",
+        "clearFailed": "清除失败",
+        "invalidValue": "无效的设置值",
+        "logLevelUpdated": "日志等级已更新",
+        "invalidLogLevel": "无效的日志等级，必须是 DEBUG, INFO, WARN, ERROR 之一"
+    },
+    "file": {
+        "uploadSuccess": "文件上传成功",
+        "uploadFailed": "文件上传失败",
+        "sizeTooLarge": "文件大小超过限制",
+        "typeNotSupported": "不支持的文件类型",
+        "processing": "正在处理文件...",
+        "removed": "文件已移除"
+    },
+    "prompt": {
+        "saved": "提示词已保存",
+        "deleted": "提示词已删除",
+        "applied": "已套用提示词：{{name}}",
+        "importSuccess": "提示词导入成功",
+        "importFailed": "提示词导入失败",
+        "exportSuccess": "提示词导出成功",
+        "validationFailed": "提示词验证失败"
+    },
+    "error": {
+        "generic": "发生错误：{{error}}",
+        "network": "网络错误",
+        "server": "服务器错误",
+        "timeout": "操作超时",
+        "invalidInput": "输入无效",
+        "operationFailed": "操作失败"
+    },
+    "utils": {
+        "copySuccess": "已复制到剪贴板",
+        "copyError": "复制失败"
+    },
+    "fileUpload": {
+        "fileSizeExceeded": "图片大小超过限制 ({limit}): {filename}",
+        "maxFilesExceeded": "最多只能上传 {maxFiles} 个文件",
+        "processingFailed": "文件处理失败，请重试",
+        "imageAdded": "已添加 {count} 张图片"
+    },
+    "aria": {
+        "toggleAutoSubmit": "切换自动提交",
+        "toggleNotification": "切换通知",
+        "toggleAudioNotification": "切换音效通知"
+    }
+}
