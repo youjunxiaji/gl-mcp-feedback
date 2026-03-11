@@ -537,13 +537,6 @@ def main():
     """
     debug_enabled = os.getenv("MCP_DEBUG", "").lower() in ("true", "1", "yes", "on")
 
-    desktop_mode = os.getenv("MCP_DESKTOP_MODE", "").lower() in (
-        "true",
-        "1",
-        "yes",
-        "on",
-    )
-
     if debug_enabled:
         debug_log("🚀 启动互动式反馈收集 MCP 服务器")
         debug_log(f"   服务器名称: {SERVER_NAME}")
@@ -552,7 +545,6 @@ def main():
         debug_log(f"   编码初始化: {'成功' if _encoding_initialized else '失败'}")
         debug_log(f"   远程环境: {is_remote_environment()}")
         debug_log(f"   WSL 环境: {is_wsl_environment()}")
-        debug_log(f"   桌面模式: {'启用' if desktop_mode else '禁用'}")
         debug_log("   界面类型: Web UI")
         debug_log("   等待来自 AI 助手的调用...")
         debug_log("准备启动 MCP 服务器...")

@@ -24,7 +24,6 @@ repos:
       # 檢查是否有大檔案（排除桌面應用二進制文件）
       - id: check-added-large-files
         args: [--maxkb=1000]
-        exclude: ^src/mcp_feedback_enhanced/desktop_release/.*\.(exe|mcp-feedback-enhanced-desktop-.*)$
       # 檢查檔案名稱
       - id: check-case-conflict
       # 檢查可執行檔案有 shebang

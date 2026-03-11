@@ -3,7 +3,7 @@
 # Compatible with Windows PowerShell and Unix systems
 # 兼容 Windows PowerShell 和 Unix 系統
 
-.PHONY: help install install-dev install-hooks lint format type-check test clean pre-commit-run pre-commit-all update-deps check-rust build-desktop build-desktop-release test-desktop clean-desktop build-all test-all test-func test-web test-desktop-func
+.PHONY: help install install-dev install-hooks lint format type-check test clean pre-commit-run pre-commit-all update-deps build-all test-all test-func test-web
 
 # 預設目標 - 顯示幫助訊息
 help: ## Show this help message
@@ -28,7 +28,6 @@ help: ## Show this help message
 	@echo "  test-fast            Run tests without slow tests"
 	@echo "  test-func            Run functional tests (standard)"
 	@echo "  test-web             Run Web UI tests (continuous)"
-	@echo "  test-desktop-func    Run desktop application functional tests"
 	@echo "  clean                Clean up cache and temporary files"
 	@echo "  ps-clean             PowerShell version of clean (Windows)"
 	@echo "  update-deps          Update dependencies"
@@ -39,13 +38,6 @@ help: ## Show this help message
 	@echo "  bump-major           Bump major version"
 	@echo "  ci                   Simulate CI pipeline locally"
 	@echo "  quick-check          Quick check with auto-fix"
-	@echo ""
-	@echo "Desktop Application Commands:"
-	@echo "  build-desktop        Build desktop application (debug)"
-	@echo "  build-desktop-release Build desktop application (release)"
-	@echo "  test-desktop         Test desktop application"
-	@echo "  clean-desktop        Clean desktop build artifacts"
-	@echo "  check-rust           Check Rust development environment"
 
 # 安裝相關命令
 install: ## Install the package
@@ -106,9 +98,6 @@ test-func: ## Run functional tests (standard)
 test-web: ## Run Web UI tests (continuous)
 	uvx --no-cache --with-editable . mcp-feedback-enhanced test --web
 
-test-desktop-func: ## Run desktop application functional tests
-	uvx --no-cache --with-editable . mcp-feedback-enhanced test --desktop
-
 # 維護相關命令
 clean: ## Clean up cache and temporary files
 	@echo "Cleaning up..."
@@ -163,34 +152,10 @@ quick-check: lint-fix format type-check ## Quick check with auto-fix (recommende
 ps-clean: ## PowerShell version of clean (Windows)
 	powershell -Command "Get-ChildItem -Path . -Recurse -Name '__pycache__' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; Get-ChildItem -Path . -Recurse -Name '*.pyc' | Remove-Item -Force -ErrorAction SilentlyContinue; @('.mypy_cache', '.ruff_cache', '.pytest_cache', 'htmlcov', 'dist', 'build') | ForEach-Object { if (Test-Path $$_) { Remove-Item $$_ -Recurse -Force } }"
 
-# 桌面應用程式相關命令
-check-rust: ## Check Rust development environment
-	@echo "🔍 Checking Rust environment..."
-	@rustc --version || (echo "❌ Rust not installed. Please visit https://rustup.rs/" && exit 1)
-	@cargo --version || (echo "❌ Cargo not installed" && exit 1)
-	@cargo install --list | grep tauri-cli || (echo "⚠️ Tauri CLI not installed, installing..." && cargo install tauri-cli)
-	@echo "✅ Rust environment check completed"
-
-build-desktop: ## Build desktop application (debug mode)
-	@echo "🔨 Building desktop application (debug)..."
-	uv run python scripts/build_desktop.py
-
-build-desktop-release: ## Build desktop application (release mode)
-	@echo "🚀 Building desktop application (release)..."
-	uv run python scripts/build_desktop.py --release
-
-test-desktop: build-desktop ## Test desktop application
-	@echo "🖥️ Testing desktop application..."
-	uv run python -m mcp_feedback_enhanced test --desktop
-
-clean-desktop: ## Clean desktop build artifacts
-	@echo "🧹 Cleaning desktop build artifacts..."
-	uv run python scripts/build_desktop.py --clean
-
-# 完整構建流程（包含桌面應用程式）
-build-all: clean build-desktop-release build ## Build complete package with desktop app
+# 完整構建流程
+build-all: clean build ## Build complete package
 	@echo "🎉 Complete build finished!"
 
 # 測試所有功能
-test-all: test test-func test-desktop ## Run all tests including desktop and functional tests
+test-all: test test-func ## Run all tests including functional tests
 	@echo "✅ All tests completed!"

@@ -48,9 +48,6 @@ def main():
         "--web", action="store_true", help="測試 Web UI (自動持續運行)"
     )
     test_parser.add_argument(
-        "--desktop", action="store_true", help="啟動桌面應用程式模式"
-    )
-    test_parser.add_argument(
         "--timeout", type=int, default=60, help="測試超時時間 (秒)"
     )
 
@@ -103,16 +100,10 @@ def run_tests(args):
         success = test_web_ui_simple()
         if not success:
             sys.exit(1)
-    elif args.desktop:
-        print("🖥️ 啟動桌面應用程式...")
-        success = test_desktop_app()
-        if not success:
-            sys.exit(1)
     else:
         print("❌ 測試功能已簡化")
         print("💡 可用的測試選項：")
         print("  --web         測試 Web UI")
-        print("  --desktop     啟動桌面應用程式")
         print("💡 對於開發者：使用 'uv run pytest' 執行完整測試")
         sys.exit(1)
 
@@ -267,122 +258,6 @@ def process_feedback(data):
         os.environ.pop("MCP_TEST_MODE", None)
         os.environ.pop("MCP_WEB_HOST", None)
         os.environ.pop("MCP_WEB_PORT", None)
-
-
-def test_desktop_app():
-    """測試桌面應用程式"""
-    try:
-        print("🔧 檢查桌面應用程式依賴...")
-
-        # 檢查是否有 Tauri 桌面模組
-        try:
-            import os
-            import sys
-
-            # 嘗試導入桌面應用程式模組
-            def import_desktop_app():
-                # 首先嘗試從發佈包位置導入
-                try:
-                    from .desktop_app import launch_desktop_app as desktop_func
-
-                    print("✅ 找到發佈包中的桌面應用程式模組")
-                    return desktop_func
-                except ImportError:
-                    print("🔍 發佈包中未找到桌面應用程式模組，嘗試開發環境...")
-
-                # 回退到開發環境路徑
-                tauri_python_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "src-tauri", "python"
-                )
-                if os.path.exists(tauri_python_path):
-                    sys.path.insert(0, tauri_python_path)
-                    print(f"✅ 找到 Tauri Python 模組路徑: {tauri_python_path}")
-                    try:
-                        from mcp_feedback_enhanced_desktop import (  # type: ignore
-                            launch_desktop_app as dev_func,
-                        )
-
-                        return dev_func
-                    except ImportError:
-                        print("❌ 無法從開發環境路徑導入桌面應用程式模組")
-                        return None
-                else:
-                    print(f"⚠️  開發環境路徑不存在: {tauri_python_path}")
-                    print("💡 這可能是 PyPI 安裝的版本，桌面應用功能不可用")
-                    return None
-
-            launch_desktop_app_func = import_desktop_app()
-            if launch_desktop_app_func is None:
-                print("❌ 桌面應用程式不可用")
-                print("💡 可能的原因：")
-                print("   1. 此版本不包含桌面應用程式二進制檔案")
-                print("   2. 請使用包含桌面應用的版本，或使用 Web 模式")
-                print("   3. Web 模式指令：uvx mcp-feedback-enhanced test --web")
-                return False
-
-            print("✅ 桌面應用程式模組導入成功")
-
-        except ImportError as e:
-            print(f"❌ 無法導入桌面應用程式模組: {e}")
-            print(
-                "💡 請確保已執行 'make build-desktop' 或 'python scripts/build_desktop.py'"
-            )
-            return False
-
-        print("🚀 啟動桌面應用程式...")
-
-        # 設置桌面模式環境變數
-        os.environ["MCP_DESKTOP_MODE"] = "true"
-
-        # 使用 asyncio 啟動桌面應用程式
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            # 使用 WebUIManager 來管理桌面應用實例
-            from .web.main import get_web_ui_manager
-
-            manager = get_web_ui_manager()
-
-            # 啟動桌面應用並保存實例到 manager
-            app = loop.run_until_complete(launch_desktop_app_func(test_mode=True))
-            manager.desktop_app_instance = app
-
-            print("✅ 桌面應用程式啟動成功")
-            print("💡 桌面應用程式正在運行，按 Ctrl+C 停止...")
-
-            # 保持應用程式運行
-            try:
-                while True:
-                    import time
-
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                print("\n🛑 停止桌面應用程式...")
-                app.stop()
-                return True
-
-        except Exception as e:
-            print(f"❌ 桌面應用程式啟動失敗: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return False
-        finally:
-            loop.close()
-
-    except Exception as e:
-        print(f"❌ 桌面應用程式測試失敗: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
-    finally:
-        # 清理環境變數
-        os.environ.pop("MCP_DESKTOP_MODE", None)
 
 
 async def wait_for_process(process):

@@ -16,15 +16,6 @@ on:
         description: 'Custom version number (e.g., 2.5.0) - overrides version_type if provided'
         required: false
         type: string
-      include_desktop:
-        description: '是否包含桌面應用二進制文件'
-        required: true
-        default: true
-        type: boolean
-      desktop_build_run_id:
-        description: '桌面應用構建的 Run ID（可選，留空使用最新的成功構建）'
-        required: false
-        type: string
 
 jobs:
   release:
@@ -46,9 +37,6 @@ jobs:
 
     - name: Set up Python
       run: uv python install
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
 
     - name: Install dependencies
       run: |
@@ -287,174 +275,6 @@ jobs:
         - Auto-generated release from workflow"
         git tag "v${{ steps.bump_version.outputs.new }}"
 
-    - name: Check desktop build availability
-      if: ${{ github.event.inputs.include_desktop == 'true' }}
-      id: check_desktop
-      run: |
-        echo "🔍 檢查桌面應用構建可用性..."
-
-        # 如果指定了 run_id，使用指定的構建
-        if [ -n "${{ github.event.inputs.desktop_build_run_id }}" ]; then
-          echo "🎯 使用指定的構建 Run ID: ${{ github.event.inputs.desktop_build_run_id }}"
-          echo "run_id=${{ github.event.inputs.desktop_build_run_id }}" >> $GITHUB_OUTPUT
-        else
-          echo "🔍 查找最新的成功桌面構建..."
-
-          # 使用 GitHub API 查找最新的成功構建
-          LATEST_RUN=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-desktop.yml/runs?status=success&per_page=1" \
-            | jq -r '.workflow_runs[0].id // empty')
-
-          if [ -n "$LATEST_RUN" ] && [ "$LATEST_RUN" != "null" ]; then
-            echo "✅ 找到最新成功構建: $LATEST_RUN"
-            echo "run_id=$LATEST_RUN" >> $GITHUB_OUTPUT
-          else
-            echo "❌ 沒有找到成功的桌面構建"
-            echo "💡 請先運行 'Build Desktop Applications' 工作流程"
-            exit 1
-          fi
-        fi
-
-    - name: Check desktop applications in Git
-      if: ${{ github.event.inputs.include_desktop == 'true' }}
-      run: |
-        echo "🔍 檢查 Git 中的桌面應用程式二進制檔案..."
-
-        if [ -d "src/mcp_feedback_enhanced/desktop_release" ]; then
-          echo "📁 桌面應用目錄內容："
-          ls -la src/mcp_feedback_enhanced/desktop_release/
-
-          # 檢查是否有二進制文件
-          BINARY_COUNT=$(find src/mcp_feedback_enhanced/desktop_release -name "mcp-feedback-enhanced-desktop*" -type f | wc -l)
-          echo "📊 找到 $BINARY_COUNT 個桌面二進制文件"
-
-          if [ $BINARY_COUNT -eq 0 ]; then
-            echo "❌ 沒有找到桌面二進制文件"
-            echo "💡 請先運行 'Build Desktop Applications' 工作流程"
-            echo "   該工作流程會自動構建並提交桌面二進制文件到 Git"
-            exit 1
-          elif [ $BINARY_COUNT -lt 4 ]; then
-            echo "⚠️ 桌面二進制文件不完整 ($BINARY_COUNT/4)"
-            echo "💡 請重新運行 'Build Desktop Applications' 工作流程"
-            echo "   確保所有 4 個平台都構建成功"
-            exit 1
-          else
-            echo "✅ 桌面二進制文件完整 ($BINARY_COUNT/4)"
-          fi
-        else
-          echo "❌ 桌面應用目錄不存在"
-          echo "💡 請先運行 'Build Desktop Applications' 工作流程"
-          echo "   該工作流程會自動構建並提交桌面二進制文件到 Git"
-          exit 1
-        fi
-
-    - name: Validate desktop binaries
-      if: ${{ github.event.inputs.include_desktop == 'true' }}
-      run: |
-        echo "🔍 驗證桌面應用二進制文件..."
-
-        if [ ! -d "src/mcp_feedback_enhanced/desktop_release" ]; then
-          echo "❌ 桌面應用目錄不存在"
-          exit 1
-        fi
-
-        # 檢查各平台文件
-        PLATFORMS=(
-          "mcp-feedback-enhanced-desktop.exe:Windows"
-          "mcp-feedback-enhanced-desktop-macos-intel:macOS Intel"
-          "mcp-feedback-enhanced-desktop-macos-arm64:macOS ARM64"
-          "mcp-feedback-enhanced-desktop-linux:Linux"
-        )
-
-        VALID_COUNT=0
-        for platform_info in "${PLATFORMS[@]}"; do
-          IFS=':' read -r filename description <<< "$platform_info"
-          filepath="src/mcp_feedback_enhanced/desktop_release/$filename"
-
-          if [ -f "$filepath" ]; then
-            filesize=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath" 2>/dev/null || echo "0")
-            if [ "$filesize" -gt 1000000 ]; then  # 至少 1MB
-              echo "✅ $description: $filename (${filesize} bytes)"
-              VALID_COUNT=$((VALID_COUNT + 1))
-            else
-              echo "⚠️ $description: $filename 文件太小 (${filesize} bytes)"
-            fi
-          else
-            echo "❌ $description: $filename 不存在"
-          fi
-        done
-
-        echo ""
-        echo "📊 驗證結果: $VALID_COUNT/4 個平台有效"
-
-        if [ $VALID_COUNT -eq 0 ]; then
-          echo "❌ 沒有有效的桌面應用二進制文件"
-          echo "💡 建議："
-          echo "  1. 檢查 'Build Desktop Applications' 工作流程是否成功"
-          echo "  2. 確認指定的 Run ID 是否正確"
-          echo "  3. 或者設置 include_desktop 為 false"
-          exit 1
-        elif [ $VALID_COUNT -lt 4 ]; then
-          echo "❌ 不是所有平台都有效，無法保證完整的多平台支援"
-          echo "📋 要求：桌面應用必須支援所有 4 個平台"
-          echo "  - Windows x64"
-          echo "  - macOS Intel"
-          echo "  - macOS Apple Silicon"
-          echo "  - Linux x64"
-          echo ""
-          echo "🔧 解決方案："
-          echo "  1. 重新運行 'Build Desktop Applications' 工作流程"
-          echo "  2. 確保所有平台都構建成功且文件大小正常"
-          echo "  3. 或者設置 include_desktop 為 false（僅發佈 Web 版本）"
-          exit 1
-        else
-          echo "✅ 所有 4 個平台都驗證通過，可以發佈完整的多平台桌面應用"
-        fi
-
-    - name: Skip desktop applications
-      if: ${{ github.event.inputs.include_desktop != 'true' }}
-      run: |
-        echo "⏭️ 跳過桌面應用，僅發佈 Web 版本"
-        echo "💡 用戶將只能使用 Web 模式，無法使用桌面模式"
-
-    - name: Prepare package for build
-      run: |
-        echo "🔧 準備包構建..."
-
-        # 確保桌面應用目錄存在（即使是空的）
-        mkdir -p src/mcp_feedback_enhanced/desktop_release
-
-        # 如果沒有包含桌面應用，創建一個說明文件
-        if [ "${{ github.event.inputs.include_desktop }}" != "true" ] || [ ! -f "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop.exe" ]; then
-          echo "🔍 桌面應用未包含，創建說明文件..."
-          cat > src/mcp_feedback_enhanced/desktop_release/README.md << 'EOF'
-        # 桌面應用程式
-
-        此版本不包含桌面應用程式二進制檔案。
-
-        ## 使用方式
-
-        僅支援 Web 模式
-        uvx mcp-feedback-enhanced test --web
-
-        如需桌面應用支援，請使用包含桌面應用的版本。
-        EOF
-        else
-          echo "✅ 桌面應用已包含"
-        fi
-
-        # 確保 __init__.py 存在
-        if [ ! -f "src/mcp_feedback_enhanced/desktop_release/__init__.py" ]; then
-          echo '"""桌面應用程式二進制檔案"""' > src/mcp_feedback_enhanced/desktop_release/__init__.py
-        fi
-
-        echo "📁 桌面應用目錄內容："
-        ls -la src/mcp_feedback_enhanced/desktop_release/
-
-
-
     - name: Build package
       run: uv build
 
@@ -494,58 +314,9 @@ jobs:
         echo "🚀 GitHub Release: https://github.com/Minidoracat/mcp-feedback-enhanced/releases/tag/v${{ steps.bump_version.outputs.new }}"
         echo "📝 Release notes generated from CHANGELOG files"
         echo ""
-
-        # 顯示桌面應用狀態
-        if [ "${{ github.event.inputs.include_desktop }}" = "true" ]; then
-          echo "🖥️ 桌面應用狀態："
-          if [ -d "src/mcp_feedback_enhanced/desktop_release" ] && [ -n "$(ls -A src/mcp_feedback_enhanced/desktop_release 2>/dev/null)" ]; then
-            echo "  ✅ 桌面應用已包含在發佈中"
-            echo "  📱 支援的平台："
-
-            # 檢查各平台並顯示文件大小
-            if [ -f "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop.exe" ]; then
-              size=$(stat -f%z "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop.exe" 2>/dev/null || stat -c%s "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop.exe" 2>/dev/null || echo "unknown")
-              echo "    - ✅ Windows x64 (${size} bytes)"
-            else
-              echo "    - ❌ Windows x64 (缺失)"
-            fi
-
-            if [ -f "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-macos-intel" ]; then
-              size=$(stat -f%z "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-macos-intel" 2>/dev/null || stat -c%s "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-macos-intel" 2>/dev/null || echo "unknown")
-              echo "    - ✅ macOS Intel (${size} bytes)"
-            else
-              echo "    - ❌ macOS Intel (缺失)"
-            fi
-
-            if [ -f "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-macos-arm64" ]; then
-              size=$(stat -f%z "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-macos-arm64" 2>/dev/null || stat -c%s "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-macos-arm64" 2>/dev/null || echo "unknown")
-              echo "    - ✅ macOS Apple Silicon (${size} bytes)"
-            else
-              echo "    - ❌ macOS Apple Silicon (缺失)"
-            fi
-
-            if [ -f "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-linux" ]; then
-              size=$(stat -f%z "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-linux" 2>/dev/null || stat -c%s "src/mcp_feedback_enhanced/desktop_release/mcp-feedback-enhanced-desktop-linux" 2>/dev/null || echo "unknown")
-              echo "    - ✅ Linux x64 (${size} bytes)"
-            else
-              echo "    - ❌ Linux x64 (缺失)"
-            fi
-
-            echo "  🔗 構建來源: Run ID ${{ steps.check_desktop.outputs.run_id }}"
-          else
-            echo "  ⚠️ 桌面應用未包含（可能構建失敗）"
-          fi
-        else
-          echo "🖥️ 桌面應用狀態：⏭️ 已跳過（僅 Web 版本）"
-        fi
-
-        echo ""
         echo "✅ Next steps:"
         echo "  - Check the release on GitHub"
         echo "  - Verify the package on PyPI"
         echo "  - Test installation with: uvx mcp-feedback-enhanced@v${{ steps.bump_version.outputs.new }}"
-        if [ "${{ github.event.inputs.include_desktop }}" = "true" ]; then
-          echo "  - Test desktop mode with: uvx mcp-feedback-enhanced@v${{ steps.bump_version.outputs.new }} test --desktop"
-        fi
         echo ""
         echo "📋 Note: Make sure CHANGELOG files are updated for future releases"

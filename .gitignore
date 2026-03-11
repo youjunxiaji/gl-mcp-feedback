@@ -63,24 +63,6 @@ ui_settings.json
 .env.local
 .env.*.local
 
-# Rust/Tauri build artifacts
-src-tauri/target/
-src-tauri/Cargo.lock
-src-tauri/WixTools/
-src-tauri/gen/
-
-
-
-
-# Tauri bundle outputs
-src-tauri/target/bundle/
-src-tauri/target/release/bundle/
-
-# Node.js (if using Tauri with frontend framework)
-node_modules/
-package-lock.json
-yarn.lock
-
 # Temporary build files
 *.tmp
 *.temp

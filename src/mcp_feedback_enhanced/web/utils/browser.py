@@ -48,18 +48,6 @@ def is_wsl_environment() -> bool:
     return False
 
 
-def is_desktop_mode() -> bool:
-    """
-    檢測是否為桌面模式
-
-    當設置了 MCP_DESKTOP_MODE 環境變數時，禁止開啟瀏覽器
-
-    Returns:
-        bool: True 表示桌面模式，False 表示 Web 模式
-    """
-    return os.environ.get("MCP_DESKTOP_MODE", "").lower() == "true"
-
-
 def open_browser_in_wsl(url: str) -> None:
     """
     在 WSL 環境中開啟 Windows 瀏覽器
@@ -129,11 +117,6 @@ def smart_browser_open(url: str) -> None:
     Args:
         url: 要開啟的 URL
     """
-    # 檢查是否為桌面模式
-    if is_desktop_mode():
-        debug_log("檢測到桌面模式，跳過瀏覽器開啟")
-        return
-
     if is_wsl_environment():
         debug_log("檢測到 WSL 環境，使用 WSL 專用瀏覽器啟動方式")
         open_browser_in_wsl(url)
