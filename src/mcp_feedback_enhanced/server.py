@@ -353,6 +353,26 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
     return mcp_images
 
 
+# ===== MCP Prompt 定義 =====
+@mcp.prompt(name="chat")
+def gl_mcp_feedback(topic: str = "") -> str:
+    """通过 Web UI 与用户开始互动反馈对话。
+
+    使用此 prompt 快速启动反馈交流。
+    AI 会调用 interactive_feedback 工具打开 Web UI，
+    通过浏览器界面与用户进行互动。
+
+    Args:
+        topic: 可选，反馈对话的主题或上下文
+    """
+    topic_text = f"，主题是「{topic}」" if topic else ""
+    return (
+        f"请立即调用 gl-mcp-feedback 的 interactive_feedback 工具"
+        f"与用户开始互动反馈对话{topic_text}。"
+        f"在 summary 参数中总结你目前已完成的工作内容。"
+    )
+
+
 # ===== MCP 工具定義 =====
 @mcp.tool()
 async def interactive_feedback(
