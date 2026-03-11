@@ -42,7 +42,6 @@ Desktop.ini
 *.swo
 
 # Others
-.cursor/rules/
 uv.lock
 .mcp_feedback_settings.json
 test_reports/
