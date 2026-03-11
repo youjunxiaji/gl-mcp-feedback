@@ -1,0 +1,78 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          TOML_VERSION=$(grep '^version =' pyproject.toml | cut -d'"' -f2)
+          echo "tag=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "toml=$TOML_VERSION" >> $GITHUB_OUTPUT
+
+          if [ "$TAG_VERSION" != "$TOML_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match pyproject.toml version ($TOML_VERSION)"
+            exit 1
+          fi
+          echo "Version verified: $TAG_VERSION"
+
+      - name: Build package
+        run: uv build
+
+      - name: Check package
+        run: |
+          uv pip install twine --system
+          twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
+          body: |
+            ## gl-mcp-feedback ${{ github.ref_name }}
+
+            ### 安装
+
+            ```bash
+            # 使用 uvx
+            uvx gl-mcp-feedback@${{ steps.version.outputs.tag }}
+
+            # 使用 pip
+            pip install gl-mcp-feedback==${{ steps.version.outputs.tag }}
+            ```
+
+            ### 链接
+            - [PyPI](https://pypi.org/project/gl-mcp-feedback/${{ steps.version.outputs.tag }}/)
+            - [完整更新日志](https://github.com/youjunxiaji/gl-mcp-feedback/commits/${{ github.ref_name }})
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
