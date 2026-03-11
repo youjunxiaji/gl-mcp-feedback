@@ -113,6 +113,7 @@ class WebUIManager:
         # 重構：使用單一活躍會話而非會話字典
         self.current_session: WebFeedbackSession | None = None
         self.sessions: dict[str, WebFeedbackSession] = {}  # 保留用於向後兼容
+        self.max_sessions: int = 5  # 最大會話數量限制
 
         # 全局標籤頁狀態管理 - 跨會話保持
         self.global_active_tabs: dict[str, dict] = {}
@@ -349,19 +350,23 @@ class WebUIManager:
             if hasattr(old_session, "active_tabs"):
                 self._merge_tabs_to_global(old_session.active_tabs)
 
-            # 如果舊會話是已提交狀態，進入下一步（已完成）
-            if old_session.status == SessionStatus.FEEDBACK_SUBMITTED:
+            # 將非終態的舊會話強制標記為已完成
+            terminal_states = {
+                SessionStatus.COMPLETED,
+                SessionStatus.ERROR,
+                SessionStatus.TIMEOUT,
+                SessionStatus.EXPIRED,
+            }
+            if old_session.status not in terminal_states:
+                old_status = old_session.status.value
+                old_session.status = SessionStatus.COMPLETED
+                old_session.status_message = "被新會話替代，自動完成"
                 debug_log(
-                    f"舊會話 {old_session.session_id} 進入下一步：已提交 → 已完成"
+                    f"✅ 舊會話 {old_session.session_id} 狀態 {old_status} → completed"
                 )
-                success = old_session.next_step("反饋已處理，會話完成")
-                if success:
-                    debug_log(f"✅ 舊會話 {old_session.session_id} 成功進入已完成狀態")
-                else:
-                    debug_log(f"❌ 舊會話 {old_session.session_id} 無法進入下一步")
             else:
                 debug_log(
-                    f"舊會話 {old_session.session_id} 狀態為 {old_session.status.value}，無需轉換"
+                    f"舊會話 {old_session.session_id} 已處於終態 {old_session.status.value}，無需轉換"
                 )
 
             # 確保舊會話仍在字典中（用於API獲取）
@@ -395,7 +400,53 @@ class WebUIManager:
             self._pending_session_update = True
             debug_log("沒有舊 WebSocket 連接，設置待更新標記")
 
+        # 容量限制：超過 max_sessions 時清理最舊的非活躍會話
+        self._enforce_session_capacity()
+
         return session_id
+
+    def _enforce_session_capacity(self):
+        """強制執行會話容量限制，清理超出的舊會話"""
+        if len(self.sessions) <= self.max_sessions:
+            return
+
+        excess_count = len(self.sessions) - self.max_sessions
+        current_session_id = (
+            self.current_session.session_id if self.current_session else None
+        )
+
+        candidates = []
+        for sid, s in self.sessions.items():
+            if sid == current_session_id:
+                continue
+            priority = 0
+            if s.status in (
+                SessionStatus.COMPLETED,
+                SessionStatus.ERROR,
+                SessionStatus.TIMEOUT,
+                SessionStatus.EXPIRED,
+            ):
+                priority += 100
+            elif s.status == SessionStatus.FEEDBACK_SUBMITTED:
+                priority += 50
+            priority += s.get_age() / 60
+            candidates.append((sid, s, priority))
+
+        candidates.sort(key=lambda x: x[2], reverse=True)
+
+        cleaned = 0
+        for sid, s, _ in candidates[:excess_count]:
+            try:
+                s._cleanup_sync_enhanced(CleanupReason.MANUAL)
+                del self.sessions[sid]
+                cleaned += 1
+            except Exception as e:
+                debug_log(f"容量限制清理會話 {sid} 失敗: {e}")
+
+        if cleaned > 0:
+            debug_log(
+                f"容量限制清理了 {cleaned} 個會話，當前會話數: {len(self.sessions)}/{self.max_sessions}"
+            )
 
     def get_session(self, session_id: str) -> WebFeedbackSession | None:
         """獲取回饋會話 - 保持向後兼容"""

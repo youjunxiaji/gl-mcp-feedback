@@ -26,7 +26,7 @@ class CleanupPolicy:
 
     max_idle_time: int = 1800  # 最大空閒時間（秒）
     max_session_age: int = 7200  # 最大會話年齡（秒）
-    max_sessions: int = 10  # 最大會話數量
+    max_sessions: int = 5  # 最大會話數量
     cleanup_interval: int = 300  # 清理間隔（秒）
     memory_pressure_threshold: float = 0.8  # 內存壓力閾值
     enable_auto_cleanup: bool = True  # 啟用自動清理
