@@ -32,12 +32,6 @@
         this.settingsManager = null;
         this.uiManager = null;
 
-        // 提示詞管理器
-        this.promptManager = null;
-        this.promptModal = null;
-        this.promptSettingsUI = null;
-        this.promptInputButtons = null;
-
         // 音效管理器
         this.audioManager = null;
         this.audioSettingsUI = null;
@@ -236,10 +230,7 @@
                             }
                         });
 
-                        // 9. 初始化提示詞管理器
-                        self.initializePromptManagers();
-
-                        // 10. 初始化音效管理器
+                        // 9. 初始化音效管理器
                         self.initializeAudioManagers();
 
                         // 11. 初始化通知管理器
@@ -308,17 +299,6 @@
                     self.submitFeedback();
                 });
             });
-
-            // 取消按鈕事件 - 已移除取消按鈕，保留 ESC 快捷鍵功能
-
-            // 複製用戶內容按鈕
-            const copyUserFeedback = window.MCPFeedback.Utils.safeQuerySelector('#copyUserFeedback');
-            if (copyUserFeedback) {
-                copyUserFeedback.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    self.copyUserFeedback();
-                });
-            }
 
             // 快捷鍵
             document.addEventListener('keydown', function(e) {
@@ -444,55 +424,6 @@
             this.settingsManager.setMultiple({
                 imageSizeLimit: this.imageHandler.imageSizeLimit
             });
-        }
-    };
-
-    /**
-     * 初始化提示詞管理器
-     */
-    FeedbackApp.prototype.initializePromptManagers = function() {
-        console.log('📝 初始化提示詞管理器...');
-
-        try {
-            // 檢查提示詞模組是否已載入
-            if (!window.MCPFeedback.Prompt) {
-                console.warn('⚠️ 提示詞模組未載入，跳過初始化');
-                return;
-            }
-
-            // 1. 初始化提示詞管理器
-            this.promptManager = new window.MCPFeedback.Prompt.PromptManager({
-                settingsManager: this.settingsManager
-            });
-            this.promptManager.init();
-
-            // 2. 初始化提示詞彈窗
-            this.promptModal = new window.MCPFeedback.Prompt.PromptModal();
-
-            // 3. 初始化設定頁籤 UI
-            this.promptSettingsUI = new window.MCPFeedback.Prompt.PromptSettingsUI({
-                promptManager: this.promptManager,
-                promptModal: this.promptModal,
-                settingsManager: this.settingsManager
-            });
-            this.promptSettingsUI.init('#promptManagementContainer');
-
-            // 4. 初始化輸入按鈕
-            this.promptInputButtons = new window.MCPFeedback.Prompt.PromptInputButtons({
-                promptManager: this.promptManager,
-                promptModal: this.promptModal
-            });
-
-            // 初始化輸入按鈕到回饋輸入區域
-            const inputContainers = [
-                '#combinedFeedbackText'    // 工作區分頁的 textarea
-            ];
-            this.promptInputButtons.init(inputContainers);
-
-            console.log('✅ 提示詞管理器初始化完成');
-
-        } catch (error) {
-            console.error('❌ 提示詞管理器初始化失敗:', error);
         }
     };
 
@@ -1218,57 +1149,6 @@
     };
 
     /**
-     * 複製用戶回饋內容
-     */
-    FeedbackApp.prototype.copyUserFeedback = function() {
-        console.log('📋 複製用戶回饋內容...');
-
-        const feedbackInput = window.MCPFeedback.Utils.safeQuerySelector('#combinedFeedbackText');
-        if (!feedbackInput || !feedbackInput.value.trim()) {
-            window.MCPFeedback.Utils.showMessage(
-                window.i18nManager ? window.i18nManager.t('feedback.noContent') : '沒有可複製的內容',
-                window.MCPFeedback.Utils.CONSTANTS.MESSAGE_WARNING
-            );
-            return;
-        }
-
-        const textContent = feedbackInput.value;
-
-        // 複製到剪貼板
-        navigator.clipboard.writeText(textContent)
-            .then(function() {
-                console.log('✅ 內容已複製到剪貼板');
-                window.MCPFeedback.Utils.showMessage(
-                    window.i18nManager ? window.i18nManager.t('feedback.copySuccess') : '內容已複製到剪貼板',
-                    window.MCPFeedback.Utils.CONSTANTS.MESSAGE_SUCCESS
-                );
-            })
-            .catch(function(err) {
-                console.error('❌ 複製失敗:', err);
-                // 降級方案：使用舊的複製方法
-                const textarea = document.createElement('textarea');
-                textarea.value = textContent;
-                textarea.style.position = 'fixed';
-                textarea.style.left = '-999999px';
-                document.body.appendChild(textarea);
-                textarea.select();
-                try {
-                    document.execCommand('copy');
-                    window.MCPFeedback.Utils.showMessage(
-                        window.i18nManager ? window.i18nManager.t('feedback.copySuccess') : '內容已複製到剪貼板',
-                        window.MCPFeedback.Utils.CONSTANTS.MESSAGE_SUCCESS
-                    );
-                } catch (error) {
-                    window.MCPFeedback.Utils.showMessage(
-                        window.i18nManager ? window.i18nManager.t('feedback.copyFailed') : '複製失敗',
-                        window.MCPFeedback.Utils.CONSTANTS.MESSAGE_ERROR
-                    );
-                }
-                document.body.removeChild(textarea);
-            });
-    };
-
-    /**
      * 取消回饋
      */
     FeedbackApp.prototype.cancelFeedback = function() {
@@ -1486,8 +1366,8 @@
             this._lastAutoSubmitCheck = Date.now();
         }
 
-        if (!this.autoSubmitManager || !this.settingsManager || !this.promptManager) {
-            console.log('⚠️ 自動提交管理器、設定管理器或提示詞管理器未初始化');
+        if (!this.autoSubmitManager || !this.settingsManager) {
+            console.log('⚠️ 自動提交管理器或設定管理器未初始化');
             return;
         }
 
@@ -1502,25 +1382,6 @@
             timeout: autoSubmitTimeout
         });
 
-        // 雙重檢查：設定中的 promptId 和提示詞的 isAutoSubmit 狀態
-        let validAutoSubmitPrompt = null;
-        if (autoSubmitPromptId) {
-            const prompt = this.promptManager.getPromptById(autoSubmitPromptId);
-            if (prompt && prompt.isAutoSubmit) {
-                validAutoSubmitPrompt = prompt;
-            } else {
-                console.log('⚠️ 自動提交提示詞驗證失敗:', {
-                    promptExists: !!prompt,
-                    isAutoSubmit: prompt ? prompt.isAutoSubmit : false,
-                    reason: !prompt ? '提示詞不存在' : '提示詞未標記為自動提交'
-                });
-                // 只清空無效的 promptId，保留用戶的 autoSubmitEnabled 設定
-                // 這樣避免因為提示詞問題而強制關閉用戶的自動提交偏好
-                this.settingsManager.set('autoSubmitPromptId', null);
-                console.log('🔧 已清空無效的 autoSubmitPromptId，保留 autoSubmitEnabled 設定:', autoSubmitEnabled);
-            }
-        }
-
         // 檢查當前狀態是否為等待回饋
         const currentState = this.uiManager ? this.uiManager.getFeedbackState() : null;
         const isWaitingForFeedback = currentState === window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_WAITING;
@@ -1528,7 +1389,7 @@
         console.log('🔍 當前回饋狀態:', currentState, '是否等待回饋:', isWaitingForFeedback);
 
         // 如果所有條件都滿足，啟動自動提交
-        if (autoSubmitEnabled && validAutoSubmitPrompt && autoSubmitTimeout && isWaitingForFeedback) {
+        if (autoSubmitEnabled && autoSubmitPromptId && autoSubmitTimeout && isWaitingForFeedback) {
             console.log('✅ 自動提交條件滿足，啟動倒數計時器');
             this.autoSubmitManager.start(autoSubmitTimeout, autoSubmitPromptId);
             this.updateAutoSubmitStatus('enabled', autoSubmitTimeout);
@@ -1591,44 +1452,10 @@
     FeedbackApp.prototype.performAutoSubmit = function() {
         console.log('⏰ 執行自動提交...');
 
-        if (!this.autoSubmitManager || !this.promptManager || !this.settingsManager) {
-            console.error('❌ 自動提交管理器、提示詞管理器或設定管理器未初始化');
+        if (!this.autoSubmitManager || !this.settingsManager) {
+            console.error('❌ 自動提交管理器或設定管理器未初始化');
             this.autoSubmitManager && this.autoSubmitManager.stop();
             return;
-        }
-
-        const promptId = this.autoSubmitManager.currentPromptId;
-        const autoSubmitPromptId = this.settingsManager.get('autoSubmitPromptId');
-
-        // 雙重檢查：確保 promptId 有效且與設定一致
-        if (!promptId || !autoSubmitPromptId || promptId !== autoSubmitPromptId) {
-            console.error('❌ 自動提交提示詞 ID 不一致或為空:', {
-                currentPromptId: promptId,
-                settingsPromptId: autoSubmitPromptId
-            });
-            this.pauseAutoSubmit('提示詞 ID 不一致');
-            return;
-        }
-
-        const prompt = this.promptManager.getPromptById(promptId);
-
-        if (!prompt) {
-            console.error('❌ 找不到自動提交提示詞:', promptId);
-            this.pauseAutoSubmit('找不到指定的提示詞');
-            return;
-        }
-
-        // 檢查提示詞的 isAutoSubmit 狀態
-        if (!prompt.isAutoSubmit) {
-            console.error('❌ 提示詞不是自動提交狀態:', prompt.name);
-            this.pauseAutoSubmit('提示詞不是自動提交狀態');
-            return;
-        }
-
-        // 設定提示詞內容到回饋輸入框
-        const feedbackInput = window.MCPFeedback.Utils.safeQuerySelector('#combinedFeedbackText');
-        if (feedbackInput) {
-            feedbackInput.value = prompt.content;
         }
 
         // 顯示自動提交訊息
@@ -1639,9 +1466,6 @@
 
         // 執行提交
         this.submitFeedback();
-
-        // 更新提示詞使用記錄
-        this.promptManager.usePrompt(promptId);
 
         // 停止自動提交
         this.autoSubmitManager.stop();
@@ -1662,11 +1486,6 @@
         if (this.settingsManager) {
             this.settingsManager.set('autoSubmitEnabled', false);
             this.settingsManager.set('autoSubmitPromptId', null);
-        }
-
-        // 清空所有提示詞的自動提交標記
-        if (this.promptManager) {
-            this.promptManager.clearAutoSubmitPrompt();
         }
 
         // 更新 UI 狀態

@@ -12,7 +12,7 @@
 
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="stylesheet" href="/static/css/session-management.css">
-    <link rel="stylesheet" href="/static/css/prompt-management.css">
+
     <link rel="stylesheet" href="/static/css/audio-management.css">
     <link rel="stylesheet" href="/static/css/notification-settings.css">
     <style>
@@ -541,21 +541,6 @@
                                 style="min-height: 150px;"
                             ></textarea>
 
-                            <!-- 提示詞按鈕 - 移至輸入框下方 -->
-                            <div class="prompt-input-buttons" id="combinedPromptButtons" style="margin-top: 8px;">
-                                <button type="button" class="prompt-input-btn select-prompt-btn" data-container-index="1">
-                                    <span>📝</span>
-                                    <span class="button-text" data-i18n="prompts.buttons.selectPrompt">Templates</span>
-                                </button>
-                                <button type="button" class="prompt-input-btn last-prompt-btn" data-container-index="1">
-                                    <span>🔄</span>
-                                    <span class="button-text" data-i18n="prompts.buttons.useLastPrompt">Last Used</span>
-                                </button>
-                                <button type="button" class="prompt-input-btn copy-user-content-btn" id="copyUserFeedback">
-                                    <span>📋</span>
-                                    <span class="button-text" data-i18n="sessionManagement.copyUserContent">複製用戶內容</span>
-                                </button>
-                            </div>
                         </div>
 
                         <!-- 圖片上傳組件 -->
@@ -605,12 +590,6 @@
                                         data-i18n-title="sessionManagement.copySessionContent"
                                         aria-label="複製會話內容">
                                     📋 <span data-i18n="sessionManagement.copySessionContent">複製會話內容</span>
-                                </button>
-                                <button class="btn-small btn-secondary" id="copyCurrentUserContent"
-                                        data-i18n="sessionManagement.copyUserContent"
-                                        data-i18n-title="sessionManagement.copyUserContent"
-                                        aria-label="複製用戶內容">
-                                    📝 <span data-i18n="sessionManagement.copyUserContent">複製用戶內容</span>
                                 </button>
                             </div>
                         </div>
@@ -948,16 +927,6 @@
                     </div>
                 </div>
 
-                <!-- 提示詞管理卡片 -->
-                <div class="settings-card">
-                    <div class="settings-card-header">
-                        <h3 class="settings-card-title" data-i18n="prompts.management.title">📝 常用提示詞管理</h3>
-                    </div>
-                    <div class="settings-card-body" id="promptManagementContainer">
-                        <!-- 提示詞管理 UI 將在這裡動態生成 -->
-                    </div>
-                </div>
-
                 <!-- 重置設定卡片 -->
                 <div class="settings-card">
                     <div class="settings-card-header">
@@ -1079,12 +1048,6 @@
     <script src="/static/js/modules/session/session-data-manager.js?v=2025010510"></script>
     <script src="/static/js/modules/session/session-ui-renderer.js?v=2025010510"></script>
     <script src="/static/js/modules/session/session-details-modal.js?v=2025010510"></script>
-
-    <!-- 提示詞管理模組 -->
-    <script src="/static/js/modules/prompt/prompt-manager.js?v=2025010510"></script>
-    <script src="/static/js/modules/prompt/prompt-modal.js?v=2025010510"></script>
-    <script src="/static/js/modules/prompt/prompt-settings-ui.js?v=2025010510"></script>
-    <script src="/static/js/modules/prompt/prompt-input-buttons.js?v=2025010510"></script>
 
     <!-- 音效管理模組 -->
     <script src="/static/js/modules/audio/audio-manager.js?v=2025010510"></script>

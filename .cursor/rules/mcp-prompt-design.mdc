@@ -1,5 +1,6 @@
 ---
-alwaysApply: true
+alwaysApply: false
+description: MCP prompt 定义（@mcp.prompt）不应包含任何参数，避免 Cursor 弹出输入框影响用户体验。
 ---
 # MCP Prompt 设计规范
 

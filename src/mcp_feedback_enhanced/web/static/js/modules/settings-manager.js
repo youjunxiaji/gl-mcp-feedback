@@ -771,14 +771,6 @@
                         self.set('autoSubmitPromptId', null);
                         self.set('autoSubmitEnabled', false);
 
-                        // 同時清除所有提示詞的 isAutoSubmit 標記
-                        if (window.feedbackApp && window.feedbackApp.promptManager) {
-                            window.feedbackApp.promptManager.clearAutoSubmitPrompt();
-                            console.log('🔄 已清除所有提示詞的自動提交標記');
-                        } else {
-                            console.warn('⚠️ promptManager 未找到，無法清除提示詞標記');
-                        }
-
                         // 觸發狀態變更事件，更新相關 UI 組件
                         self.triggerAutoSubmitStateChange(false);
 
@@ -791,30 +783,12 @@
                         self.set('autoSubmitPromptId', promptId);
                         console.log('設定自動提交提示詞 ID:', promptId);
 
-                        // 同時更新對應提示詞的 isAutoSubmit 標記
-                        if (window.feedbackApp && window.feedbackApp.promptManager) {
-                            try {
-                                window.feedbackApp.promptManager.setAutoSubmitPrompt(promptId);
-                                console.log('🔄 已設定提示詞的自動提交標記:', promptId);
+                        // 觸發狀態變更事件，更新相關 UI 組件
+                        const currentEnabled = self.get('autoSubmitEnabled');
+                        self.triggerAutoSubmitStateChange(currentEnabled);
 
-                                // 觸發狀態變更事件，更新相關 UI 組件
-                                const currentEnabled = self.get('autoSubmitEnabled');
-                                self.triggerAutoSubmitStateChange(currentEnabled);
-
-                                // 更新 UI 元素
-                                self.applyAutoSubmitSettingsToUI();
-
-                                console.log('🔄 已更新自動提交 UI 狀態');
-                            } catch (promptError) {
-                                console.error('❌ 設定提示詞自動提交標記失敗:', promptError);
-                                // 如果設定提示詞失敗，回滾設定
-                                self.set('autoSubmitPromptId', null);
-                                e.target.value = '';
-                                throw promptError;
-                            }
-                        } else {
-                            console.warn('⚠️ promptManager 未找到，無法設定提示詞標記');
-                        }
+                        // 更新 UI 元素
+                        self.applyAutoSubmitSettingsToUI();
                     }
                 } catch (error) {
                     Utils.showMessage(error.message, Utils.CONSTANTS.MESSAGE_ERROR);
