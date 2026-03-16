@@ -62,40 +62,137 @@
 
 
 
-        /* 工作區分頁的水平佈局樣式 */
+        /* 水平佈局：確保高度鏈路從 body 到 tab-content 都被約束 */
+        body.layout-combined-horizontal {
+            height: 100vh;
+            max-height: 100vh;
+            overflow: hidden;
+        }
+
+        body.layout-combined-horizontal .container {
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        body.layout-combined-horizontal .main-content {
+            flex: 1;
+            min-height: 0;
+        }
+
+        body.layout-combined-horizontal .main-content-area {
+            flex: 1;
+            min-height: 0;
+        }
+
+        /* 水平佈局：左右獨立滾動，右側反饋區固定不隨左側滾動 */
+        #tab-combined.active.combined-horizontal {
+            overflow: hidden !important;
+            min-height: 0;
+        }
+
         #tab-combined.active.combined-horizontal .combined-content {
             display: flex !important;
             flex-direction: row !important;
+            align-items: stretch !important;
             gap: 16px;
-            height: calc(100% - 60px); /* 減去描述區塊的高度 */
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section {
+            flex: 1 !important;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            margin-bottom: 0;
+            min-height: 0;
         }
 
         #tab-combined.active.combined-horizontal .combined-section:first-child {
-            flex: 1 !important;
             min-width: 300px;
             max-width: 50%;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden; /* 確保容器不超出範圍 */
         }
 
         #tab-combined.active.combined-horizontal .combined-section:last-child {
-            flex: 1 !important;
             min-width: 400px;
+            overflow: hidden;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .feedback-title-container {
+            flex-shrink: 0;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child > .input-group {
+            margin: 0;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child > .input-group:last-child {
+            flex-shrink: 0;
+            margin-top: 16px;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-upload-area {
+            height: 100px;
+            max-height: 100px;
+            padding: 6px;
+            box-sizing: border-box;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-container {
+            justify-content: flex-start;
+            margin-top: 0;
+            padding: 4px 8px;
+            gap: 8px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            width: 100%;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item {
+            margin: 4px 4px 0 0;
+            flex-shrink: 0;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item:hover {
+            transform: none;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item img {
+            width: 64px;
+            height: 64px;
+            object-fit: cover;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item .image-info {
+            display: none;
+        }
+
+        #tab-combined.active.combined-horizontal .combined-section:last-child .image-remove-btn {
+            top: -2px;
+            right: -2px;
+            width: 16px;
+            height: 16px;
+            font-size: 10px;
         }
 
         #tab-combined.active.combined-horizontal .combined-summary {
-            flex: 1; /* 讓摘要區域自動填滿剩餘空間 */
+            flex: 1;
             display: flex;
             flex-direction: column;
-            overflow: hidden; /* 確保摘要容器不超出範圍 */
+            overflow: hidden;
+            min-height: 0;
         }
 
         #tab-combined.active.combined-horizontal #combinedSummaryContent {
-            flex: 1; /* 讓內容區域自動填滿摘要容器 */
-            min-height: 200px; /* 降低最小高度 */
-            overflow-y: auto; /* 添加垂直滾動條 */
-            overflow-x: hidden; /* 隱藏水平滾動條 */
+            flex: 1;
+            min-height: 200px;
+            overflow-y: auto;
+            overflow-x: hidden;
         }
 
         #tab-combined.active.combined-horizontal .text-input {
@@ -184,7 +281,6 @@
             color: var(--text-primary);
             margin: 0 0 12px 0;
             padding-bottom: 8px;
-            border-bottom: 1px solid var(--border-color);
         }
 
         .combined-summary {
@@ -491,13 +587,9 @@
                 </div>
             </div>
 
-
-
-
-
             <!-- ===== AI 摘要分頁 ===== -->
             <div id="tab-summary" class="tab-content">
-                <div class="input-group">
+                <div class="input-group" style="margin-top: 16px;">
                     <div id="summaryContent" class="text-input" style="min-height: 300px; cursor: text; padding: 12px; line-height: 1.6; word-wrap: break-word; overflow-wrap: break-word;" data-dynamic-content="aiSummary">
                         {{ summary }}
                     </div>
@@ -521,14 +613,9 @@
                     <div class="combined-section">
                         <div class="feedback-title-container">
                             <h3 class="combined-section-title" data-i18n="combined.feedbackTitle">💬 提供回饋</h3>
-                            <button id="submitBtn" class="btn btn-success combined-submit-btn" data-i18n="buttons.submit">
-                                ✅ 提交回饋
-                            </button>
                         </div>
 
-                        <div class="input-group">
-                            <label class="input-label" data-i18n="feedback.textLabel">文字回饋</label>
-
+                        <div class="input-group" style="flex: 1; display: flex; flex-direction: column;">
                             <textarea
                                 id="combinedFeedbackText"
                                 class="text-input"
@@ -538,7 +625,7 @@
 💡 小提示：
 • 按 Ctrl+Enter/Cmd+Enter (支援數字鍵盤) 可快速提交
 • 按 Ctrl+V/Cmd+V 可直接貼上剪貼板圖片"
-                                style="min-height: 150px;"
+                                style="min-height: 150px; flex: 1;"
                             ></textarea>
 
                         </div>
@@ -912,7 +999,7 @@
                                     匯出或清空本地儲存的會話歷史記錄
                                 </div>
                             </div>
-                            <div class="setting-control" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <div class="setting-control" style="display: flex; flex-wrap: wrap;">
                                 <button id="exportSessionHistoryBtn" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
                                     <span data-i18n="sessionHistory.management.exportAll">匯出全部</span>
                                 </button>
@@ -1063,7 +1150,7 @@
     <script src="/static/js/modules/websocket-manager.js?v=2025010510"></script>
     <script src="/static/js/modules/connection-monitor.js?v=2025010510"></script>
     <script src="/static/js/modules/session-manager.js?v=2025010510"></script>
-    <script src="/static/js/modules/file-upload-manager.js?v=2025010510"></script>
+    <script src="/static/js/modules/file-upload-manager.js?v=2026031601"></script>
     <script src="/static/js/modules/image-handler.js?v=2025010510"></script>
     <script src="/static/js/modules/settings-manager.js?v=2025010510"></script>
     <script src="/static/js/modules/ui-manager.js?v=2025010510"></script>

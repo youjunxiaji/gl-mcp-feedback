@@ -387,6 +387,12 @@
             self.updatePreviewContainer(container);
         });
 
+        var hasFiles = this.files.length > 0;
+        var uploadTexts = document.querySelectorAll('[id$="ImageUploadText"]');
+        uploadTexts.forEach(function(el) {
+            el.style.display = hasFiles ? 'none' : '';
+        });
+
         this.updateFileCount();
         console.log('🖼️ 已更新', previewContainers.length, '個預覽容器');
     };

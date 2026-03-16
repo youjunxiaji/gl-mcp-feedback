@@ -1391,7 +1391,7 @@ h3.combined-section-title {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 0;
     gap: 16px;
 }
 
