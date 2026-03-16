@@ -1,0 +1,181 @@
+/**
+ * index.html 页面专用样式
+ * ========================
+ * 
+ * 等待界面、连接状态指示器等 index 页面独有的样式。
+ */
+
+/* ===== 等待会话界面 ===== */
+
+.waiting-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    text-align: center;
+}
+
+.waiting-content {
+    max-width: 600px;
+    padding: 40px;
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.waiting-title {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: var(--accent-color);
+    margin-bottom: 20px;
+}
+
+.waiting-description {
+    color: var(--text-secondary);
+    font-size: 1.2em;
+    margin-bottom: 30px;
+}
+
+.waiting-status {
+    padding: 20px;
+    background: rgba(0, 122, 204, 0.1);
+    border: 1px solid var(--accent-color);
+    border-radius: 8px;
+    color: var(--accent-color);
+}
+
+/* ===== index 页面连接状态 ===== */
+
+.connection-status {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* index 页面的连接指示器（圆点样式，与 feedback 页面的不同） */
+.connection-status .connection-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    padding: 0;
+    border: none;
+    background: var(--error-color);
+    transition: all 0.3s ease;
+}
+
+.connection-status .connection-indicator.connected {
+    background: var(--success-color);
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+    color: inherit;
+}
+
+.connection-status .connection-indicator.connecting {
+    background: var(--warning-color);
+    animation: pulse 1s infinite;
+}
+
+.connection-status .connection-indicator.error {
+    background: var(--error-color);
+}
+
+.connection-status .connection-indicator.disconnected {
+    background: var(--text-secondary);
+    color: inherit;
+}
+
+/* ===== 主容器 ===== */
+
+.main-container {
+    display: none;
+    width: 100%;
+    margin: 0 auto;
+    padding: 20px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    flex-direction: column;
+}
+
+.main-container.active {
+    display: flex;
+}
+
+.feedback-container {
+    width: 100%;
+    max-width: 1000px;
+    margin: 0 auto;
+}
+
+/* ===== index 页面专用区块 ===== */
+
+.ai-summary-section,
+.feedback-section,
+.command-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.ai-summary-section h2,
+.feedback-section h3,
+.command-section h3 {
+    color: var(--accent-color);
+    margin-bottom: 16px;
+    margin-top: 0;
+}
+
+/* index 页面的命令相关样式 */
+.command-input-line {
+    width: 100%;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    transition: border-color 0.3s ease;
+    box-sizing: border-box;
+}
+
+.command-input-line:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.command-output {
+    background: #0f0f0f;
+    border: 2px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #00ff00;
+    text-shadow: 0 0 5px #00ff00;
+    white-space: pre-wrap;
+    overflow-y: auto;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+}

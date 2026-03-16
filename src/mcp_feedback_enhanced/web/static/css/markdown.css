@@ -1,0 +1,288 @@
+/**
+ * Markdown 渲染样式
+ * =================
+ * 
+ * 用于 #summaryContent、#combinedSummaryContent 和 .summary-content 的
+ * Markdown 内容渲染样式。基于 marked.js 官方样式 + VSCode 风格。
+ *
+ * 注意：此文件必须在 layout.css 和 components.css 之后加载，
+ * 以确保选择器特异性足以覆盖通用样式，无需 !important。
+ */
+
+/* ===== 容器基础 ===== */
+
+#summaryContent,
+#combinedSummaryContent {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    font-size: 14px;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+
+/* ===== 段落 ===== */
+
+#summaryContent p,
+#combinedSummaryContent p {
+    margin: 0.3em 0;
+    line-height: 1.5;
+    font-size: 14px;
+    padding: 0;
+}
+
+/* ===== 强调 ===== */
+
+#summaryContent strong,
+#combinedSummaryContent strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+#summaryContent em,
+#combinedSummaryContent em {
+    font-style: italic;
+    color: var(--text-primary);
+}
+
+/* ===== 删除线 ===== */
+
+#summaryContent del, #summaryContent s,
+#combinedSummaryContent del, #combinedSummaryContent s {
+    text-decoration: line-through;
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+/* ===== 标题 - VSCode 风格含底线 ===== */
+
+#summaryContent h1, #summaryContent h2, #summaryContent h3,
+#summaryContent h4, #summaryContent h5, #summaryContent h6,
+#combinedSummaryContent h1, #combinedSummaryContent h2, #combinedSummaryContent h3,
+#combinedSummaryContent h4, #combinedSummaryContent h5, #combinedSummaryContent h6 {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+#summaryContent h1,
+#combinedSummaryContent h1 {
+    margin: 0.6em 0 0.3em 0;
+    line-height: 1.3;
+    font-size: 1.8em;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 6px;
+}
+
+#summaryContent h2,
+#combinedSummaryContent h2 {
+    margin: 0.5em 0 0.25em 0;
+    line-height: 1.3;
+    font-size: 1.5em;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 4px;
+}
+
+#summaryContent h3,
+#combinedSummaryContent h3 {
+    margin: 0.4em 0 0.2em 0;
+    line-height: 1.3;
+    font-size: 1.3em;
+}
+
+#summaryContent h4,
+#combinedSummaryContent h4 {
+    margin: 0.35em 0 0.15em 0;
+    line-height: 1.3;
+    font-size: 1.1em;
+}
+
+#summaryContent h5, #summaryContent h6,
+#combinedSummaryContent h5, #combinedSummaryContent h6 {
+    margin: 0.3em 0 0.1em 0;
+    line-height: 1.3;
+    font-size: 1em;
+}
+
+/* ===== 行内代码 ===== */
+
+#summaryContent code,
+#combinedSummaryContent code {
+    padding: 0.2em 0.4em;
+    margin: 0;
+    font-size: 85%;
+    background-color: rgba(175, 184, 193, 0.2);
+    border-radius: 3px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    color: var(--text-primary);
+    line-height: 1.45;
+}
+
+/* ===== 代码块 ===== */
+
+#summaryContent pre,
+#combinedSummaryContent pre {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    padding: 16px;
+    overflow: auto;
+    font-size: 85%;
+    line-height: 1.45;
+    background-color: rgba(175, 184, 193, 0.1);
+    border-radius: 3px;
+    margin: 0.5em 0;
+    border: none;
+}
+
+#summaryContent pre code,
+#combinedSummaryContent pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-size: 100%;
+    color: var(--text-primary);
+    display: block;
+    overflow: auto;
+}
+
+/* ===== 列表 - VSCode 风格紧凑 ===== */
+
+#summaryContent ul, #summaryContent ol,
+#combinedSummaryContent ul, #combinedSummaryContent ol {
+    margin: 0;
+    padding: 0;
+    padding-left: 1.2em;
+}
+
+#summaryContent li,
+#combinedSummaryContent li {
+    margin: 0.15em 0;
+    line-height: 1.5;
+    padding: 0;
+    font-size: 14px;
+}
+
+#summaryContent li > ul, #summaryContent li > ol,
+#combinedSummaryContent li > ul, #combinedSummaryContent li > ol {
+    margin: 0;
+    padding: 0;
+    padding-left: 1.0em;
+}
+
+/* 段落/标题后的列表紧密贴合 */
+#summaryContent p + ul, #summaryContent p + ol,
+#summaryContent h1 + ul, #summaryContent h2 + ul, #summaryContent h3 + ul, #summaryContent h4 + ul,
+#summaryContent h1 + ol, #summaryContent h2 + ol, #summaryContent h3 + ol, #summaryContent h4 + ol,
+#combinedSummaryContent p + ul, #combinedSummaryContent p + ol,
+#combinedSummaryContent h1 + ul, #combinedSummaryContent h2 + ul, #combinedSummaryContent h3 + ul, #combinedSummaryContent h4 + ul,
+#combinedSummaryContent h1 + ol, #combinedSummaryContent h2 + ol, #combinedSummaryContent h3 + ol, #combinedSummaryContent h4 + ol {
+    margin-top: 0;
+    padding-top: 0;
+}
+
+/* ===== 引用块 ===== */
+
+#summaryContent blockquote,
+#combinedSummaryContent blockquote {
+    border-left: 4px solid var(--accent-color);
+    margin: 0.5em 0;
+    padding: 0.4em 0.8em;
+    background: rgba(0, 122, 204, 0.05);
+    color: var(--text-secondary);
+    font-style: italic;
+    line-height: 1.5;
+    font-size: 14px;
+}
+
+/* ===== 链接 ===== */
+
+#summaryContent a,
+#combinedSummaryContent a {
+    color: #0366d6;
+    text-decoration: none;
+}
+
+#summaryContent a:hover,
+#combinedSummaryContent a:hover {
+    text-decoration: underline;
+}
+
+/* ===== 水平线 ===== */
+
+#summaryContent hr,
+#combinedSummaryContent hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 24px 0;
+    height: 0;
+}
+
+/* ===== 首尾元素边距清除 ===== */
+
+#summaryContent > *:first-child,
+#combinedSummaryContent > *:first-child {
+    margin-top: 0;
+}
+
+#summaryContent > *:last-child,
+#combinedSummaryContent > *:last-child {
+    margin-bottom: 0;
+}
+
+/* ===== 表格 ===== */
+
+#summaryContent table,
+#combinedSummaryContent table {
+    border-spacing: 0;
+    border-collapse: collapse;
+    display: table;
+    width: 100%;
+    margin: 0.5em 0;
+    font-variant: tabular-nums;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--bg-primary);
+}
+
+#summaryContent thead,
+#combinedSummaryContent thead {
+    display: table-header-group;
+}
+
+#summaryContent tbody,
+#combinedSummaryContent tbody {
+    display: table-row-group;
+}
+
+#summaryContent tr,
+#combinedSummaryContent tr {
+    display: table-row;
+    background-color: var(--bg-primary);
+    border-top: 1px solid var(--border-color);
+}
+
+#summaryContent tr:nth-child(2n),
+#combinedSummaryContent tr:nth-child(2n) {
+    background-color: var(--bg-secondary);
+}
+
+#summaryContent td, #summaryContent th,
+#combinedSummaryContent td, #combinedSummaryContent th {
+    display: table-cell;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+    color: var(--text-primary);
+    line-height: 1.3;
+}
+
+#summaryContent th,
+#combinedSummaryContent th {
+    font-weight: 600;
+    background-color: var(--bg-secondary);
+    border-bottom: 2px solid var(--border-color);
+}
+
+#summaryContent td > *:last-child,
+#combinedSummaryContent td > *:last-child {
+    margin-bottom: 0;
+}

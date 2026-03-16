@@ -1,0 +1,466 @@
+/**
+ * 布局样式
+ * ========
+ * 
+ * 页面整体布局、容器、水平/垂直工作区布局、响应式调整。
+ * 从 feedback.html 内联样式和 styles.css 迁移而来。
+ */
+
+/* ===== 容器与头部 ===== */
+
+.container {
+    width: 100%;
+    margin: 0 auto;
+    padding: 12px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 15px 0;
+    margin-bottom: 20px;
+    border-radius: 8px 8px 0 0;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.title {
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--accent-color);
+    margin: 0;
+}
+
+.project-info {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+/* ===== 主内容区域 ===== */
+
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    max-width: 100%;
+    overflow: hidden;
+    gap: 0;
+    min-height: 0;
+}
+
+.main-content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: 12px;
+    overflow: hidden;
+    transition: all 0.6s cubic-bezier(0.4, 0.0, 0.2, 1);
+    background: var(--bg-primary);
+    border-radius: 8px 0 0 0;
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.05);
+}
+
+.main-content.panel-collapsed .main-content-area {
+    margin-left: 0;
+    border-radius: 8px 0 0 0;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== 分页标签 ===== */
+
+.tabs {
+    border-bottom: 2px solid var(--border-color);
+    margin-bottom: 12px;
+}
+
+.tab-buttons {
+    display: flex;
+    gap: 2px;
+}
+
+.tab-button {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 10px 16px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.3s ease;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 4px 4px 0 0;
+}
+
+.tab-button.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+    background: var(--bg-tertiary);
+}
+
+.tab-button:hover:not(.active) {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-button.hidden {
+    display: none;
+}
+
+.tab-content {
+    display: none;
+    flex: 1;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    overflow-y: auto;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-height: 0;
+}
+
+.tab-content.active {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ===== 布局模式：标签页显隐控制 ===== */
+
+body.layout-combined-vertical .tab-button[data-tab="combined"],
+body.layout-combined-horizontal .tab-button[data-tab="combined"] {
+    display: inline-block;
+}
+
+body.layout-combined-vertical .tab-button[data-tab="feedback"],
+body.layout-combined-vertical .tab-button[data-tab="summary"],
+body.layout-combined-horizontal .tab-button[data-tab="feedback"],
+body.layout-combined-horizontal .tab-button[data-tab="summary"] {
+    display: none;
+}
+
+/* ===== 工作区基础样式 ===== */
+
+.combined-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+    height: 100%;
+}
+
+.combined-section {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.combined-section .section-header {
+    flex-shrink: 0;
+}
+
+.combined-summary {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0;
+    overflow: hidden;
+}
+
+#combinedSummaryContent {
+    flex: 1;
+    min-height: 150px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px;
+    line-height: 1.6;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: transparent;
+    border: none;
+    resize: none;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+#summaryContent {
+    padding: 12px;
+    line-height: 1.6;
+    font-family: inherit;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* ===== 水平布局模式 ===== */
+
+body.layout-combined-horizontal {
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+}
+
+body.layout-combined-horizontal .container {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+body.layout-combined-horizontal .main-content {
+    flex: 1;
+    min-height: 0;
+}
+
+body.layout-combined-horizontal .main-content-area {
+    flex: 1;
+    min-height: 0;
+}
+
+#tab-combined.active.combined-horizontal {
+    overflow: hidden;
+    min-height: 0;
+}
+
+#tab-combined.active.combined-horizontal .combined-content {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 16px;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#tab-combined.active.combined-horizontal .combined-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin-bottom: 0;
+    min-height: 0;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:first-child {
+    min-width: 300px;
+    max-width: 50%;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child {
+    min-width: 400px;
+    overflow: hidden;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .feedback-title-container {
+    flex-shrink: 0;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child > .input-group {
+    margin: 0;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child > .input-group:last-child {
+    flex-shrink: 0;
+    margin-top: 16px;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-upload-area {
+    height: 100px;
+    max-height: 100px;
+    padding: 6px;
+    box-sizing: border-box;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-container {
+    justify-content: flex-start;
+    margin-top: 0;
+    padding: 4px 8px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    width: 100%;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item {
+    margin: 4px 4px 0 0;
+    flex-shrink: 0;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item:hover {
+    transform: none;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item img {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-preview-item .image-info {
+    display: none;
+}
+
+#tab-combined.active.combined-horizontal .combined-section:last-child .image-remove-btn {
+    top: -2px;
+    right: -2px;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+}
+
+#tab-combined.active.combined-horizontal .combined-summary {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+}
+
+#tab-combined.active.combined-horizontal #combinedSummaryContent {
+    flex: 1;
+    min-height: 200px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#tab-combined.active.combined-horizontal .text-input {
+    min-height: 200px;
+}
+
+/* ===== 垂直布局模式 ===== */
+
+#tab-combined.active.combined-vertical .combined-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: calc(100% - 60px);
+}
+
+#tab-combined.active.combined-vertical .combined-section:first-child {
+    flex: 1;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#tab-combined.active.combined-vertical .combined-section:last-child {
+    flex: 2;
+    min-height: 300px;
+}
+
+#tab-combined.active.combined-vertical .combined-summary {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#tab-combined.active.combined-vertical #combinedSummaryContent {
+    flex: 1;
+    min-height: 150px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#tab-combined.active.combined-vertical .text-input {
+    min-height: 200px;
+}
+
+/* ===== 分割器（合并模式） ===== */
+
+.splitter-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 8px;
+}
+
+.splitter-section {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 16px;
+    transition: all 0.3s ease;
+}
+
+.splitter-handle {
+    height: 8px;
+    background: var(--border-color);
+    border-radius: 4px;
+    cursor: row-resize;
+    transition: background 0.3s ease;
+    margin: 4px 0;
+}
+
+.splitter-handle:hover {
+    background: var(--accent-color);
+}
+
+/* ===== 底部操作按钮 ===== */
+
+.footer-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 20px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    border-radius: 0 0 8px 8px;
+    margin-top: auto;
+}
+
+/* ===== 响应式设计 ===== */
+
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+
+    .header-content {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .tab-buttons {
+        flex-wrap: wrap;
+    }
+
+    .timeout-controls {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .timeout-separator {
+        display: none;
+    }
+}

@@ -1,0 +1,66 @@
+/**
+ * 动画与过渡效果
+ * ==============
+ * 
+ * 所有 @keyframes 动画和相关的工具类统一定义在此。
+ */
+
+/* 旋转加载动画 */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 淡入动画 */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* 滑入动画 */
+@keyframes slideIn {
+    from { transform: translateX(-20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* 脉冲动画 */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+/* 加载旋转工具类 */
+.loading {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color);
+    border-radius: 50%;
+    border-top-color: var(--accent-color);
+    animation: spin 1s ease-in-out infinite;
+}
+
+/* 淡入工具类 */
+.fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+/* 滑入工具类 */
+.slide-in {
+    animation: slideIn 0.3s ease-out;
+}
+
+/* 脉冲工具类 */
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+/* 动画性能优化：尊重用户偏好 */
+@media (prefers-reduced-motion: reduce) {
+    .loading,
+    .fade-in,
+    .slide-in,
+    .pulse {
+        animation: none;
+    }
+}

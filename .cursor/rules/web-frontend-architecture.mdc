@@ -10,14 +10,32 @@ alwaysApply: true
 ## 关键文件路径
 
 ### HTML 模板（后端 Jinja2）
-- `src/mcp_feedback_enhanced/web/templates/feedback.html` — 主反馈页面（含内联 `<style>` 标签的页面特定样式）
-- `src/mcp_feedback_enhanced/web/templates/index.html` — 会话管理入口页
+- `src/mcp_feedback_enhanced/web/templates/feedback.html` — 主反馈页面（不含内联 `<style>`，所有样式由外部 CSS 提供）
+- `src/mcp_feedback_enhanced/web/templates/index.html` — 会话管理入口页（引用 `variables.css` + `base.css` + `index.css`）
 
-### CSS 样式文件
-- `src/mcp_feedback_enhanced/web/static/css/styles.css` — **主样式文件**（~2000 行），包含：连接状态、动画、Markdown 渲染样式、提示词管理等
-- `src/mcp_feedback_enhanced/web/static/css/session-management.css` — 会话管理相关样式（会话列表、详情弹窗、模态框等）
+### CSS 样式文件（模块化架构）
+
+CSS 按功能拆分为独立模块，每个文件职责单一：
+
+#### 基础层
+- `src/mcp_feedback_enhanced/web/static/css/variables.css` — CSS 变量定义（唯一的 `:root` 定义处）
+- `src/mcp_feedback_enhanced/web/static/css/base.css` — 基础重置、body、容器、通用工具类
+- `src/mcp_feedback_enhanced/web/static/css/animations.css` — 所有 `@keyframes` 动画和过渡效果
+
+#### 布局层
+- `src/mcp_feedback_enhanced/web/static/css/layout.css` — 页面布局（水平/垂直工作区、combined 布局模式、响应式调整）
+
+#### 组件层
+- `src/mcp_feedback_enhanced/web/static/css/components.css` — 通用组件（按钮、卡片、表单、图片上传、设置面板、提示词管理等）
+- `src/mcp_feedback_enhanced/web/static/css/markdown.css` — Markdown 渲染样式（`#summaryContent`、`#combinedSummaryContent`、`.summary-content`）
+
+#### 功能模块层
+- `src/mcp_feedback_enhanced/web/static/css/session-management.css` — 会话管理相关样式
 - `src/mcp_feedback_enhanced/web/static/css/audio-management.css` — 音频管理样式
 - `src/mcp_feedback_enhanced/web/static/css/notification-settings.css` — 通知设置样式
+
+#### 页面专用
+- `src/mcp_feedback_enhanced/web/static/css/index.css` — index.html 页面专用样式（等待界面、连接状态等）
 
 ### JS 模块
 - `src/mcp_feedback_enhanced/web/static/js/app.js` — 主应用入口
@@ -55,25 +73,50 @@ alwaysApply: true
 
 ## CSS 架构规范
 
-### 样式加载顺序
-1. `styles.css`（主样式）
-2. `session-management.css`（会话管理）
-3. `audio-management.css`（音频）
-4. `notification-settings.css`（通知）
-5. `feedback.html` 内联 `<style>`（页面特定/响应式覆盖）
+### 样式加载顺序（feedback.html）
+1. `variables.css`（CSS 变量，必须最先加载）
+2. `base.css`（基础重置）
+3. `animations.css`（动画）
+4. `layout.css`（布局）
+5. `components.css`（组件）
+6. `markdown.css`（Markdown 渲染）
+7. `session-management.css`（会话管理）
+8. `audio-management.css`（音频）
+9. `notification-settings.css`（通知）
 
-### 已知技术债务
-
-**`!important` 滥用问题**：`styles.css` 中 Markdown 渲染部分（第 1666 行起）大量使用 `!important`，根源是 `feedback.html` 内联样式与 `styles.css` 外部样式互相竞争覆盖。未来应将内联样式迁移到 `styles.css`，通过选择器特异性而非 `!important` 解决优先级问题。
+### 样式加载顺序（index.html）
+1. `variables.css`（CSS 变量）
+2. `base.css`（基础重置）
+3. `animations.css`（动画）
+4. `index.css`（页面专用样式）
 
 ### CSS 变量体系
-项目使用 CSS 变量实现主题色，主要变量包括：
-- `--bg-primary` / `--bg-secondary` / `--bg-tertiary` — 背景色层级
+
+所有 CSS 变量统一在 `variables.css` 的 `:root` 中定义，其他文件只引用不定义。
+
+#### 主题色
+- `--bg-primary` / `--bg-secondary` / `--bg-tertiary` / `--surface-color` — 背景色层级
 - `--text-primary` / `--text-secondary` — 文字颜色
 - `--border-color` — 边框颜色
-- `--accent-color` — 强调色
-- `--warning-color` / `--error-color` — 警告/错误色
-- `--transition-fast` — 过渡动画速度
+- `--accent-color` / `--accent-hover` — 强调色
+- `--success-color` / `--warning-color` / `--error-color` / `--info-color` — 语义色
+
+#### 状态色（session-management.css 扩展）
+- `--status-connected` / `--status-connecting` / `--status-disconnected` / `--status-error` / `--status-reconnecting`
+- `--session-active` / `--session-waiting` / `--session-completed` / `--session-error` / `--session-timeout`
+
+#### 过渡与缓动
+- `--transition-fast` / `--transition-normal` / `--transition-slow`
+- `--easing-smooth` / `--easing-bounce`
+
+### 设计规范：禁止 `!important`
+
+重构后不再需要 `!important`。所有样式优先级通过以下方式控制：
+1. **加载顺序**：后加载的文件自然覆盖前面的
+2. **选择器特异性**：需要覆盖时增加选择器层级（如 `.page-feedback #summaryContent code`）
+3. **CSS 层叠层（@layer）**：如需进一步控制，考虑使用 CSS @layer
+
+新增样式时**严格禁止**使用 `!important`。
 
 ## AI 摘要 Markdown 渲染
 
@@ -83,9 +126,10 @@ AI 摘要在两个位置渲染 Markdown 内容：
 2. **会话详情弹窗**：`.summary-content`（在 `session-details-modal.js` 中动态生成）
 
 ### Markdown 样式所在文件
-- **容器布局样式** → `feedback.html` 内联 `<style>`（`.combined-section`、`.combined-summary` 等）
-- **Markdown 内容渲染样式** → `styles.css` 第 1666 行起（标题、段落、列表、代码块、引用、表格等）
-- **弹窗中的摘要样式** → `session-management.css`（`.detail-value.summary`、`.summary-content` 等）
+所有 Markdown 渲染样式统一在 `markdown.css` 中管理，包括：
+- `#summaryContent` 和 `#combinedSummaryContent` 的内容样式
+- `.detail-value.summary .summary-content` 的弹窗摘要样式
+- 标题、段落、列表、代码块、引用、表格等元素样式
 
 ### 行高设计标准
 - 正文/段落/列表项：`line-height: 1.5`
@@ -96,10 +140,14 @@ AI 摘要在两个位置渲染 Markdown 内容：
 ## 编码规范
 
 ### CSS 修改注意事项
-1. Markdown 渲染相关样式修改应在 `styles.css` 中进行，选择器以 `#summaryContent` 和 `#combinedSummaryContent` 为前缀
-2. 会话管理弹窗样式修改在 `session-management.css` 中进行
-3. 避免在 `feedback.html` 内联样式中添加新的样式规则
-4. 新增样式时尽量避免使用 `!important`，除非是为了覆盖已有的 `!important`
+1. Markdown 渲染样式修改在 `markdown.css` 中进行
+2. 布局相关修改在 `layout.css` 中进行
+3. 组件样式修改在 `components.css` 中进行
+4. 会话管理弹窗样式修改在 `session-management.css` 中进行
+5. **禁止**在 HTML 模板中添加内联 `<style>` 标签
+6. **禁止**使用 `!important`
+7. **禁止**在多个文件中定义相同的选择器（选择器唯一归属原则）
+8. 选择器嵌套层级不超过 3 层（使用更具描述性的 class 名代替深层嵌套）
 
 ### JS 模块规范
 - 使用 ES Module 模式，按功能划分模块
