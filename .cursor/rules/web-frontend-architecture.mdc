@@ -1,0 +1,112 @@
+---
+alwaysApply: true
+---
+# Web 前端架构规范
+
+## 项目概述
+
+本项目是一个 MCP (Model Context Protocol) 交互式反馈收集工具，提供 Web UI 供用户与 AI 代理交互。前端采用纯 HTML/CSS/JS（无框架），后端使用 Python (FastAPI + Jinja2)。
+
+## 关键文件路径
+
+### HTML 模板（后端 Jinja2）
+- `src/mcp_feedback_enhanced/web/templates/feedback.html` — 主反馈页面（含内联 `<style>` 标签的页面特定样式）
+- `src/mcp_feedback_enhanced/web/templates/index.html` — 会话管理入口页
+
+### CSS 样式文件
+- `src/mcp_feedback_enhanced/web/static/css/styles.css` — **主样式文件**（~2000 行），包含：连接状态、动画、Markdown 渲染样式、提示词管理等
+- `src/mcp_feedback_enhanced/web/static/css/session-management.css` — 会话管理相关样式（会话列表、详情弹窗、模态框等）
+- `src/mcp_feedback_enhanced/web/static/css/audio-management.css` — 音频管理样式
+- `src/mcp_feedback_enhanced/web/static/css/notification-settings.css` — 通知设置样式
+
+### JS 模块
+- `src/mcp_feedback_enhanced/web/static/js/app.js` — 主应用入口
+- `src/mcp_feedback_enhanced/web/static/js/i18n.js` — 国际化
+- `src/mcp_feedback_enhanced/web/static/js/modules/` — 模块目录：
+  - `ui-manager.js` — UI 管理
+  - `session-manager.js` — 会话管理
+  - `websocket-manager.js` — WebSocket 连接
+  - `settings-manager.js` — 设置管理
+  - `tab-manager.js` — 标签页管理
+  - `image-handler.js` — 图片处理
+  - `file-upload-manager.js` — 文件上传
+  - `textarea-height-manager.js` — 文本区域高度自适应
+  - `connection-monitor.js` — 连接监控
+  - `logger.js` — 日志模块
+  - `session/session-details-modal.js` — 会话详情弹窗
+  - `session/session-data-manager.js` — 会话数据管理
+  - `session/session-ui-renderer.js` — 会话 UI 渲染
+  - `audio/audio-manager.js` — 音频管理
+  - `audio/audio-settings-ui.js` — 音频设置 UI
+  - `notification/notification-manager.js` — 通知管理
+  - `notification/notification-settings.js` — 通知设置
+  - `utils/dom-utils.js` — DOM 工具函数
+  - `utils/time-utils.js` — 时间工具函数
+  - `utils/status-utils.js` — 状态工具函数
+  - `constants/message-codes.js` — 消息码常量
+
+### Python 后端
+- `src/mcp_feedback_enhanced/server.py` — MCP 服务器主入口
+- `src/mcp_feedback_enhanced/web/main.py` — Web 应用主入口
+- `src/mcp_feedback_enhanced/web/routes/main_routes.py` — 路由定义
+- `src/mcp_feedback_enhanced/web/models/feedback_session.py` — 反馈会话模型
+- `src/mcp_feedback_enhanced/web/models/feedback_result.py` — 反馈结果模型
+- `src/mcp_feedback_enhanced/web/utils/` — 工具函数（浏览器、网络、端口、会话清理、压缩等）
+
+## CSS 架构规范
+
+### 样式加载顺序
+1. `styles.css`（主样式）
+2. `session-management.css`（会话管理）
+3. `audio-management.css`（音频）
+4. `notification-settings.css`（通知）
+5. `feedback.html` 内联 `<style>`（页面特定/响应式覆盖）
+
+### 已知技术债务
+
+**`!important` 滥用问题**：`styles.css` 中 Markdown 渲染部分（第 1666 行起）大量使用 `!important`，根源是 `feedback.html` 内联样式与 `styles.css` 外部样式互相竞争覆盖。未来应将内联样式迁移到 `styles.css`，通过选择器特异性而非 `!important` 解决优先级问题。
+
+### CSS 变量体系
+项目使用 CSS 变量实现主题色，主要变量包括：
+- `--bg-primary` / `--bg-secondary` / `--bg-tertiary` — 背景色层级
+- `--text-primary` / `--text-secondary` — 文字颜色
+- `--border-color` — 边框颜色
+- `--accent-color` — 强调色
+- `--warning-color` / `--error-color` — 警告/错误色
+- `--transition-fast` — 过渡动画速度
+
+## AI 摘要 Markdown 渲染
+
+### 渲染位置
+AI 摘要在两个位置渲染 Markdown 内容：
+1. **主反馈页面**：`#summaryContent` 和 `#combinedSummaryContent`（在 `feedback.html`）
+2. **会话详情弹窗**：`.summary-content`（在 `session-details-modal.js` 中动态生成）
+
+### Markdown 样式所在文件
+- **容器布局样式** → `feedback.html` 内联 `<style>`（`.combined-section`、`.combined-summary` 等）
+- **Markdown 内容渲染样式** → `styles.css` 第 1666 行起（标题、段落、列表、代码块、引用、表格等）
+- **弹窗中的摘要样式** → `session-management.css`（`.detail-value.summary`、`.summary-content` 等）
+
+### 行高设计标准
+- 正文/段落/列表项：`line-height: 1.5`
+- 标题（h1~h6）：`line-height: 1.3`
+- 代码块：`line-height: 1.45`
+- **禁止**使用通配符 `*` 强制覆盖所有子元素行高
+
+## 编码规范
+
+### CSS 修改注意事项
+1. Markdown 渲染相关样式修改应在 `styles.css` 中进行，选择器以 `#summaryContent` 和 `#combinedSummaryContent` 为前缀
+2. 会话管理弹窗样式修改在 `session-management.css` 中进行
+3. 避免在 `feedback.html` 内联样式中添加新的样式规则
+4. 新增样式时尽量避免使用 `!important`，除非是为了覆盖已有的 `!important`
+
+### JS 模块规范
+- 使用 ES Module 模式，按功能划分模块
+- 会话相关模块集中在 `modules/session/` 目录
+- 工具函数集中在 `modules/utils/` 目录
+- 使用 `marked.js` 进行 Markdown 渲染（通过 `renderMarkdownSafely` 方法）
+
+### 国际化
+- 使用 i18next 框架
+- 翻译文件位于 `src/mcp_feedback_enhanced/web/locales/{lang}/translation.json`
