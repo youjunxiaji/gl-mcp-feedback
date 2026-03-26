@@ -358,9 +358,12 @@ def gl_mcp_feedback() -> str:
     通过浏览器界面与用户进行互动。
     """
     return (
-        "请立即调用 gl-mcp-feedback 的 interactive_feedback 工具"
-        "与用户开始互动反馈对话。"
-        "在 summary 参数中总结你目前已完成的工作内容。"
+        "请立即调用 gl-mcp-feedback 的 interactive_feedback 工具与用户开始互动反馈对话。"
+        "在 summary 参数中总结你目前已完成的工作内容。\n\n"
+        "工具参数（直接使用，无需查阅 schema）：\n"
+        "- project_directory (string, 默认 \".\"): 项目目录路径\n"
+        "- summary (string, 默认 \"我已完成了您请求的任务。\"): AI 工作完成的摘要说明\n"
+        "- timeout (integer, 默认 600): 等待用户反馈的超时时间（秒）"
     )
 
 
