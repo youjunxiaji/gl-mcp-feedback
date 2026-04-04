@@ -23,28 +23,6 @@ if TYPE_CHECKING:
     from ..main import WebUIManager
 
 
-def load_user_layout_settings() -> str:
-    """載入用戶的佈局模式設定"""
-    try:
-        # 使用統一的設定檔案路徑
-        config_dir = Path.home() / ".config" / "mcp-feedback-enhanced"
-        settings_file = config_dir / "ui_settings.json"
-
-        if settings_file.exists():
-            with open(settings_file, encoding="utf-8") as f:
-                settings = json.load(f)
-                layout_mode = settings.get("layoutMode", "combined-vertical")
-                debug_log(f"從設定檔案載入佈局模式: {layout_mode}")
-                # 修復 no-any-return 錯誤 - 確保返回 str 類型
-                return str(layout_mode)
-        else:
-            debug_log("設定檔案不存在，使用預設佈局模式: combined-vertical")
-            return "combined-vertical"
-    except Exception as e:
-        debug_log(f"載入佈局設定失敗: {e}，使用預設佈局模式: combined-vertical")
-        return "combined-vertical"
-
-
 # 使用統一的訊息代碼系統
 # 從 ..constants 導入的 get_msg_code 函數會處理所有訊息代碼
 # 舊的 key 會自動映射到新的常量
@@ -72,19 +50,16 @@ def setup_routes(manager: "WebUIManager"):
             )
 
         # 有活躍會話時顯示回饋頁面
-        # 載入用戶的佈局模式設定
-        layout_mode = load_user_layout_settings()
-
         return manager.templates.TemplateResponse(
             request,
             "feedback.html",
             {
                 "project_directory": current_session.project_directory,
                 "summary": current_session.summary,
+                "session_id": current_session.session_id,
                 "title": "Interactive Feedback - 回饋收集",
                 "version": __version__,
                 "has_session": True,
-                "layout_mode": layout_mode,
             },
         )
 
