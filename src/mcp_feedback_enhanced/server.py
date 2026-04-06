@@ -376,22 +376,19 @@ async def interactive_feedback(
     ] = "我已完成了您请求的任务。",
     timeout: Annotated[int, Field(description="等待用户反馈的超时时间（秒）")] = 600,
 ) -> ToolResult:
-    """Interactive feedback collection tool for LLM agents.
+    """Collect interactive feedback from users via a Web UI.
 
-    USAGE RULES:
-    1. During any process, task, or conversation, whether asking, replying, or completing phased tasks, you must call this tool to ask for feedback.
-    2. Unless receiving termination instructions, all steps must repeatedly call this tool.
-    3. Whenever user feedback is received, if the feedback content is not empty, you must call this tool again and adjust behavior based on the feedback content.
-    4. Only when the user explicitly indicates "end" or "no more interaction needed" can you stop calling this tool, and the process is considered complete.
-    5. You should summarize what have done, and provide project directory through args to let user know what you have done to provide feedback for next step.
+    Opens a browser-based interface where users can review the AI's work
+    summary, type text feedback, and upload images.
 
     Args:
-        project_directory: Project directory path for context
-        summary: Summary of AI work completed for user review
-        timeout: Timeout in seconds for waiting user feedback (default: 600 seconds)
+        project_directory: Project directory path for context.
+        summary: Markdown-formatted summary of AI work for user review.
+        timeout: Seconds to wait for user feedback (default 600).
 
     Returns:
-        ToolResult: ToolResult containing TextContent and MCPImage objects representing user feedback
+        ToolResult: TextContent with user's text feedback and MCPImage
+            objects for any uploaded images.
     """
     # 环境检测
     is_remote = is_remote_environment()
