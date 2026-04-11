@@ -42,7 +42,6 @@ Desktop.ini
 *.swo
 
 # Others
-uv.lock
 .mcp_feedback_settings.json
 test_reports/
 
