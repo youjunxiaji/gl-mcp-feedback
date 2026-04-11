@@ -108,7 +108,7 @@
                 <span class="text-[14px] font-semibold tracking-tight">MCP Feedback</span>
             </div>
             <div class="flex items-center gap-2.5 text-xs text-slate-500">
-                <span class="hidden sm:inline font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition truncate max-w-[200px]">{{ project_directory }}</span>
+                <span title="{{ project_directory }}" class="hidden sm:inline font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition truncate max-w-[300px]">{{ project_directory }}</span>
                 <span class="font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition">{{ session_id[:8] if session_id else '--' }}</span>
             </div>
         </div>
@@ -344,20 +344,38 @@
         // --- WebSocket ---
         var ws = null;
         var wsReady = false;
+        var wsReplaced = false;
 
         function connectWebSocket() {
+            if (wsReplaced) return;
             setConnStatus('connecting');
             var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(protocol + '//' + location.host + '/ws');
 
             ws.onopen = function() {
                 wsReady = true;
+                wsReplaced = false;
                 setConnStatus('connected');
                 console.log('WebSocket connected');
             };
 
             ws.onmessage = function(event) {
                 var data = JSON.parse(event.data);
+                if (data.type === 'connection_replaced') {
+                    wsReplaced = true;
+                    wsReady = false;
+                    setConnStatus('disconnected');
+                    console.log('Connection replaced by another tab/window');
+
+                    var btn = document.getElementById('submitBtn');
+                    if (btn) {
+                        btn.querySelector('.relative').textContent = '连接已转移';
+                        btn.classList.remove('from-blue-500', 'to-violet-500');
+                        btn.classList.add('from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
+                        btn.disabled = true;
+                    }
+                    return;
+                }
                 if (data.type === 'session_updated' && data.session_info) {
                     var el = document.getElementById('summaryContent');
                     if (el && typeof marked !== 'undefined') {
@@ -369,7 +387,7 @@
                     var btn = document.getElementById('submitBtn');
                     if (btn) {
                         btn.querySelector('.relative').textContent = '提交反馈';
-                        btn.classList.remove('from-emerald-500', 'to-emerald-600', 'opacity-70', 'cursor-not-allowed');
+                        btn.classList.remove('from-emerald-500', 'to-emerald-600', 'from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
                         btn.classList.add('from-blue-500', 'to-violet-500');
                         btn.disabled = false;
                     }
@@ -378,6 +396,11 @@
 
             ws.onclose = function() {
                 wsReady = false;
+                if (wsReplaced) {
+                    setConnStatus('disconnected');
+                    console.log('WebSocket closed (replaced), will not reconnect');
+                    return;
+                }
                 setConnStatus('disconnected');
                 console.log('WebSocket closed, reconnecting in 3s...');
                 setTimeout(connectWebSocket, 3000);

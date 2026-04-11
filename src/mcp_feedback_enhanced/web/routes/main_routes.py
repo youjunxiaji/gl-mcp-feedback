@@ -240,12 +240,19 @@ def setup_routes(manager: "WebUIManager"):
 
         await websocket.accept()
 
-        # 語言由前端處理，不需要在後端設置
         debug_log(f"WebSocket 連接建立，語言由前端處理: {lang}")
 
-        # 檢查會話是否已有 WebSocket 連接
-        if session.websocket and session.websocket != websocket:
-            debug_log("會話已有 WebSocket 連接，替換為新連接")
+        old_websocket = session.websocket
+        if old_websocket and old_websocket != websocket:
+            debug_log("會話已有 WebSocket 連接，通知舊連接讓位後替換")
+            try:
+                await old_websocket.send_json({
+                    "type": "connection_replaced",
+                    "messageCode": get_msg_code("connection_replaced"),
+                })
+                await old_websocket.close(code=4001, reason="Replaced by new connection")
+            except Exception as e:
+                debug_log(f"關閉舊 WebSocket 連接時出錯（可忽略）: {e}")
 
         session.websocket = websocket
         debug_log(f"WebSocket 連接建立: 當前活躍會話 {session.session_id}")
@@ -291,12 +298,15 @@ def setup_routes(manager: "WebUIManager"):
                 data = await websocket.receive_text()
                 message = json.loads(data)
 
-                # 重新獲取當前會話，以防會話已切換
                 current_session = manager.get_current_session()
-                if current_session and current_session.websocket == websocket:
-                    await handle_websocket_message(manager, current_session, message)
+                if current_session:
+                    if current_session.websocket == websocket:
+                        await handle_websocket_message(manager, current_session, message)
+                    else:
+                        debug_log("此 WebSocket 已被新連接替代，關閉當前連接")
+                        break
                 else:
-                    debug_log("會話已切換或 WebSocket 連接不匹配，忽略消息")
+                    debug_log("沒有活躍會話，關閉 WebSocket 連接")
                     break
 
         except WebSocketDisconnect:
@@ -306,7 +316,6 @@ def setup_routes(manager: "WebUIManager"):
         except Exception as e:
             debug_log(f"WebSocket 錯誤: {e}")
         finally:
-            # 安全清理 WebSocket 連接
             current_session = manager.get_current_session()
             if current_session and current_session.websocket == websocket:
                 current_session.websocket = None

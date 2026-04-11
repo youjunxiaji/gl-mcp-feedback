@@ -30,6 +30,7 @@ class MessageCodes:
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_PROCESS_KILLED = "system.processKilled"
     SYSTEM_HEARTBEAT_STOPPED = "system.heartbeatStopped"
+    SYSTEM_CONNECTION_REPLACED = "system.connectionReplaced"
 
     # ========== 會話相關 ==========
     SESSION_NO_ACTIVE = "session.noActiveSession"
@@ -121,6 +122,7 @@ LEGACY_KEY_MAPPING = {
     "invalid_log_level": "SETTINGS_INVALID_LOG_LEVEL",
     "log_level_updated": "SETTINGS_LOG_LEVEL_UPDATED",
     "set_failed": "SETTINGS_SET_FAILED",
+    "connection_replaced": "SYSTEM_CONNECTION_REPLACED",
 }
 
 
