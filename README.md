@@ -1,9 +1,9 @@
-# MCP Feedback Enhanced（交互反馈 MCP）
+# gl-mcp-feedback（交互反馈 MCP）
 
-**🌐 语言切换 / Language:** [English](README.md) | [繁體中文](README.zh-TW.md) | **简体中文**
+[![PyPI](https://img.shields.io/pypi/v/gl-mcp-feedback)](https://pypi.org/project/gl-mcp-feedback/)
+[![GitHub](https://img.shields.io/github/stars/youjunxiaji/gl-mcp-feedback?style=social)](https://github.com/youjunxiaji/gl-mcp-feedback)
 
-**原作者：** [Fábio Ferreira](https://x.com/fabiomlferreira) | [原始项目](https://github.com/noopstudios/interactive-feedback-mcp) ⭐
-**分支版本：** [Minidoracat](https://github.com/Minidoracat)
+**基于：** [Fábio Ferreira](https://x.com/fabiomlferreira) 的 [interactive-feedback-mcp](https://github.com/noopstudios/interactive-feedback-mcp) ⭐ 和 [Minidoracat](https://github.com/Minidoracat) 的 [mcp-feedback-enhanced](https://github.com/Minidoracat/mcp-feedback-enhanced)
 **UI 设计参考：** [sanshao85/mcp-feedback-collector](https://github.com/sanshao85/mcp-feedback-collector)
 
 ## 🎯 核心概念
@@ -13,7 +13,7 @@
 **支持平台：** [Cursor](https://www.cursor.com) | [Cline](https://cline.bot) | [Windsurf](https://windsurf.com) | [Augment](https://www.augmentcode.com) | [Trae](https://www.trae.ai)
 
 ### 🔄 工作流程
-1. **AI 调用** → `mcp-feedback-enhanced` 工具
+1. **AI 调用** → `gl-mcp-feedback` 工具
 2. **界面启动** → 自动打开浏览器界面
 3. **智能交互** → 提示词选择、文字输入、图片上传、自动提交
 4. **即时反馈** → WebSocket 连接即时传递信息给 AI
@@ -84,9 +84,9 @@ pip install uv
 ```json
 {
   "mcpServers": {
-    "mcp-feedback-enhanced": {
+    "gl-mcp-feedback": {
       "command": "uvx",
-      "args": ["mcp-feedback-enhanced@latest"],
+      "args": ["gl-mcp-feedback@latest"],
       "timeout": 600,
       "autoApprove": ["interactive_feedback"]
     }
@@ -98,9 +98,9 @@ pip install uv
 ```json
 {
   "mcpServers": {
-    "mcp-feedback-enhanced": {
+    "gl-mcp-feedback": {
       "command": "uvx",
-      "args": ["mcp-feedback-enhanced@latest"],
+      "args": ["gl-mcp-feedback@latest"],
       "timeout": 600,
       "env": {
         "MCP_DEBUG": "false",
@@ -120,7 +120,7 @@ pip install uv
 ```
 # MCP Interactive Feedback 规则
 
-注意在任务完成前根据mcp-feedback-enhanced工具的要求进行工具调用
+注意在任务完成前根据gl-mcp-feedback工具的要求进行工具调用
 ```
 
 ## ⚙️ 高级设置
@@ -153,24 +153,24 @@ pip install uv
 ### 测试选项
 ```bash
 # 版本查询
-uvx mcp-feedback-enhanced@latest version       # 检查版本
+uvx gl-mcp-feedback@latest version       # 检查版本
 
 # 界面测试
-uvx mcp-feedback-enhanced@latest test --web    # 测试 Web UI (自动持续运行)
+uvx gl-mcp-feedback@latest test --web    # 测试 Web UI (自动持续运行)
 
 # 调试模式
-MCP_DEBUG=true uvx mcp-feedback-enhanced@latest test
+MCP_DEBUG=true uvx gl-mcp-feedback@latest test
 
 # 指定语言测试
-MCP_LANGUAGE=en uvx mcp-feedback-enhanced@latest test --web    # 强制使用英文界面
-MCP_LANGUAGE=zh-TW uvx mcp-feedback-enhanced@latest test --web  # 强制使用繁体中文
-MCP_LANGUAGE=zh-CN uvx mcp-feedback-enhanced@latest test --web  # 强制使用简体中文
+MCP_LANGUAGE=en uvx gl-mcp-feedback@latest test --web    # 强制使用英文界面
+MCP_LANGUAGE=zh-TW uvx gl-mcp-feedback@latest test --web  # 强制使用繁体中文
+MCP_LANGUAGE=zh-CN uvx gl-mcp-feedback@latest test --web  # 强制使用简体中文
 ```
 
 ### 开发者安装
 ```bash
-git clone https://github.com/Minidoracat/mcp-feedback-enhanced.git
-cd mcp-feedback-enhanced
+git clone https://github.com/youjunxiaji/gl-mcp-feedback.git
+cd gl-mcp-feedback
 uv sync
 ```
 
@@ -182,7 +182,7 @@ make test-web                                            # Web UI 测试 (持续
 
 # 或直接使用指令
 uv run python -m mcp_feedback_enhanced test              # 标准功能测试
-uvx --no-cache --with-editable . mcp-feedback-enhanced test --web   # Web UI 测试 (持续运行)
+uvx --no-cache --with-editable . gl-mcp-feedback test --web   # Web UI 测试 (持续运行)
 
 # 单元测试
 make test                                                # 运行所有单元测试
@@ -224,9 +224,9 @@ A: 提供两种解决方案：
 ```json
 {
   "mcpServers": {
-    "mcp-feedback-enhanced": {
+    "gl-mcp-feedback": {
       "command": "uvx",
-      "args": ["mcp-feedback-enhanced@latest"],
+      "args": ["gl-mcp-feedback@latest"],
       "timeout": 600,
       "env": {
         "MCP_WEB_HOST": "0.0.0.0",
@@ -259,14 +259,14 @@ A: **解决方法**：完全关闭并重新启动 VS Code 或 Cursor，重新打
 
 ### 🔧 一般问题
 **Q: 如何使用旧版 PyQt6 GUI 界面？**
-A: v2.4.0 版本已完全移除 PyQt6 GUI 依赖。如需使用旧版 GUI，请指定 v2.3.0 或更早版本：`uvx mcp-feedback-enhanced@2.3.0`
+A: v2.4.0 版本已完全移除 PyQt6 GUI 依赖。如需使用旧版 GUI，请指定 v2.3.0 或更早版本：`uvx gl-mcp-feedback@2.3.0`
 **注意**：旧版本不包含新功能（提示词管理、自动提交、会话管理、桌面应用程序等）。
 
 **Q: 出现 "Unexpected token 'D'" 错误**
 A: 调试输出干扰。设置 `MCP_DEBUG=false` 或移除该环境变量。
 
 **Q: 中文字符乱码**
-A: 已在 v2.0.3 修复。更新到最新版本：`uvx mcp-feedback-enhanced@latest`
+A: 已在 v2.0.3 修复。更新到最新版本：`uvx gl-mcp-feedback@latest`
 
 **Q: 多屏幕环境下窗口消失或定位错误**
 A: 已在 v2.1.1 修复。进入「⚙️ 设置」标签页，勾选「总是在主屏幕中心显示窗口」即可解决。特别适用于 T 字型屏幕排列等复杂多屏幕配置。
@@ -330,8 +330,8 @@ A: 各种 AI 模型（包括 Gemini Pro 2.5、Claude 等）在图片解析上可
 - 📝 工具文档优化 (LLM 指令移至 docstring) ([PR #105](https://github.com/Minidoracat/mcp-feedback-enhanced/pull/105))
 
 ### 社群支援
-- **Discord：** [https://discord.gg/Gur2V67](https://discord.gg/Gur2V67)
-- **Issues：** [GitHub Issues](https://github.com/Minidoracat/mcp-feedback-enhanced/issues)
+- **Issues：** [GitHub Issues](https://github.com/youjunxiaji/gl-mcp-feedback/issues)
+- **PyPI：** [gl-mcp-feedback](https://pypi.org/project/gl-mcp-feedback/)
 
 ## 📄 授权
 
@@ -339,7 +339,7 @@ MIT 授权条款 - 详见 [LICENSE](LICENSE) 档案
 
 ## 📈 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Minidoracat/mcp-feedback-enhanced&type=Date)](https://star-history.com/#Minidoracat/mcp-feedback-enhanced&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=youjunxiaji/gl-mcp-feedback&type=Date)](https://star-history.com/#youjunxiaji/gl-mcp-feedback&Date)
 
 ---
 **🌟 欢迎 Star 并分享给更多开发者！**
