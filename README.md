@@ -114,14 +114,20 @@ pip install uv
 }
 ```
 
-### 3. 设置提示工程
-为了获得最佳效果，请在 AI 助手中添加以下规则：
+### 3. 快捷使用
+
+安装并配置完成后，在 Cursor 中输入以下命令即可启动交互反馈：
 
 ```
-# MCP Interactive Feedback 规则
-
-注意在任务完成前根据gl-mcp-feedback工具的要求进行工具调用
+/user-gl-mcp-feedback/chat
 ```
+
+AI 会自动调用 `interactive_feedback` 工具，打开 Web UI 并等待你的反馈。
+
+> **提示**：为获得最佳效果，建议在 AI 助手的规则中添加：
+> ```
+> 注意在任务完成前根据 gl-mcp-feedback 工具的要求进行工具调用
+> ```
 
 ## ⚙️ 高级设置
 

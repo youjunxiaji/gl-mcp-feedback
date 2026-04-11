@@ -349,6 +349,54 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
 
 
 # ===== MCP Prompt 定义 =====
+_CHAT_PROMPT = """\
+请立即调用 gl-mcp-feedback 的 interactive_feedback 工具与用户开始互动反馈对话。
+在 summary 参数中总结你目前已完成的工作内容。
+
+工具参数（直接使用，无需查阅 schema）：
+- project_directory (string, 默认 "."): 项目目录路径
+- summary (string, 默认 "我已完成了您请求的任务。"): AI 工作完成的摘要说明
+- timeout (integer, 默认 600): 等待用户反馈的超时时间（秒）
+
+## 使用指南
+
+### 何时调用 interactive_feedback
+除非用户明确说「结束」或「不用了」，在以下场景必须调用：
+1. **完成代码修改后** — 在 summary 中总结改动，等待用户测试反馈
+2. **实施新需求前** — 阐述理解和实现思路，获得确认后再编码
+3. **工具调用被中断/取消时** — 询问用户下一步操作
+4. **MCP 调用超时时** — 立即重新调用，不要假设用户已离开
+5. **多步骤任务中** — 每个阶段完成后 check in
+
+### Summary 写法规范
+summary 参数在 Web UI 中以 Markdown 渲染，需让用户快速理解发生了什么。
+
+**应该：**
+- 使用标题（##）、列表、表格等结构化格式
+- 包含修改的文件路径
+- 突出关键决策或权衡
+- 简洁但完整
+
+**避免：**
+- 大段无格式文本
+- 在 summary 中放原始代码
+- 使用默认字符串不修改
+
+### 反馈循环模式
+开始任务 → 执行工作 → 调用 interactive_feedback（总结工作） → 读取用户反馈
+- 有新指令 → 调整并循环
+- 确认完成 → 结束
+- 空反馈 → 再次调用询问
+
+### 注意事项
+- 代码修改后必须调用，这是主要的沟通渠道
+- timeout 保持 ≥ 600，用户需要时间测试
+- 超时后立即重新调用，不要假设用户已离开
+- summary 语言必须匹配用户使用的语言
+- 不等反馈就继续工作是错误的，先调用工具等待反馈\
+"""
+
+
 @mcp.prompt(name="chat")
 def gl_mcp_feedback() -> str:
     """通过 Web UI 与用户开始互动反馈对话。
@@ -357,14 +405,7 @@ def gl_mcp_feedback() -> str:
     AI 会调用 interactive_feedback 工具打开 Web UI，
     通过浏览器界面与用户进行互动。
     """
-    return (
-        "请立即调用 gl-mcp-feedback 的 interactive_feedback 工具与用户开始互动反馈对话。"
-        "在 summary 参数中总结你目前已完成的工作内容。\n\n"
-        "工具参数（直接使用，无需查阅 schema）：\n"
-        "- project_directory (string, 默认 \".\"): 项目目录路径\n"
-        "- summary (string, 默认 \"我已完成了您请求的任务。\"): AI 工作完成的摘要说明\n"
-        "- timeout (integer, 默认 600): 等待用户反馈的超时时间（秒）"
-    )
+    return _CHAT_PROMPT
 
 
 # ===== MCP 工具定义 =====

@@ -657,8 +657,24 @@ class WebUIManager:
         self.server_thread = threading.Thread(target=run_server_with_retry, daemon=True)
         self.server_thread.start()
 
-        # 等待伺服器啟動
-        time.sleep(2)
+        # 輪詢等待伺服器就緒，而非固定 sleep
+        import socket
+
+        max_wait = 5.0
+        interval = 0.1
+        waited = 0.0
+        while waited < max_wait:
+            try:
+                with socket.create_connection((self.host, self.port), timeout=0.5):
+                    break
+            except OSError:
+                time.sleep(interval)
+                waited += interval
+
+        if waited >= max_wait:
+            debug_log(f"警告：伺服器在 {max_wait} 秒內未就緒，繼續執行")
+        else:
+            debug_log(f"伺服器就緒，耗時 {waited:.1f} 秒")
 
     def open_browser(self, url: str):
         """開啟瀏覽器"""
