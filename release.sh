@@ -110,9 +110,6 @@ echo -e "  ${GREEN}✔${NC} 版本号已更新"
 uv lock
 echo -e "  ${GREEN}✔${NC} uv.lock 已同步"
 
-uv build
-echo -e "  ${GREEN}✔${NC} 构建完成"
-
 git add "$PYPROJECT" "$INIT_PY" uv.lock
 git commit -m "chore: bump version to ${new_version}"
 echo -e "  ${GREEN}✔${NC} 已提交"
@@ -120,26 +117,11 @@ echo -e "  ${GREEN}✔${NC} 已提交"
 git tag "v${new_version}"
 echo -e "  ${GREEN}✔${NC} 已创建 tag ${CYAN}v${new_version}${NC}"
 
+git push && git push --tags
+echo -e "  ${GREEN}✔${NC} 已推送"
+
 echo ""
-echo -e "  ${BOLD}发布到 PyPI?${NC}  ${DIM}↑↓ 选择, Enter 确认${NC}"
-echo ""
-
-arrow_select 0 "是" "否"
-
-if [ $ARROW_RESULT -eq 0 ]; then
-    echo ""
-    uv publish
-    echo -e "  ${GREEN}✔${NC} 已发布到 PyPI"
-
-    git push && git push --tags
-    echo -e "  ${GREEN}✔${NC} 已推送到 GitHub"
-
-    echo ""
-    echo -e "  ${GREEN}${BOLD}发布完成${NC}  ${CYAN}v${new_version}${NC}"
-else
-    echo ""
-    echo -e "  ${YELLOW}跳过发布${NC}  版本已更新，稍后可手动执行："
-    echo -e "  ${DIM}uv publish && git push && git push --tags${NC}"
-fi
+echo -e "  ${GREEN}${BOLD}发布完成${NC}  ${CYAN}v${new_version}${NC}"
+echo -e "  ${DIM}GitHub Actions 将自动构建并发布到 PyPI${NC}"
 
 echo ""
