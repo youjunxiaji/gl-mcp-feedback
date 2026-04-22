@@ -349,51 +349,35 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
 
 
 # ===== MCP Prompt 定义 =====
+# This prompt only carries the minimal "activate + act now" directive for the
+# current turn. The full interaction contract (when to call, how to write,
+# skip handling, etc.) lives in ``interactive_feedback``'s docstring so that
+# it ships with the MCP package and applies to every user.
 _CHAT_PROMPT = """\
-请立即调用 gl-mcp-feedback 的 interactive_feedback 工具与用户开始互动反馈对话。
-在 summary 参数中总结你目前已完成的工作内容。
+# ACTIVATE: gl-mcp-feedback interaction mode
 
-工具参数（直接使用，无需查阅 schema）：
-- project_directory (string, 默认 "."): 项目目录路径
-- summary (string, 默认 "我已完成了您请求的任务。"): AI 工作完成的摘要说明
-- timeout (integer, 默认 600): 等待用户反馈的超时时间（秒）
+You MUST use the `interactive_feedback` tool as the PRIMARY channel for
+speaking with the user from this turn onward. See that tool's description
+for the full contract. Core rules:
 
-## 使用指南
-
-### 何时调用 interactive_feedback
-除非用户明确说「结束」或「不用了」，在以下场景必须调用：
-1. **完成代码修改后** — 在 summary 中总结改动，等待用户测试反馈
-2. **实施新需求前** — 阐述理解和实现思路，获得确认后再编码
-3. **工具调用被中断/取消时** — 询问用户下一步操作
-4. **MCP 调用超时时** — 立即重新调用，不要假设用户已离开
-5. **多步骤任务中** — 每个阶段完成后 check in
-
-### Summary 写法规范
-summary 参数在 Web UI 中以 Markdown 渲染，需让用户快速理解发生了什么。
-
-**应该：**
-- 使用标题（##）、列表、表格等结构化格式
-- 包含修改的文件路径
-- 突出关键决策或权衡
-- 简洁但完整
-
-**避免：**
-- 大段无格式文本
-- 在 summary 中放原始代码
-- 使用默认字符串不修改
-
-### 反馈循环模式
-开始任务 → 执行工作 → 调用 interactive_feedback（总结工作） → 读取用户反馈
-- 有新指令 → 调整并循环
-- 确认完成 → 结束
-- 空反馈 → 再次调用询问
-
-### 注意事项
-- 代码修改后必须调用，这是主要的沟通渠道
-- timeout 保持 ≥ 600，用户需要时间测试
-- 超时后立即重新调用，不要假设用户已离开
-- summary 语言必须匹配用户使用的语言
-- 不等反馈就继续工作是错误的，先调用工具等待反馈\
+1. **Call `interactive_feedback` IMMEDIATELY**. In `summary`, write a
+   Markdown brief of your current understanding / progress / plan, then wait
+   for the user's feedback before deciding the next step.
+2. **NEVER end a turn with a plain-text reply.** Any substantive content you
+   want the user to read (analysis, plans, code summaries, questions) MUST
+   go through `summary`. The Web UI renders Markdown far better than the
+   Cursor chat panel.
+3. **While `interactive_feedback` is available, DO NOT use Cursor's built-in
+   `AskQuestion` / question-picker tool.** Route every question to the user
+   through `interactive_feedback`'s `summary` (ask with a numbered list).
+4. **On skip / timeout → call `interactive_feedback` AGAIN** and ask why,
+   do NOT assume the conversation is over. Stop only when the user
+   explicitly says `结束` / `不用了` / `stop` or equivalent.
+5. **`summary` must be substantive.** Empty strings and placeholder phrases
+   like "我已完成了您请求的任务。" will be rejected at runtime.
+6. Keep `timeout >= 600`. **Reply to the user in the same language they are
+   using** (the user's latest message here is in Chinese — so respond in
+   Chinese), even though this prompt is in English.\
 """
 
 
@@ -411,27 +395,101 @@ def gl_mcp_feedback() -> str:
 # ===== MCP 工具定义 =====
 @mcp.tool()
 async def interactive_feedback(
-    project_directory: Annotated[str, Field(description="项目目录路径")] = ".",
+    project_directory: Annotated[str, Field(description="Project directory path.")] = ".",
     summary: Annotated[
-        str, Field(description="AI 工作完成的摘要说明")
-    ] = "我已完成了您请求的任务。",
-    timeout: Annotated[int, Field(description="等待用户反馈的超时时间（秒）")] = 600,
+        str,
+        Field(
+            description=(
+                "Markdown summary of the AI's current work / plan / question, "
+                "rendered in the Web UI. MUST be filled in with substantive "
+                "content; empty strings and placeholder phrases (e.g. "
+                "\"我已完成了您请求的任务。\") are rejected at runtime."
+            )
+        ),
+    ] = "",
+    timeout: Annotated[
+        int, Field(description="Seconds to wait for user feedback. Keep >= 600.")
+    ] = 600,
 ) -> ToolResult:
-    """Collect interactive feedback from users via a Web UI.
+    """Open a Web UI to collect interactive feedback from the user.
 
-    Opens a browser-based interface where users can review the AI's work
-    summary, type text feedback, and upload images.
+    This tool is the PRIMARY communication channel with the user. Route
+    substantive content (analyses, plans, code summaries, questions needing
+    confirmation) through this tool's ``summary`` parameter rather than the
+    Cursor chat, because the Web UI renders Markdown far better.
+
+    MANDATORY call scenarios — do NOT end the turn without calling:
+        1. After any code modification — summarize the change, wait for
+           the user to test.
+        2. Before implementing a new requirement — explain your
+           understanding and approach, wait for confirmation.
+        3. When a tool call is cancelled/interrupted — ask the user the
+           next step.
+        4. When this MCP call times out — immediately re-call; do not
+           assume the user has left.
+        5. When the user explicitly skips without giving feedback —
+           immediately re-call and ask why they skipped.
+        6. At the end of any multi-step task stage — check in.
+        7. Whenever you would otherwise ask the user a question in plain
+           chat — route it through this tool's ``summary`` instead.
+
+    STRICT PROHIBITIONS:
+        - While this tool is available, DO NOT invoke Cursor's built-in
+          ``AskQuestion`` / question-picker tool. Every question to the
+          user MUST go through this tool's ``summary`` (ask with a
+          numbered list inside the Markdown).
+        - DO NOT end your turn with a plain-text reply when you still
+          have output intended for the user to read. Put that output
+          into ``summary`` and call this tool instead.
+
+    Only stop calling when the user explicitly says ``结束`` / ``不用了`` /
+    ``stop`` / ``done`` or an equivalent termination phrase.
+
+    ``summary`` writing rules:
+        - Write in the same language the user is currently using.
+        - Use Markdown: headings (##), lists, tables, code fences for
+          snippets, bold for key decisions.
+        - Include modified file paths, key trade-offs, and explicit
+          questions for the user when applicable.
+        - NEVER pass an empty string or the placeholder phrase
+          ``我已完成了您请求的任务。``. The tool rejects such values at
+          runtime and returns a correction notice that you must follow
+          by re-calling with a real summary.
 
     Args:
-        project_directory: Project directory path for context.
-        summary: Markdown-formatted summary of AI work for user review.
-        timeout: Seconds to wait for user feedback (default 600).
+        project_directory: Absolute or relative project path. Defaults to cwd.
+        summary: Required. Markdown summary of the AI's current work / plan
+            / question. No empty string, no placeholder phrase.
+        timeout: Seconds to wait for user feedback. Keep ``>= 600``.
 
     Returns:
-        ToolResult: TextContent with user's text feedback and MCPImage
-            objects for any uploaded images.
+        ToolResult: TextContent with the user's text feedback plus
+            MCPImage objects for any uploaded images. An empty result
+            means the user skipped — you MUST re-call this tool to ask why.
     """
-    # 环境检测
+    # summary 运行时校验：阻止 AI 使用空串或占位套话偷懒
+    # 规范化：去首尾空白 + 去末尾中英文标点，让「我已完成了您请求的任务」「…。」「… .」都能命中
+    normalized_summary = summary.strip().rstrip("。.!?！？ \t\n")
+    invalid_summary_placeholders = {
+        "",
+        "我已完成了您请求的任务",
+    }
+    if normalized_summary in invalid_summary_placeholders:
+        guidance = (
+            "[interactive_feedback REJECTED]\n"
+            "The `summary` you passed is empty or a placeholder phrase; "
+            "it will NOT be shown to the user.\n"
+            "You MUST call this tool AGAIN with a real Markdown summary containing:\n"
+            "  1) Your current understanding / progress / proposed plan.\n"
+            "  2) File paths touched and key trade-offs.\n"
+            "  3) Explicit question(s) the user needs to answer.\n"
+            "Write the summary in the user's language (NOT English, unless "
+            "the user is writing in English). Do NOT reply to the user "
+            "with plain Cursor chat text in the meantime."
+        )
+        debug_log(f"summary validation failed: {summary!r}")
+        return ToolResult(content=[TextContent(type="text", text=guidance)])
+
     is_remote = is_remote_environment()
     is_wsl = is_wsl_environment()
 
