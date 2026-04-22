@@ -399,6 +399,9 @@
                     var el = document.getElementById('summaryContent');
                     if (el && typeof marked !== 'undefined') {
                         el.innerHTML = marked.parse(data.session_info.summary || '');
+                        if (el.scrollTop > 0) {
+                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
                     }
                     var tag = document.getElementById('newTag');
                     if (tag) tag.style.display = '';
