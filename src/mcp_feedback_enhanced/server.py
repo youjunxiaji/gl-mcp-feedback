@@ -441,6 +441,11 @@ async def interactive_feedback(
         - DO NOT end your turn with a plain-text reply when you still
           have output intended for the user to read. Put that output
           into ``summary`` and call this tool instead.
+        - This tool accepts ONLY three parameters: ``project_directory``,
+          ``summary``, ``timeout``. Names such as ``title``, ``question``,
+          ``choices``, ``options`` belong to ``AskQuestion`` — NEVER
+          forward them to this tool. Passing any other keyword argument
+          will cause the call to fail schema validation on the server.
 
     Only stop calling when the user explicitly says ``结束`` / ``不用了`` /
     ``stop`` / ``done`` or an equivalent termination phrase.
