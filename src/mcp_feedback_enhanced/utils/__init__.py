@@ -1,8 +1,8 @@
 """
-MCP Feedback Enhanced 工具模組
+MCP Feedback Enhanced 工具模组
 ============================
 
-提供各種工具類和函數，包括錯誤處理、資源管理等。
+提供各种工具类和函数，包括错误处理、资源管理等。
 """
 
 from .error_handler import ErrorHandler, ErrorType

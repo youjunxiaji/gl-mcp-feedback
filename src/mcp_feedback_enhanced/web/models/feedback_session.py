@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Web 回饋會話模型
+Web 反馈会话模型
 ===============
 
-管理 Web 回饋會話的資料和邏輯。
+管理 Web 反馈会话的数据和逻辑。
 """
 
 import asyncio
@@ -25,30 +25,30 @@ from ..constants import get_message_code
 
 
 class SessionStatus(Enum):
-    """會話狀態枚舉 - 單向流轉設計"""
+    """会话状态枚举 - 单向流转设计"""
 
     WAITING = "waiting"  # 等待中
-    ACTIVE = "active"  # 活躍狀態
-    FEEDBACK_SUBMITTED = "feedback_submitted"  # 已提交反饋
+    ACTIVE = "active"  # 活跃状态
+    FEEDBACK_SUBMITTED = "feedback_submitted"  # 已提交反馈
     COMPLETED = "completed"  # 已完成
-    ERROR = "error"  # 錯誤（終態）
-    TIMEOUT = "timeout"  # 超時（終態）
-    EXPIRED = "expired"  # 已過期（終態）
+    ERROR = "error"  # 错误（终态）
+    TIMEOUT = "timeout"  # 超时（终态）
+    EXPIRED = "expired"  # 已过期（终态）
 
 
 class CleanupReason(Enum):
-    """清理原因枚舉"""
+    """清理原因枚举"""
 
-    TIMEOUT = "timeout"  # 超時清理
-    EXPIRED = "expired"  # 過期清理
-    MEMORY_PRESSURE = "memory_pressure"  # 內存壓力清理
-    MANUAL = "manual"  # 手動清理
-    ERROR = "error"  # 錯誤清理
-    SHUTDOWN = "shutdown"  # 系統關閉清理
+    TIMEOUT = "timeout"  # 超时清理
+    EXPIRED = "expired"  # 过期清理
+    MEMORY_PRESSURE = "memory_pressure"  # 内存压力清理
+    MANUAL = "manual"  # 手动清理
+    ERROR = "error"  # 错误清理
+    SHUTDOWN = "shutdown"  # 系统关闭清理
 
 
-# 常數定義
-MAX_IMAGE_SIZE = 1 * 1024 * 1024  # 1MB 圖片大小限制
+# 常数定义
+MAX_IMAGE_SIZE = 1 * 1024 * 1024  # 1MB 图片大小限制
 SUPPORTED_IMAGE_TYPES = {
     "image/png",
     "image/jpeg",
@@ -59,12 +59,12 @@ SUPPORTED_IMAGE_TYPES = {
 }
 TEMP_DIR = Path.home() / ".cache" / "interactive-feedback-mcp-web"
 
-# 訊息代碼現在從統一的常量文件導入
-# 使用 get_message_code 函數來獲取訊息代碼
+# 消息代码现在从统一的常量文件导入
+# 使用 get_message_code 函数来获取消息代码
 
 
 class WebFeedbackSession:
-    """Web 回饋會話管理"""
+    """Web 反馈会话管理"""
 
     def __init__(
         self,
@@ -73,34 +73,37 @@ class WebFeedbackSession:
         summary: str,
         auto_cleanup_delay: int = 3600,
         max_idle_time: int = 1800,
+        *,
+        title: str = "",
     ):
         self.session_id = session_id
         self.project_directory = project_directory
         self.summary = summary
+        self.title = title or ""
         self.websocket: WebSocket | None = None
         self.feedback_result: str | None = None
         self.images: list[dict] = []
-        self.settings: dict[str, Any] = {}  # 圖片設定
+        self.settings: dict[str, Any] = {}  # 图片设定
         self.feedback_completed = threading.Event()
-        self.user_messages: list[dict] = []  # 用戶消息記錄
-        self._cleanup_done = False  # 防止重複清理
-        # 移除語言設定，改由前端處理
+        self.user_messages: list[dict] = []  # 用户消息记录
+        self._cleanup_done = False  # 防止重复清理
+        # 移除语言设定，改由前端处理
 
-        # 新增：會話狀態管理
+        # 新增：会话状态管理
         self.status = SessionStatus.WAITING
-        self.status_message = "等待用戶回饋"
-        # 統一使用 time.time() 以避免時間基準不一致
+        self.status_message = "等待用户反馈"
+        # 统一使用 time.time() 以避免时间基准不一致
         self.created_at = time.time()
         self.last_activity = self.created_at
-        self.last_heartbeat = None  # 記錄最後一次心跳時間
+        self.last_heartbeat = None  # 记录最后一次心跳时间
 
-        # 新增：自動清理配置
-        self.auto_cleanup_delay = auto_cleanup_delay  # 自動清理延遲時間（秒）
-        self.max_idle_time = max_idle_time  # 最大空閒時間（秒）
+        # 新增：自动清理配置
+        self.auto_cleanup_delay = auto_cleanup_delay  # 自动清理延迟时间（秒）
+        self.max_idle_time = max_idle_time  # 最大空闲时间（秒）
         self.cleanup_timer: threading.Timer | None = None
-        self.cleanup_callbacks: list[Callable[..., None]] = []  # 清理回調函數列表
+        self.cleanup_callbacks: list[Callable[..., None]] = []  # 清理回调函数列表
 
-        # 新增：清理統計
+        # 新增：清理统计
         self.cleanup_stats: dict[str, Any] = {
             "cleanup_count": 0,
             "last_cleanup_time": None,
@@ -110,116 +113,116 @@ class WebFeedbackSession:
             "resources_cleaned": 0,
         }
 
-        # 新增：活躍標籤頁管理
+        # 新增：活跃标签页管理
         self.active_tabs: dict[str, Any] = {}
 
-        # 新增：用戶設定的會話超時
+        # 新增：用户设定的会话超时
         self.user_timeout_enabled = False
-        self.user_timeout_seconds = 3600  # 預設 1 小時
+        self.user_timeout_seconds = 3600  # 默认 1 小时
         self.user_timeout_timer: threading.Timer | None = None
 
-        # 確保臨時目錄存在
+        # 确保临时目录存在
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 獲取資源管理器實例
+        # 获取资源管理器实例
         self.resource_manager = get_resource_manager()
 
-        # 啟動自動清理定時器
+        # 启动自动清理定时器
         self._schedule_auto_cleanup()
 
         debug_log(
-            f"會話 {self.session_id} 初始化完成，自動清理延遲: {auto_cleanup_delay}秒，最大空閒: {max_idle_time}秒"
+            f"会话 {self.session_id} 初始化完成，自动清理延迟: {auto_cleanup_delay}秒，最大空闲: {max_idle_time}秒"
         )
 
     def get_message_code(self, key: str) -> str:
         """
-        獲取訊息代碼
+        获取消息代码
 
         Args:
-            key: 訊息 key
+            key: 消息 key
 
         Returns:
-            訊息代碼（用於前端 i18n）
+            消息代码（用于前端 i18n）
         """
         return get_message_code(key)
 
     def next_step(self, message: str | None = None) -> bool:
-        """進入下一個狀態 - 單向流轉，不可倒退"""
+        """进入下一个状态 - 单向流转，不可倒退"""
         old_status = self.status
 
-        # 定義狀態流轉路徑
+        # 定义状态流转路径
         next_status_map = {
             SessionStatus.WAITING: SessionStatus.ACTIVE,
             SessionStatus.ACTIVE: SessionStatus.FEEDBACK_SUBMITTED,
             SessionStatus.FEEDBACK_SUBMITTED: SessionStatus.COMPLETED,
-            SessionStatus.COMPLETED: None,  # 終態
-            SessionStatus.ERROR: None,  # 終態
-            SessionStatus.TIMEOUT: None,  # 終態
-            SessionStatus.EXPIRED: None,  # 終態
+            SessionStatus.COMPLETED: None,  # 终态
+            SessionStatus.ERROR: None,  # 终态
+            SessionStatus.TIMEOUT: None,  # 终态
+            SessionStatus.EXPIRED: None,  # 终态
         }
 
         next_status = next_status_map.get(self.status)
 
         if next_status is None:
             debug_log(
-                f"⚠️ 會話 {self.session_id} 已處於終態 {self.status.value}，無法進入下一步"
+                f"⚠️ 会话 {self.session_id} 已处于终态 {self.status.value}，无法进入下一步"
             )
             return False
 
-        # 執行狀態轉換
+        # 执行状态转换
         self.status = next_status
         if message:
             self.status_message = message
         else:
-            # 默認消息
+            # 默认消息
             default_messages = {
-                SessionStatus.ACTIVE: "會話已啟動",
-                SessionStatus.FEEDBACK_SUBMITTED: "用戶已提交反饋",
-                SessionStatus.COMPLETED: "會話已完成",
+                SessionStatus.ACTIVE: "会话已启动",
+                SessionStatus.FEEDBACK_SUBMITTED: "用户已提交反馈",
+                SessionStatus.COMPLETED: "会话已完成",
             }
-            self.status_message = default_messages.get(next_status, "狀態已更新")
+            self.status_message = default_messages.get(next_status, "状态已更新")
 
         self.last_activity = time.time()
 
-        # 如果會話變為已提交狀態，重置清理定時器
+        # 如果会话变为已提交状态，重置清理定时器
         if next_status == SessionStatus.FEEDBACK_SUBMITTED:
             self._schedule_auto_cleanup()
 
         debug_log(
-            f"✅ 會話 {self.session_id} 狀態流轉: {old_status.value} → {next_status.value} - {self.status_message}"
+            f"✅ 会话 {self.session_id} 状态流转: {old_status.value} → {next_status.value} - {self.status_message}"
         )
         return True
 
-    def set_error(self, message: str = "會話發生錯誤") -> bool:
-        """設置錯誤狀態（特殊方法，可從任何狀態進入）"""
+    def set_error(self, message: str = "会话发生错误") -> bool:
+        """设置错误状态（特殊方法，可从任何状态进入）"""
         old_status = self.status
         self.status = SessionStatus.ERROR
         self.status_message = message
         self.last_activity = time.time()
 
         debug_log(
-            f"❌ 會話 {self.session_id} 設置為錯誤狀態: {old_status.value} → {self.status.value} - {message}"
+            f"❌ 会话 {self.session_id} 设置为错误状态: {old_status.value} → {self.status.value} - {message}"
         )
         return True
 
-    def set_expired(self, message: str = "會話已過期") -> bool:
-        """設置過期狀態（特殊方法，可從任何狀態進入）"""
+    def set_expired(self, message: str = "会话已过期") -> bool:
+        """设置过期状态（特殊方法，可从任何状态进入）"""
         old_status = self.status
         self.status = SessionStatus.EXPIRED
         self.status_message = message
         self.last_activity = time.time()
 
         debug_log(
-            f"⏰ 會話 {self.session_id} 設置為過期狀態: {old_status.value} → {self.status.value} - {message}"
+            f"⏰ 会话 {self.session_id} 设置为过期状态: {old_status.value} → {self.status.value} - {message}"
         )
         return True
 
     def can_proceed(self) -> bool:
-        """檢查是否可以進入下一步"""
+        """检查是否可以进入下一步"""
         return self.status in [SessionStatus.WAITING, SessionStatus.FEEDBACK_SUBMITTED]
 
     def is_terminal(self) -> bool:
-        """檢查是否處於終態"""
+        """检查是否处于终态"""
         return self.status in [
             SessionStatus.COMPLETED,
             SessionStatus.ERROR,
@@ -228,7 +231,7 @@ class WebFeedbackSession:
         ]
 
     def get_status_info(self) -> dict[str, Any]:
-        """獲取會話狀態信息"""
+        """获取会话状态信息"""
         return {
             "status": self.status.value,
             "message": self.status_message,
@@ -238,11 +241,12 @@ class WebFeedbackSession:
             "last_activity": self.last_activity,
             "project_directory": self.project_directory,
             "summary": self.summary,
+            "title": self.title,
             "session_id": self.session_id,
         }
 
     def is_active(self) -> bool:
-        """檢查會話是否活躍"""
+        """检查会话是否活跃"""
         return self.status in [
             SessionStatus.WAITING,
             SessionStatus.ACTIVE,
@@ -250,54 +254,54 @@ class WebFeedbackSession:
         ]
 
     def is_expired(self) -> bool:
-        """檢查會話是否已過期"""
-        # 統一使用 time.time()
+        """检查会话是否已过期"""
+        # 统一使用 time.time()
         current_time = time.time()
 
-        # 檢查是否超過最大空閒時間
+        # 检查是否超过最大空闲时间
         idle_time = current_time - self.last_activity
         if idle_time > self.max_idle_time:
             debug_log(
-                f"會話 {self.session_id} 空閒時間過長: {idle_time:.1f}秒 > {self.max_idle_time}秒"
+                f"会话 {self.session_id} 空闲时间过长: {idle_time:.1f}秒 > {self.max_idle_time}秒"
             )
             return True
 
-        # 檢查是否處於已過期狀態
+        # 检查是否处于已过期状态
         if self.status == SessionStatus.EXPIRED:
             return True
 
-        # 檢查是否處於錯誤或超時狀態且超過一定時間
+        # 检查是否处于错误或超时状态且超过一定时间
         if self.status in [SessionStatus.ERROR, SessionStatus.TIMEOUT]:
             error_time = current_time - self.last_activity
-            if error_time > 300:  # 錯誤狀態超過5分鐘視為過期
+            if error_time > 300:  # 错误状态超过5分钟视为过期
                 debug_log(
-                    f"會話 {self.session_id} 錯誤狀態時間過長: {error_time:.1f}秒"
+                    f"会话 {self.session_id} 错误状态时间过长: {error_time:.1f}秒"
                 )
                 return True
 
         return False
 
     def get_age(self) -> float:
-        """獲取會話年齡（秒）"""
+        """获取会话年龄（秒）"""
         current_time = time.time()
         return current_time - self.created_at
 
     def get_idle_time(self) -> float:
-        """獲取會話空閒時間（秒）"""
+        """获取会话空闲时间（秒）"""
         current_time = time.time()
         return current_time - self.last_activity
 
     def _schedule_auto_cleanup(self):
-        """安排自動清理定時器"""
+        """安排自动清理定时器"""
         if self.cleanup_timer:
             self.cleanup_timer.cancel()
 
         def auto_cleanup():
-            """自動清理回調"""
+            """自动清理回调"""
             try:
                 if not self._cleanup_done and self.is_expired():
-                    debug_log(f"會話 {self.session_id} 觸發自動清理（過期）")
-                    # 使用異步方式執行清理
+                    debug_log(f"会话 {self.session_id} 触发自动清理（过期）")
+                    # 使用异步方式执行清理
                     import asyncio
 
                     try:
@@ -306,28 +310,28 @@ class WebFeedbackSession:
                             self._cleanup_resources_enhanced(CleanupReason.EXPIRED)
                         )
                     except RuntimeError:
-                        # 如果沒有事件循環，使用同步清理
+                        # 如果没有事件循环，使用同步清理
                         self._cleanup_sync_enhanced(CleanupReason.EXPIRED)
                 else:
-                    # 如果還沒過期，重新安排定時器
+                    # 如果还没过期，重新安排定时器
                     self._schedule_auto_cleanup()
             except Exception as e:
                 error_id = ErrorHandler.log_error_with_context(
                     e,
-                    context={"session_id": self.session_id, "operation": "自動清理"},
+                    context={"session_id": self.session_id, "operation": "自动清理"},
                     error_type=ErrorType.SYSTEM,
                 )
-                debug_log(f"自動清理失敗 [錯誤ID: {error_id}]: {e}")
+                debug_log(f"自动清理失败 [错误ID: {error_id}]: {e}")
 
         self.cleanup_timer = threading.Timer(self.auto_cleanup_delay, auto_cleanup)
         self.cleanup_timer.daemon = True
         self.cleanup_timer.start()
         debug_log(
-            f"會話 {self.session_id} 自動清理定時器已設置，{self.auto_cleanup_delay}秒後觸發"
+            f"会话 {self.session_id} 自动清理定时器已设置，{self.auto_cleanup_delay}秒后触发"
         )
 
     def extend_cleanup_timer(self, additional_time: int | None = None):
-        """延長清理定時器"""
+        """延长清理定时器"""
         if additional_time is None:
             additional_time = self.auto_cleanup_delay
 
@@ -338,22 +342,22 @@ class WebFeedbackSession:
         self.cleanup_timer.daemon = True
         self.cleanup_timer.start()
 
-        debug_log(f"會話 {self.session_id} 清理定時器已延長 {additional_time} 秒")
+        debug_log(f"会话 {self.session_id} 清理定时器已延长 {additional_time} 秒")
 
     def add_cleanup_callback(self, callback: Callable[..., None]):
-        """添加清理回調函數"""
+        """添加清理回调函数"""
         if callback not in self.cleanup_callbacks:
             self.cleanup_callbacks.append(callback)
-            debug_log(f"會話 {self.session_id} 添加清理回調函數")
+            debug_log(f"会话 {self.session_id} 添加清理回调函数")
 
     def remove_cleanup_callback(self, callback: Callable[..., None]):
-        """移除清理回調函數"""
+        """移除清理回调函数"""
         if callback in self.cleanup_callbacks:
             self.cleanup_callbacks.remove(callback)
-            debug_log(f"會話 {self.session_id} 移除清理回調函數")
+            debug_log(f"会话 {self.session_id} 移除清理回调函数")
 
     def get_cleanup_stats(self) -> dict[str, Any]:
-        """獲取清理統計信息"""
+        """获取清理统计信息"""
         stats = self.cleanup_stats.copy()
         stats.update(
             {
@@ -371,15 +375,15 @@ class WebFeedbackSession:
 
     def update_timeout_settings(self, enabled: bool, timeout_seconds: int = 3600):
         """
-        更新用戶設定的會話超時
+        更新用户设定的会话超时
 
         Args:
-            enabled: 是否啟用超時
-            timeout_seconds: 超時秒數
+            enabled: 是否启用超时
+            timeout_seconds: 超时秒数
         """
-        debug_log(f"更新會話超時設定: enabled={enabled}, seconds={timeout_seconds}")
+        debug_log(f"更新会话超时设定: enabled={enabled}, seconds={timeout_seconds}")
 
-        # 先停止現有的計時器
+        # 先停止现有的计时器
         if self.user_timeout_timer:
             self.user_timeout_timer.cancel()
             self.user_timeout_timer = None
@@ -387,40 +391,40 @@ class WebFeedbackSession:
         self.user_timeout_enabled = enabled
         self.user_timeout_seconds = timeout_seconds
 
-        # 如果啟用且會話還在等待中，啟動計時器
+        # 如果启用且会话还在等待中，启动计时器
         if enabled and self.status == SessionStatus.WAITING:
 
             def timeout_handler():
-                debug_log(f"用戶設定的超時已到: {self.session_id}")
-                # 設置超時標誌
+                debug_log(f"用户设定的超时已到: {self.session_id}")
+                # 设置超时标志
                 self.status = SessionStatus.TIMEOUT
-                self.status_message = "用戶設定的會話超時"
-                # 設置完成事件，讓 wait_for_feedback 結束等待
+                self.status_message = "用户设定的会话超时"
+                # 设置完成事件，让 wait_for_feedback 结束等待
                 self.feedback_completed.set()
 
             self.user_timeout_timer = threading.Timer(timeout_seconds, timeout_handler)
             self.user_timeout_timer.start()
-            debug_log(f"已啟動用戶超時計時器: {timeout_seconds}秒")
+            debug_log(f"已启动用户超时计时器: {timeout_seconds}秒")
 
     async def wait_for_feedback(self, timeout: int = 600) -> dict[str, Any]:
         """
-        等待用戶回饋，包含圖片，支援超時自動清理
+        等待用户反馈，包含图片，支援超时自动清理
 
         Args:
-            timeout: 超時時間（秒）
+            timeout: 超时时间（秒）
 
         Returns:
-            dict: 回饋結果
+            dict: 反馈结果
         """
         try:
-            # 使用比 MCP 超時稍短的時間（提前處理，避免邊界競爭）
-            # 對於短超時（<30秒），提前1秒；對於長超時，提前5秒
+            # 使用比 MCP 超时稍短的时间（提前处理，避免边界竞争）
+            # 对于短超时（<30秒），提前1秒；对于长超时，提前5秒
             if timeout <= 30:
-                actual_timeout = max(timeout - 1, 5)  # 短超時提前1秒，最少5秒
+                actual_timeout = max(timeout - 1, 5)  # 短超时提前1秒，最少5秒
             else:
-                actual_timeout = timeout - 5  # 長超時提前5秒
+                actual_timeout = timeout - 5  # 长超时提前5秒
             debug_log(
-                f"會話 {self.session_id} 開始等待回饋，超時時間: {actual_timeout} 秒（原始: {timeout} 秒）"
+                f"会话 {self.session_id} 开始等待反馈，超时时间: {actual_timeout} 秒（原始: {timeout} 秒）"
             )
 
             loop = asyncio.get_event_loop()
@@ -431,30 +435,30 @@ class WebFeedbackSession:
             completed = await loop.run_in_executor(None, wait_in_thread)
 
             if completed:
-                # 檢查是否是用戶設定的超時
+                # 检查是否是用户设定的超时
                 if self.status == SessionStatus.TIMEOUT and self.user_timeout_enabled:
-                    debug_log(f"會話 {self.session_id} 因用戶設定超時而結束")
+                    debug_log(f"会话 {self.session_id} 因用户设定超时而结束")
                     await self._cleanup_resources_on_timeout()
-                    raise TimeoutError("會話已因用戶設定的超時而關閉")
+                    raise TimeoutError("会话已因用户设定的超时而关闭")
 
-                debug_log(f"會話 {self.session_id} 收到用戶回饋")
+                debug_log(f"会话 {self.session_id} 收到用户反馈")
                 return {
                     "interactive_feedback": self.feedback_result or "",
                     "images": self.images,
                     "settings": self.settings,
                 }
-            # 超時了，立即清理資源
+            # 超时了，立即清理资源
             debug_log(
-                f"會話 {self.session_id} 在 {actual_timeout} 秒後超時，開始清理資源..."
+                f"会话 {self.session_id} 在 {actual_timeout} 秒后超时，开始清理资源..."
             )
             await self._cleanup_resources_on_timeout()
             raise TimeoutError(
-                f"等待用戶回饋超時（{actual_timeout}秒），介面已自動關閉"
+                f"等待用户反馈超时（{actual_timeout}秒），界面已自动关闭"
             )
 
         except Exception as e:
-            # 任何異常都要確保清理資源
-            debug_log(f"會話 {self.session_id} 發生異常: {e}")
+            # 任何异常都要确保清理资源
+            debug_log(f"会话 {self.session_id} 发生异常: {e}")
             await self._cleanup_resources_on_timeout()
             raise
 
@@ -465,24 +469,24 @@ class WebFeedbackSession:
         settings: dict[str, Any] | None = None,
     ):
         """
-        提交回饋和圖片
+        提交反馈和图片
 
         Args:
-            feedback: 文字回饋
-            images: 圖片列表
-            settings: 圖片設定（可選）
+            feedback: 文字反馈
+            images: 图片列表
+            settings: 图片设定（可选）
         """
         self.feedback_result = feedback
-        # 先設置設定，再處理圖片（因為處理圖片時需要用到設定）
+        # 先设置设定，再处理图片（因为处理图片时需要用到设定）
         self.settings = settings or {}
         self.images = self._process_images(images)
 
-        # 進入下一步：等待中 → 已提交反饋
-        self.next_step("已送出反饋，等待下次 MCP 調用")
+        # 进入下一步：等待中 → 已提交反馈
+        self.next_step("已送出反馈，等待下次 MCP 调用")
 
         self.feedback_completed.set()
 
-        # 發送反饋已收到的消息給前端
+        # 发送反馈已收到的消息给前端
         if self.websocket:
             try:
                 await self.websocket.send_json(
@@ -495,17 +499,17 @@ class WebFeedbackSession:
                 )
 
             except Exception as e:
-                debug_log(f"發送反饋確認失敗: {e}")
+                debug_log(f"发送反馈确认失败: {e}")
 
-        # 重構：不再自動關閉 WebSocket，保持連接以支援頁面持久性
+        # 重构：不再自动关闭 WebSocket，保持连接以支援页面持久性
 
     def add_user_message(self, message_data: dict[str, Any]) -> None:
-        """添加用戶消息記錄"""
+        """添加用户消息记录"""
         import time
 
-        # 創建用戶消息記錄
+        # 创建用户消息记录
         user_message = {
-            "timestamp": int(time.time() * 1000),  # 毫秒時間戳
+            "timestamp": int(time.time() * 1000),  # 毫秒时间戳
             "content": message_data.get("content", ""),
             "images": message_data.get("images", []),
             "submission_method": message_data.get("submission_method", "manual"),
@@ -514,22 +518,22 @@ class WebFeedbackSession:
 
         self.user_messages.append(user_message)
         debug_log(
-            f"會話 {self.session_id} 添加用戶消息，總數: {len(self.user_messages)}"
+            f"会话 {self.session_id} 添加用户消息，总数: {len(self.user_messages)}"
         )
 
     def _process_images(self, images: list[dict]) -> list[dict]:
         """
-        處理圖片數據，轉換為統一格式
+        处理图片数据，转换为统一格式
 
         Args:
-            images: 原始圖片數據列表
+            images: 原始图片数据列表
 
         Returns:
-            List[dict]: 處理後的圖片數據
+            List[dict]: 处理后的图片数据
         """
         processed_images = []
 
-        # 從設定中獲取圖片大小限制，如果沒有設定則使用預設值
+        # 从设定中获取图片大小限制，如果没有设定则使用默认值
         size_limit = self.settings.get("image_size_limit", MAX_IMAGE_SIZE)
 
         for img in images:
@@ -537,60 +541,60 @@ class WebFeedbackSession:
                 if not all(key in img for key in ["name", "data", "size"]):
                     continue
 
-                # 檢查文件大小（只有當限制大於0時才檢查）
+                # 检查文件大小（只有当限制大于0时才检查）
                 if size_limit > 0 and img["size"] > size_limit:
                     debug_log(
-                        f"圖片 {img['name']} 超過大小限制 ({size_limit} bytes)，跳過"
+                        f"图片 {img['name']} 超过大小限制 ({size_limit} bytes)，跳过"
                     )
                     continue
 
-                # 解碼 base64 數據
+                # 解码 base64 数据
                 if isinstance(img["data"], str):
                     try:
                         image_bytes = base64.b64decode(img["data"])
                     except Exception as e:
-                        debug_log(f"圖片 {img['name']} base64 解碼失敗: {e}")
+                        debug_log(f"图片 {img['name']} base64 解码失败: {e}")
                         continue
                 else:
                     image_bytes = img["data"]
 
                 if len(image_bytes) == 0:
-                    debug_log(f"圖片 {img['name']} 數據為空，跳過")
+                    debug_log(f"图片 {img['name']} 数据为空，跳过")
                     continue
 
                 processed_images.append(
                     {
                         "name": img["name"],
-                        "data": image_bytes,  # 保存原始 bytes 數據
+                        "data": image_bytes,  # 保存原始 bytes 数据
                         "size": len(image_bytes),
                     }
                 )
 
                 debug_log(
-                    f"圖片 {img['name']} 處理成功，大小: {len(image_bytes)} bytes"
+                    f"图片 {img['name']} 处理成功，大小: {len(image_bytes)} bytes"
                 )
 
             except Exception as e:
-                debug_log(f"圖片處理錯誤: {e}")
+                debug_log(f"图片处理错误: {e}")
                 continue
 
         return processed_images
 
     async def _cleanup_resources_on_timeout(self):
-        """超時時清理所有資源（保持向後兼容）"""
+        """超时时清理所有资源（保持向后兼容）"""
         await self._cleanup_resources_enhanced(CleanupReason.TIMEOUT)
 
     async def _cleanup_resources_enhanced(self, reason: CleanupReason):
-        """增強的資源清理方法"""
+        """增强的资源清理方法"""
         if self._cleanup_done:
-            return  # 避免重複清理
+            return  # 避免重复清理
 
         cleanup_start_time = time.time()
         self._cleanup_done = True
 
-        debug_log(f"開始清理會話 {self.session_id} 的資源，原因: {reason.value}")
+        debug_log(f"开始清理会话 {self.session_id} 的资源，原因: {reason.value}")
 
-        # 更新清理統計
+        # 更新清理统计
         self.cleanup_stats["cleanup_count"] += 1
         self.cleanup_stats["cleanup_reason"] = reason.value
         self.cleanup_stats["last_cleanup_time"] = datetime.now().isoformat()
@@ -599,7 +603,7 @@ class WebFeedbackSession:
         memory_before = 0
 
         try:
-            # 記錄清理前的內存使用（如果可能）
+            # 记录清理前的内存使用（如果可能）
             try:
                 import psutil
 
@@ -608,22 +612,22 @@ class WebFeedbackSession:
             except:
                 pass
 
-            # 1. 取消自動清理定時器
+            # 1. 取消自动清理定时器
             if self.cleanup_timer:
                 self.cleanup_timer.cancel()
                 self.cleanup_timer = None
                 resources_cleaned += 1
 
-            # 1.5. 取消用戶超時計時器
+            # 1.5. 取消用户超时计时器
             if self.user_timeout_timer:
                 self.user_timeout_timer.cancel()
                 self.user_timeout_timer = None
                 resources_cleaned += 1
 
-            # 2. 關閉 WebSocket 連接
+            # 2. 关闭 WebSocket 连接
             if self.websocket:
                 try:
-                    # 根據清理原因獲取訊息代碼
+                    # 根据清理原因获取消息代码
                     code_key_map = {
                         CleanupReason.TIMEOUT: "TIMEOUT_CLEANUP",
                         CleanupReason.EXPIRED: "EXPIRED_CLEANUP",
@@ -643,21 +647,21 @@ class WebFeedbackSession:
                             "reason": reason.value,
                         }
                     )
-                    await asyncio.sleep(0.1)  # 給前端一點時間處理消息
+                    await asyncio.sleep(0.1)  # 给前端一点时间处理消息
 
-                    # 安全關閉 WebSocket
+                    # 安全关闭 WebSocket
                     await self._safe_close_websocket()
-                    debug_log(f"會話 {self.session_id} WebSocket 已關閉")
+                    debug_log(f"会话 {self.session_id} WebSocket 已关闭")
                     resources_cleaned += 1
                 except Exception as e:
-                    debug_log(f"關閉 WebSocket 時發生錯誤: {e}")
+                    debug_log(f"关闭 WebSocket 时发生错误: {e}")
                 finally:
                     self.websocket = None
 
-            # 3. 設置完成事件（防止其他地方還在等待）
+            # 3. 设置完成事件（防止其他地方还在等待）
             self.feedback_completed.set()
 
-            # 4. 清理臨時數據
+            # 4. 清理临时数据
             images_count = len(self.images)
 
             self.images.clear()
@@ -665,9 +669,9 @@ class WebFeedbackSession:
 
             if images_count > 0:
                 resources_cleaned += images_count
-                debug_log(f"清理了 {images_count} 張圖片")
+                debug_log(f"清理了 {images_count} 张图片")
 
-            # 5. 更新會話狀態
+            # 5. 更新会话状态
             if reason == CleanupReason.EXPIRED:
                 self.status = SessionStatus.EXPIRED
             elif reason == CleanupReason.TIMEOUT:
@@ -677,7 +681,7 @@ class WebFeedbackSession:
             else:
                 self.status = SessionStatus.COMPLETED
 
-            # 6. 調用清理回調函數
+            # 6. 调用清理回调函数
             for callback in self.cleanup_callbacks:
                 try:
                     if asyncio.iscoroutinefunction(callback):
@@ -685,9 +689,9 @@ class WebFeedbackSession:
                     else:
                         callback(self, reason)
                 except Exception as e:
-                    debug_log(f"清理回調執行失敗: {e}")
+                    debug_log(f"清理回调执行失败: {e}")
 
-            # 7. 計算清理效果
+            # 7. 计算清理效果
             cleanup_duration = time.time() - cleanup_start_time
             memory_after = 0
             try:
@@ -700,7 +704,7 @@ class WebFeedbackSession:
 
             memory_freed = max(0, memory_before - memory_after)
 
-            # 更新清理統計
+            # 更新清理统计
             self.cleanup_stats.update(
                 {
                     "cleanup_duration": cleanup_duration,
@@ -710,8 +714,8 @@ class WebFeedbackSession:
             )
 
             debug_log(
-                f"會話 {self.session_id} 資源清理完成，耗時: {cleanup_duration:.2f}秒，"
-                f"清理資源: {resources_cleaned}個，釋放內存: {memory_freed}字節"
+                f"会话 {self.session_id} 资源清理完成，耗时: {cleanup_duration:.2f}秒，"
+                f"清理资源: {resources_cleaned}个，释放内存: {memory_freed}字节"
             )
 
         except Exception as e:
@@ -720,34 +724,34 @@ class WebFeedbackSession:
                 context={
                     "session_id": self.session_id,
                     "cleanup_reason": reason.value,
-                    "operation": "增強資源清理",
+                    "operation": "增强资源清理",
                 },
                 error_type=ErrorType.SYSTEM,
             )
             debug_log(
-                f"清理會話 {self.session_id} 資源時發生錯誤 [錯誤ID: {error_id}]: {e}"
+                f"清理会话 {self.session_id} 资源时发生错误 [错误ID: {error_id}]: {e}"
             )
 
-            # 即使發生錯誤也要更新統計
+            # 即使发生错误也要更新统计
             self.cleanup_stats["cleanup_duration"] = time.time() - cleanup_start_time
 
     def _cleanup_sync(self):
-        """同步清理會話資源（但保留 WebSocket 連接）- 保持向後兼容"""
+        """同步清理会话资源（但保留 WebSocket 连接）- 保持向后兼容"""
         self._cleanup_sync_enhanced(CleanupReason.MANUAL, preserve_websocket=True)
 
     def _cleanup_sync_enhanced(
         self, reason: CleanupReason, preserve_websocket: bool = False
     ):
-        """增強的同步清理會話資源"""
+        """增强的同步清理会话资源"""
         if self._cleanup_done and not preserve_websocket:
             return
 
         cleanup_start_time = time.time()
         debug_log(
-            f"同步清理會話 {self.session_id} 資源，原因: {reason.value}，保留WebSocket: {preserve_websocket}"
+            f"同步清理会话 {self.session_id} 资源，原因: {reason.value}，保留WebSocket: {preserve_websocket}"
         )
 
-        # 更新清理統計
+        # 更新清理统计
         self.cleanup_stats["cleanup_count"] += 1
         self.cleanup_stats["cleanup_reason"] = reason.value
         self.cleanup_stats["last_cleanup_time"] = datetime.now().isoformat()
@@ -756,7 +760,7 @@ class WebFeedbackSession:
         memory_before = 0
 
         try:
-            # 記錄清理前的內存使用
+            # 记录清理前的内存使用
             try:
                 import psutil
 
@@ -765,13 +769,13 @@ class WebFeedbackSession:
             except:
                 pass
 
-            # 1. 取消自動清理定時器
+            # 1. 取消自动清理定时器
             if self.cleanup_timer:
                 self.cleanup_timer.cancel()
                 self.cleanup_timer = None
                 resources_cleaned += 1
 
-            # 2. 清理臨時數據
+            # 2. 清理临时数据
             images_count = len(self.images)
 
             if not preserve_websocket:
@@ -779,11 +783,11 @@ class WebFeedbackSession:
                 self.settings.clear()
                 resources_cleaned += images_count
 
-            # 3. 設置完成事件
+            # 3. 设置完成事件
             if not preserve_websocket:
                 self.feedback_completed.set()
 
-            # 4. 更新狀態
+            # 4. 更新状态
             if not preserve_websocket:
                 if reason == CleanupReason.EXPIRED:
                     self.status = SessionStatus.EXPIRED
@@ -796,15 +800,15 @@ class WebFeedbackSession:
 
                 self._cleanup_done = True
 
-            # 5. 調用清理回調函數（同步版本）
+            # 5. 调用清理回调函数（同步版本）
             for callback in self.cleanup_callbacks:
                 try:
                     if not asyncio.iscoroutinefunction(callback):
                         callback(self, reason)
                 except Exception as e:
-                    debug_log(f"同步清理回調執行失敗: {e}")
+                    debug_log(f"同步清理回调执行失败: {e}")
 
-            # 6. 計算清理效果
+            # 6. 计算清理效果
             cleanup_duration = time.time() - cleanup_start_time
             memory_after = 0
             try:
@@ -817,7 +821,7 @@ class WebFeedbackSession:
 
             memory_freed = max(0, memory_before - memory_after)
 
-            # 更新清理統計
+            # 更新清理统计
             self.cleanup_stats.update(
                 {
                     "cleanup_duration": cleanup_duration,
@@ -827,8 +831,8 @@ class WebFeedbackSession:
             )
 
             debug_log(
-                f"會話 {self.session_id} 同步清理完成，耗時: {cleanup_duration:.2f}秒，"
-                f"清理資源: {resources_cleaned}個，釋放內存: {memory_freed}字節"
+                f"会话 {self.session_id} 同步清理完成，耗时: {cleanup_duration:.2f}秒，"
+                f"清理资源: {resources_cleaned}个，释放内存: {memory_freed}字节"
             )
 
         except Exception as e:
@@ -838,49 +842,49 @@ class WebFeedbackSession:
                     "session_id": self.session_id,
                     "cleanup_reason": reason.value,
                     "preserve_websocket": preserve_websocket,
-                    "operation": "同步資源清理",
+                    "operation": "同步资源清理",
                 },
                 error_type=ErrorType.SYSTEM,
             )
             debug_log(
-                f"同步清理會話 {self.session_id} 資源時發生錯誤 [錯誤ID: {error_id}]: {e}"
+                f"同步清理会话 {self.session_id} 资源时发生错误 [错误ID: {error_id}]: {e}"
             )
 
-            # 即使發生錯誤也要更新統計
+            # 即使发生错误也要更新统计
             self.cleanup_stats["cleanup_duration"] = time.time() - cleanup_start_time
 
     def cleanup(self):
-        """同步清理會話資源（保持向後兼容）"""
+        """同步清理会话资源（保持向后兼容）"""
         self._cleanup_sync_enhanced(CleanupReason.MANUAL)
 
     async def _safe_close_websocket(self):
-        """安全關閉 WebSocket 連接，避免事件循環衝突"""
+        """安全关闭 WebSocket 连接，避免事件循环冲突"""
         if not self.websocket:
             return
 
         try:
-            # 檢查連接狀態
+            # 检查连接状态
             if (
                 hasattr(self.websocket, "client_state")
                 and self.websocket.client_state.DISCONNECTED
             ):
-                debug_log("WebSocket 已斷開，跳過關閉操作")
+                debug_log("WebSocket 已断开，跳过关闭操作")
                 return
 
-            # 嘗試正常關閉
+            # 尝试正常关闭
             await asyncio.wait_for(
-                self.websocket.close(code=1000, reason="會話清理"), timeout=2.0
+                self.websocket.close(code=1000, reason="会话清理"), timeout=2.0
             )
-            debug_log(f"會話 {self.session_id} WebSocket 已正常關閉")
+            debug_log(f"会话 {self.session_id} WebSocket 已正常关闭")
 
         except TimeoutError:
-            debug_log(f"會話 {self.session_id} WebSocket 關閉超時")
+            debug_log(f"会话 {self.session_id} WebSocket 关闭超时")
         except RuntimeError as e:
             if "attached to a different loop" in str(e):
                 debug_log(
-                    f"會話 {self.session_id} WebSocket 事件循環衝突，忽略關閉錯誤: {e}"
+                    f"会话 {self.session_id} WebSocket 事件循环冲突，忽略关闭错误: {e}"
                 )
             else:
-                debug_log(f"會話 {self.session_id} WebSocket 關閉時發生運行時錯誤: {e}")
+                debug_log(f"会话 {self.session_id} WebSocket 关闭时发生运行时错误: {e}")
         except Exception as e:
-            debug_log(f"會話 {self.session_id} 關閉 WebSocket 時發生未知錯誤: {e}")
+            debug_log(f"会话 {self.session_id} 关闭 WebSocket 时发生未知错误: {e}")

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Web UI 資料模型模組
+Web UI 数据模型模组
 ==================
 
-定義 Web UI 相關的資料結構和型別。
+定义 Web UI 相关的数据结构和型别。
 """
 
 from .feedback_result import FeedbackResult

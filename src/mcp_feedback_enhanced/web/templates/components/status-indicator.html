@@ -1,22 +1,22 @@
 {#
-狀態指示器組件
+状态指示器组件
 ==============
 
-參數:
+参数:
 - id: 指示器 ID
-- status: 狀態類型 ("waiting", "processing", "submitted")
-- icon: 狀態圖標
-- title: 狀態標題
-- message: 狀態訊息
-- visible: 是否顯示 (預設: false)
+- status: 状态类型 ("waiting", "processing", "submitted")
+- icon: 状态图标
+- title: 状态标题
+- message: 状态消息
+- visible: 是否显示 (默认: false)
 
 使用方式:
 {% include 'components/status-indicator.html' with
    id="feedbackStatusIndicator",
    status="waiting",
    icon="⏳",
-   title="等待您的回饋",
-   message="請提供您對 AI 工作成果的意見和建議" %}
+   title="等待您的反馈",
+   message="请提供您对 AI 工作成果的意见和建议" %}
 #}
 
 {% set visible = visible or false %}

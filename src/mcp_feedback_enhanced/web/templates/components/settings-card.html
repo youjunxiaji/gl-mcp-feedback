@@ -1,16 +1,16 @@
 {#
-設定卡片組件
+设定卡片组件
 ============
 
-參數:
-- title: 卡片標題
-- icon: 標題圖標 (可選)
-- card_id: 卡片 ID (可選)
-- content: 卡片內容 (使用 caller() 傳入)
+参数:
+- title: 卡片标题
+- icon: 标题图标 (可选)
+- card_id: 卡片 ID (可选)
+- content: 卡片内容 (使用 caller() 传入)
 
 使用方式:
-{% call settings_card(title="介面設定", icon="🎨") %}
-    <!-- 卡片內容 -->
+{% call settings_card(title="界面设定", icon="🎨") %}
+    <!-- 卡片内容 -->
 {% endcall %}
 #}
 
@@ -28,17 +28,17 @@
 {% endmacro %}
 
 {#
-設定項目組件
+设定项目组件
 ============
 
-參數:
-- label: 設定項目標籤
-- description: 設定項目描述
-- is_last: 是否為最後一個項目 (影響邊框顯示)
-- control: 控制元件內容 (使用 caller() 傳入)
+参数:
+- label: 设定项目标签
+- description: 设定项目描述
+- is_last: 是否为最后一个项目 (影响边框显示)
+- control: 控制元件内容 (使用 caller() 传入)
 
 使用方式:
-{% call setting_item(label="自動關閉頁面", description="提交回饋後自動關閉頁面") %}
+{% call setting_item(label="自动关闭页面", description="提交反馈后自动关闭页面") %}
     <div id="autoCloseToggle" class="toggle-switch active">
         <div class="toggle-knob"></div>
     </div>

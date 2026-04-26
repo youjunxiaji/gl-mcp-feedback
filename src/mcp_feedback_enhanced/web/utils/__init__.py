@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Web UI 工具模組
+Web UI 工具模组
 ==============
 
-提供 Web UI 相關的工具函數。
+提供 Web UI 相关的工具函数。
 """
 
 from .browser import get_browser_opener

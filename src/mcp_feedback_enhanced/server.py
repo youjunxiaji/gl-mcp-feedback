@@ -407,6 +407,17 @@ async def interactive_feedback(
             )
         ),
     ] = "",
+    title: Annotated[
+        str,
+        Field(
+            description=(
+                "Optional short headline (max ~30 chars) for this feedback "
+                "round, displayed in the browser tab and at the top of the "
+                "AI summary panel. Should be concise (e.g. \"需要你提供更多信息\", "
+                "\"修复完成，请验证\"). Leave empty when there's no good headline."
+            )
+        ),
+    ] = "",
     timeout: Annotated[
         int, Field(description="Seconds to wait for user feedback. Keep >= 600.")
     ] = 600,
@@ -441,11 +452,13 @@ async def interactive_feedback(
         - DO NOT end your turn with a plain-text reply when you still
           have output intended for the user to read. Put that output
           into ``summary`` and call this tool instead.
-        - This tool accepts ONLY three parameters: ``project_directory``,
-          ``summary``, ``timeout``. Names such as ``title``, ``question``,
-          ``choices``, ``options`` belong to ``AskQuestion`` — NEVER
-          forward them to this tool. Passing any other keyword argument
-          will cause the call to fail schema validation on the server.
+        - Allowed parameters: ``project_directory``, ``summary``,
+          ``title``, ``timeout``. ``title`` is OPTIONAL — pass a short
+          headline (≤30 chars) for the Web UI's tab title and summary
+          header. Names such as ``question``, ``choices``, ``options``
+          belong to ``AskQuestion`` — NEVER forward them to this tool.
+          Passing any other keyword argument will cause the call to
+          fail schema validation on the server.
 
     Only stop calling when the user explicitly says ``结束`` / ``不用了`` /
     ``stop`` / ``done`` or an equivalent termination phrase.
@@ -461,10 +474,19 @@ async def interactive_feedback(
           runtime and returns a correction notice that you must follow
           by re-calling with a real summary.
 
+    ``title`` writing rules:
+        - Optional. Leave empty when ``summary`` is self-explanatory.
+        - Keep concise (≤30 chars) — it's a headline, not a sentence.
+        - Use the same language as the user.
+        - Examples: ``需要你提供更多信息`` / ``修复完成，请验证`` /
+          ``实现方案确认`` / ``Need more context``.
+
     Args:
         project_directory: Absolute or relative project path. Defaults to cwd.
         summary: Required. Markdown summary of the AI's current work / plan
             / question. No empty string, no placeholder phrase.
+        title: Optional short headline shown in the Web UI tab and summary
+            header. Leave empty if there's no concise headline.
         timeout: Seconds to wait for user feedback. Keep ``>= 600``.
 
     Returns:
@@ -473,7 +495,7 @@ async def interactive_feedback(
             means the user skipped — you MUST re-call this tool to ask why.
     """
     # summary 运行时校验：阻止 AI 使用空串或占位套话偷懒
-    # 规范化：去首尾空白 + 去末尾中英文标点，让「我已完成了您请求的任务」「…。」「… .」都能命中
+    # 规范化：去首尾空白 + 去末尾中英文标点，让“我已完成了您请求的任务”“…。”“… .”都能命中
     normalized_summary = summary.strip().rstrip("。.!?！？ \t\n")
     invalid_summary_placeholders = {
         "",
@@ -510,7 +532,9 @@ async def interactive_feedback(
         # 使用 Web 模式
         debug_log("反馈模式: web")
 
-        result = await launch_web_feedback_ui(project_directory, summary, timeout)
+        result = await launch_web_feedback_ui(
+            project_directory, summary, timeout, title=title
+        )
 
         # 处理取消情况
         if not result:
@@ -557,24 +581,26 @@ async def interactive_feedback(
         return ToolResult(content=[TextContent(type="text", text=user_error_msg)])
 
 
-async def launch_web_feedback_ui(project_dir: str, summary: str, timeout: int) -> dict:
-    """
-    启动 Web UI 收集反馈，支持自定义超时时间
+async def launch_web_feedback_ui(
+    project_dir: str, summary: str, timeout: int, *, title: str = ""
+) -> dict:
+    """启动 Web UI 收集反馈，支持自定义超时时间。
 
     Args:
-        project_dir: 项目目录路径
-        summary: AI 工作摘要
-        timeout: 超时时间（秒）
+        project_dir: 项目目录路径。
+        summary: AI 工作摘要（Markdown）。
+        timeout: 超时时间（秒）。
+        title: 可选的反馈标题，显示在浏览器标签和摘要面板顶部。
 
     Returns:
-        dict: 收集到的反馈数据
+        dict: 收集到的反馈数据。
     """
     debug_log(f"启动 Web UI 界面，超时时间: {timeout} 秒")
 
     try:
         from .web import launch_web_feedback_ui as web_launch
 
-        return await web_launch(project_dir, summary, timeout)
+        return await web_launch(project_dir, summary, timeout, title=title)
     except ImportError as e:
         error_id = ErrorHandler.log_error_with_context(
             e,

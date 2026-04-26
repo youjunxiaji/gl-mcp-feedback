@@ -44,11 +44,17 @@ alwaysApply: true
 ### feedback.html 功能
 - **顶栏**：Logo、项目路径、会话 ID、连接状态
 - **Tab 导航**：工作区、会话管理、设定、关于
-- **工作区**：左侧 AI 摘要（Markdown 渲染）+ 右侧反馈输入
+- **工作区**：左侧 AI 摘要（Markdown 渲染，标题旁可显示反馈 `title`）+ 右侧反馈输入
 - **反馈提交**：WebSocket 发送 `submit_feedback` 消息，支持 Ctrl+Enter 快捷键
 - **图片上传**：支持文件选择和 Ctrl+V 粘贴，base64 编码随反馈一起发送
-- **会话管理**：从 `/api/all-sessions` 动态加载，支持查看详情弹窗
+- **会话管理**：从 `/api/all-sessions` 动态加载，会话卡片与详情弹窗均显示 `title`
 - **底部统计面板**：可折叠
+
+### 反馈 title（headline）字段
+- 数据流：`interactive_feedback(title=...)` → `WebFeedbackSession.title` → 路由 `index()` 把 `feedback_title` 传给 Jinja 模板，并将浏览器 `<title>` 拼成 `feedback_title · MCP Feedback`
+- API：`/api/session-status`、`/api/current-session`、`/api/all-sessions` 的 session_info 都包含 `title` 字段
+- WebSocket：`session_updated` 消息的 `session_info.title` 用于在不刷新页面的情况下更新摘要面板和 `document.title`
+- 前端渲染位置：`#feedbackTitle`（AI 工作摘要面板顶部，位于"AI 工作摘要"标签右侧）+ 浏览器 tab `<title>` + 会话卡片/详情弹窗
 
 ### index.html 功能
 - 等待页面，显示"等待 MCP 服务调用"提示

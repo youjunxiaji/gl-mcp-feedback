@@ -1,15 +1,15 @@
 """
-統一錯誤處理框架
+统一错误处理框架
 ================
 
-提供統一的錯誤處理機制，包括：
-- 錯誤類型分類
-- 用戶友好錯誤信息
-- 錯誤上下文記錄
-- 解決方案建議
-- 國際化支持
+提供统一的错误处理机制，包括：
+- 错误类型分类
+- 用户友好错误信息
+- 错误上下文记录
+- 解决方案建议
+- 国际化支持
 
-注意：此模組不會影響 JSON RPC 通信，所有錯誤處理都在應用層進行。
+注意：此模组不会影响 JSON RPC 通信，所有错误处理都在应用层进行。
 """
 
 import os
@@ -22,90 +22,90 @@ from ..debug import debug_log
 
 
 class ErrorType(Enum):
-    """錯誤類型枚舉"""
+    """错误类型枚举"""
 
-    NETWORK = "network"  # 網絡相關錯誤
-    FILE_IO = "file_io"  # 文件 I/O 錯誤
-    PROCESS = "process"  # 進程相關錯誤
-    TIMEOUT = "timeout"  # 超時錯誤
-    USER_CANCEL = "user_cancel"  # 用戶取消操作
-    SYSTEM = "system"  # 系統錯誤
-    PERMISSION = "permission"  # 權限錯誤
-    VALIDATION = "validation"  # 數據驗證錯誤
-    DEPENDENCY = "dependency"  # 依賴錯誤
-    CONFIGURATION = "config"  # 配置錯誤
+    NETWORK = "network"  # 网络相关错误
+    FILE_IO = "file_io"  # 文件 I/O 错误
+    PROCESS = "process"  # 进程相关错误
+    TIMEOUT = "timeout"  # 超时错误
+    USER_CANCEL = "user_cancel"  # 用户取消操作
+    SYSTEM = "system"  # 系统错误
+    PERMISSION = "permission"  # 权限错误
+    VALIDATION = "validation"  # 数据验证错误
+    DEPENDENCY = "dependency"  # 依赖错误
+    CONFIGURATION = "config"  # 配置错误
 
 
 class ErrorSeverity(Enum):
-    """錯誤嚴重程度"""
+    """错误严重程度"""
 
-    LOW = "low"  # 低：不影響核心功能
-    MEDIUM = "medium"  # 中：影響部分功能
-    HIGH = "high"  # 高：影響核心功能
-    CRITICAL = "critical"  # 嚴重：系統無法正常運行
+    LOW = "low"  # 低：不影响核心功能
+    MEDIUM = "medium"  # 中：影响部分功能
+    HIGH = "high"  # 高：影响核心功能
+    CRITICAL = "critical"  # 严重：系统无法正常运行
 
 
 class ErrorHandler:
-    """統一錯誤處理器"""
+    """统一错误处理器"""
 
-    # 錯誤類型到用戶友好信息的映射
+    # 错误类型到用户友好信息的映射
     _ERROR_MESSAGES = {
         ErrorType.NETWORK: {
-            "zh-TW": "網絡連接出現問題",
+            "zh-TW": "网络连接出现问题",
             "zh-CN": "网络连接出现问题",
             "en": "Network connection issue",
         },
         ErrorType.FILE_IO: {
-            "zh-TW": "文件讀寫出現問題",
+            "zh-TW": "文件读写出现问题",
             "zh-CN": "文件读写出现问题",
             "en": "File read/write issue",
         },
         ErrorType.PROCESS: {
-            "zh-TW": "進程執行出現問題",
+            "zh-TW": "进程执行出现问题",
             "zh-CN": "进程执行出现问题",
             "en": "Process execution issue",
         },
         ErrorType.TIMEOUT: {
-            "zh-TW": "操作超時",
+            "zh-TW": "操作超时",
             "zh-CN": "操作超时",
             "en": "Operation timeout",
         },
         ErrorType.USER_CANCEL: {
-            "zh-TW": "用戶取消了操作",
+            "zh-TW": "用户取消了操作",
             "zh-CN": "用户取消了操作",
             "en": "User cancelled the operation",
         },
         ErrorType.SYSTEM: {
-            "zh-TW": "系統出現問題",
+            "zh-TW": "系统出现问题",
             "zh-CN": "系统出现问题",
             "en": "System issue",
         },
         ErrorType.PERMISSION: {
-            "zh-TW": "權限不足",
+            "zh-TW": "权限不足",
             "zh-CN": "权限不足",
             "en": "Insufficient permissions",
         },
         ErrorType.VALIDATION: {
-            "zh-TW": "數據驗證失敗",
+            "zh-TW": "数据验证失败",
             "zh-CN": "数据验证失败",
             "en": "Data validation failed",
         },
         ErrorType.DEPENDENCY: {
-            "zh-TW": "依賴組件出現問題",
+            "zh-TW": "依赖组件出现问题",
             "zh-CN": "依赖组件出现问题",
             "en": "Dependency issue",
         },
         ErrorType.CONFIGURATION: {
-            "zh-TW": "配置出現問題",
+            "zh-TW": "配置出现问题",
             "zh-CN": "配置出现问题",
             "en": "Configuration issue",
         },
     }
 
-    # 錯誤解決建議
+    # 错误解决建议
     _ERROR_SOLUTIONS = {
         ErrorType.NETWORK: {
-            "zh-TW": ["檢查網絡連接是否正常", "確認防火牆設置", "嘗試重新啟動應用程序"],
+            "zh-TW": ["检查网络连接是否正常", "确认防火墙设置", "尝试重新启动应用程序"],
             "zh-CN": ["检查网络连接是否正常", "确认防火墙设置", "尝试重新启动应用程序"],
             "en": [
                 "Check network connection",
@@ -114,7 +114,7 @@ class ErrorHandler:
             ],
         },
         ErrorType.FILE_IO: {
-            "zh-TW": ["檢查文件是否存在", "確認文件權限", "檢查磁盤空間是否足夠"],
+            "zh-TW": ["检查文件是否存在", "确认文件权限", "检查磁盘空间是否足够"],
             "zh-CN": ["检查文件是否存在", "确认文件权限", "检查磁盘空间是否足够"],
             "en": [
                 "Check if file exists",
@@ -124,9 +124,9 @@ class ErrorHandler:
         },
         ErrorType.PROCESS: {
             "zh-TW": [
-                "檢查進程是否正在運行",
-                "確認系統資源是否足夠",
-                "嘗試重新啟動相關服務",
+                "检查进程是否正在运行",
+                "确认系统资源是否足够",
+                "尝试重新启动相关服务",
             ],
             "zh-CN": [
                 "检查进程是否正在运行",
@@ -140,7 +140,7 @@ class ErrorHandler:
             ],
         },
         ErrorType.TIMEOUT: {
-            "zh-TW": ["增加超時時間設置", "檢查網絡延遲", "稍後重試操作"],
+            "zh-TW": ["增加超时时间设置", "检查网络延迟", "稍后重试操作"],
             "zh-CN": ["增加超时时间设置", "检查网络延迟", "稍后重试操作"],
             "en": [
                 "Increase timeout settings",
@@ -149,7 +149,7 @@ class ErrorHandler:
             ],
         },
         ErrorType.PERMISSION: {
-            "zh-TW": ["以管理員身份運行", "檢查文件/目錄權限", "聯繫系統管理員"],
+            "zh-TW": ["以管理员身份运行", "检查文件/目录权限", "联系系统管理员"],
             "zh-CN": ["以管理员身份运行", "检查文件/目录权限", "联系系统管理员"],
             "en": [
                 "Run as administrator",
@@ -161,40 +161,40 @@ class ErrorHandler:
 
     @staticmethod
     def get_current_language() -> str:
-        """獲取當前語言設置"""
+        """获取当前语言设置"""
         try:
-            # 嘗試從 i18n 模組獲取當前語言
+            # 尝试从 i18n 模组获取当前语言
             from ..i18n import get_i18n_manager
 
             return get_i18n_manager().get_current_language()
         except Exception:
-            # 回退到環境變數或默認語言
+            # 回退到环境变数或默认语言
             return os.getenv("MCP_LANGUAGE", "zh-TW")
 
     @staticmethod
     def get_i18n_error_message(error_type: ErrorType) -> str:
-        """從國際化系統獲取錯誤信息"""
+        """从国际化系统获取错误信息"""
         try:
             from ..i18n import get_i18n_manager
 
             i18n = get_i18n_manager()
             key = f"errors.types.{error_type.value}"
             message = i18n.t(key)
-            # 如果返回的是鍵本身，說明沒有找到翻譯，使用回退
+            # 如果返回的是键本身，说明没有找到翻译，使用回退
             if message == key:
                 raise Exception("Translation not found")
             return message
         except Exception:
-            # 回退到內建映射
+            # 回退到内建映射
             language = ErrorHandler.get_current_language()
             error_messages = ErrorHandler._ERROR_MESSAGES.get(error_type, {})
             return error_messages.get(
-                language, error_messages.get("zh-TW", "發生未知錯誤")
+                language, error_messages.get("zh-TW", "发生未知错误")
             )
 
     @staticmethod
     def get_i18n_error_solutions(error_type: ErrorType) -> list[str]:
-        """從國際化系統獲取錯誤解決方案"""
+        """从国际化系统获取错误解决方案"""
         try:
             from ..i18n import get_i18n_manager
 
@@ -202,19 +202,19 @@ class ErrorHandler:
             key = f"errors.solutions.{error_type.value}"
             i18n_result = i18n.t(key)
 
-            # 修復類型推斷問題 - 使用 Any 類型並明確檢查
+            # 修复类型推断问题 - 使用 Any 类型并明确检查
             from typing import Any
 
             result: Any = i18n_result
 
-            # 檢查是否為列表類型且非空
+            # 检查是否为列表类型且非空
             if isinstance(result, list) and len(result) > 0:
                 return result
 
-            # 如果不是列表或為空，使用回退
+            # 如果不是列表或为空，使用回退
             raise Exception("Solutions not found or invalid format")
         except Exception:
-            # 回退到內建映射
+            # 回退到内建映射
             language = ErrorHandler.get_current_language()
             solutions_dict = ErrorHandler._ERROR_SOLUTIONS.get(error_type, {})
             return solutions_dict.get(language, solutions_dict.get("zh-TW", []))
@@ -222,22 +222,22 @@ class ErrorHandler:
     @staticmethod
     def classify_error(error: Exception) -> ErrorType:
         """
-        根據異常類型自動分類錯誤
+        根据异常类型自动分类错误
 
         Args:
-            error: Python 異常對象
+            error: Python 异常对象
 
         Returns:
-            ErrorType: 錯誤類型
+            ErrorType: 错误类型
         """
         error_name = type(error).__name__
         error_message = str(error).lower()
 
-        # 超時錯誤（優先檢查，避免被網絡錯誤覆蓋）
+        # 超时错误（优先检查，避免被网络错误覆盖）
         if "timeout" in error_name.lower() or "timeout" in error_message:
             return ErrorType.TIMEOUT
 
-        # 權限錯誤（優先檢查，避免被文件錯誤覆蓋）
+        # 权限错误（优先检查，避免被文件错误覆盖）
         if "permission" in error_name.lower():
             return ErrorType.PERMISSION
         if any(
@@ -246,7 +246,7 @@ class ErrorHandler:
         ):
             return ErrorType.PERMISSION
 
-        # 網絡相關錯誤
+        # 网络相关错误
         if any(
             keyword in error_name.lower()
             for keyword in ["connection", "network", "socket"]
@@ -257,10 +257,10 @@ class ErrorHandler:
         ):
             return ErrorType.NETWORK
 
-        # 文件 I/O 錯誤
+        # 文件 I/O 错误
         if any(
             keyword in error_name.lower() for keyword in ["file", "ioerror"]
-        ):  # 使用更精確的匹配
+        ):  # 使用更精确的匹配
             return ErrorType.FILE_IO
         if any(
             keyword in error_message
@@ -268,7 +268,7 @@ class ErrorHandler:
         ):
             return ErrorType.FILE_IO
 
-        # 進程相關錯誤
+        # 进程相关错误
         if any(keyword in error_name.lower() for keyword in ["process", "subprocess"]):
             return ErrorType.PROCESS
         if any(
@@ -276,19 +276,19 @@ class ErrorHandler:
         ):
             return ErrorType.PROCESS
 
-        # 驗證錯誤
+        # 验证错误
         if any(
             keyword in error_name.lower() for keyword in ["validation", "value", "type"]
         ):
             return ErrorType.VALIDATION
 
-        # 配置錯誤
+        # 配置错误
         if any(
             keyword in error_message for keyword in ["config", "setting", "environment"]
         ):
             return ErrorType.CONFIGURATION
 
-        # 默認為系統錯誤
+        # 默认为系统错误
         return ErrorType.SYSTEM
 
     @staticmethod
@@ -299,28 +299,28 @@ class ErrorHandler:
         include_technical: bool = False,
     ) -> str:
         """
-        將技術錯誤轉換為用戶友好的錯誤信息
+        将技术错误转换为用户友好的错误信息
 
         Args:
-            error: Python 異常對象
-            error_type: 錯誤類型（可選，會自動分類）
-            context: 錯誤上下文信息
-            include_technical: 是否包含技術細節
+            error: Python 异常对象
+            error_type: 错误类型（可选，会自动分类）
+            context: 错误上下文信息
+            include_technical: 是否包含技术细节
 
         Returns:
-            str: 用戶友好的錯誤信息
+            str: 用户友好的错误信息
         """
-        # 自動分類錯誤類型
+        # 自动分类错误类型
         if error_type is None:
             error_type = ErrorHandler.classify_error(error)
 
-        # 獲取當前語言
+        # 获取当前语言
         language = ErrorHandler.get_current_language()
 
-        # 獲取用戶友好的錯誤信息（優先使用國際化系統）
+        # 获取用户友好的错误信息（优先使用国际化系统）
         user_message = ErrorHandler.get_i18n_error_message(error_type)
 
-        # 構建完整的錯誤信息
+        # 构建完整的错误信息
         parts = [f"❌ {user_message}"]
 
         # 添加上下文信息
@@ -337,25 +337,25 @@ class ErrorHandler:
                 else:
                     parts.append(f"文件：{context['file_path']}")
 
-        # 添加技術細節（如果需要）
+        # 添加技术细节（如果需要）
         if include_technical:
             if language == "en":
                 parts.append(f"Technical details: {type(error).__name__}: {error!s}")
             else:
-                parts.append(f"技術細節：{type(error).__name__}: {error!s}")
+                parts.append(f"技术细节：{type(error).__name__}: {error!s}")
 
         return "\n".join(parts)
 
     @staticmethod
     def get_error_solutions(error_type: ErrorType) -> list[str]:
         """
-        獲取錯誤解決建議
+        获取错误解决建议
 
         Args:
-            error_type: 錯誤類型
+            error_type: 错误类型
 
         Returns:
-            List[str]: 解決建議列表
+            List[str]: 解决建议列表
         """
         return ErrorHandler.get_i18n_error_solutions(error_type)
 
@@ -367,35 +367,35 @@ class ErrorHandler:
         severity: ErrorSeverity = ErrorSeverity.MEDIUM,
     ) -> str:
         """
-        記錄帶上下文的錯誤信息（不影響 JSON RPC）
+        记录带上下文的错误信息（不影响 JSON RPC）
 
         Args:
-            error: Python 異常對象
-            context: 錯誤上下文信息
-            error_type: 錯誤類型
-            severity: 錯誤嚴重程度
+            error: Python 异常对象
+            context: 错误上下文信息
+            error_type: 错误类型
+            severity: 错误严重程度
 
         Returns:
-            str: 錯誤 ID，用於追蹤
+            str: 错误 ID，用于追踪
         """
-        # 生成錯誤 ID
+        # 生成错误 ID
         error_id = f"ERR_{int(time.time())}_{id(error) % 10000}"
 
-        # 自動分類錯誤
+        # 自动分类错误
         if error_type is None:
             error_type = ErrorHandler.classify_error(error)
 
-        # 錯誤記錄已通過 debug_log 輸出，無需額外存儲
+        # 错误记录已通过 debug_log 输出，无需额外存储
 
-        # 記錄到調試日誌（不影響 JSON RPC）
-        debug_log(f"錯誤記錄 [{error_id}]: {error_type.value} - {error!s}")
+        # 记录到调试日志（不影响 JSON RPC）
+        debug_log(f"错误记录 [{error_id}]: {error_type.value} - {error!s}")
 
         if context:
-            debug_log(f"錯誤上下文 [{error_id}]: {context}")
+            debug_log(f"错误上下文 [{error_id}]: {context}")
 
-        # 對於嚴重錯誤，記錄完整堆棧跟蹤
+        # 对于严重错误，记录完整堆栈跟踪
         if severity in [ErrorSeverity.HIGH, ErrorSeverity.CRITICAL]:
-            debug_log(f"錯誤堆棧 [{error_id}]:\n{traceback.format_exc()}")
+            debug_log(f"错误堆栈 [{error_id}]:\n{traceback.format_exc()}")
 
         return error_id
 
@@ -408,26 +408,26 @@ class ErrorHandler:
         for_user: bool = True,
     ) -> dict[str, Any]:
         """
-        創建標準化的錯誤響應
+        创建标准化的错误响应
 
         Args:
-            error: Python 異常對象
-            context: 錯誤上下文
-            error_type: 錯誤類型
-            include_solutions: 是否包含解決建議
-            for_user: 是否為用戶界面使用
+            error: Python 异常对象
+            context: 错误上下文
+            error_type: 错误类型
+            include_solutions: 是否包含解决建议
+            for_user: 是否为用户界面使用
 
         Returns:
-            Dict[str, Any]: 標準化錯誤響應
+            Dict[str, Any]: 标准化错误响应
         """
-        # 自動分類錯誤
+        # 自动分类错误
         if error_type is None:
             error_type = ErrorHandler.classify_error(error)
 
-        # 記錄錯誤
+        # 记录错误
         error_id = ErrorHandler.log_error_with_context(error, context, error_type)
 
-        # 構建響應
+        # 构建响应
         response = {
             "success": False,
             "error_id": error_id,
@@ -437,12 +437,12 @@ class ErrorHandler:
             ),
         }
 
-        # 添加解決建議
+        # 添加解决建议
         if include_solutions:
             solutions = ErrorHandler.get_error_solutions(error_type)
-            response["solutions"] = solutions  # 即使為空列表也添加
+            response["solutions"] = solutions  # 即使为空列表也添加
 
-        # 添加上下文（僅用於調試）
+        # 添加上下文（仅用于调试）
         if context and not for_user:
             response["context"] = context
 

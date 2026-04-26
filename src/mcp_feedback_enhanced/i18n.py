@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-國際化支援模組
+国际化支援模组
 ===============
 
-提供統一的多語系支援功能，支援繁體中文、英文等語言。
-自動偵測系統語言，並提供語言切換功能。
+提供统一的多语系支援功能，支援繁体中文、英文等语言。
+自动检测系统语言，并提供语言切换功能。
 
-新架構：
-- 使用分離的 JSON 翻譯檔案
-- 支援巢狀翻譯鍵值
-- 元資料支援
-- 易於擴充新語言
+新架构：
+- 使用分离的 JSON 翻译档案
+- 支援巢状翻译键值
+- 元数据支援
+- 易于扩充新语言
 
 作者: Minidoracat
 """
@@ -25,7 +25,7 @@ from .debug import i18n_debug_log as debug_log
 
 
 class I18nManager:
-    """國際化管理器 - 新架構版本"""
+    """国际化管理器 - 新架构版本"""
 
     def __init__(self):
         self._current_language = None
@@ -35,20 +35,20 @@ class I18nManager:
         self._config_file = self._get_config_file_path()
         self._locales_dir = Path(__file__).parent / "web" / "locales"
 
-        # 載入翻譯
+        # 加载翻译
         self._load_all_translations()
 
-        # 設定語言
+        # 设定语言
         self._current_language = self._detect_language()
 
     def _get_config_file_path(self) -> Path:
-        """獲取配置文件路徑"""
+        """获取配置文件路径"""
         config_dir = Path.home() / ".config" / "mcp-feedback-enhanced"
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir / "language.json"
 
     def _load_all_translations(self) -> None:
-        """載入所有語言的翻譯檔案"""
+        """加载所有语言的翻译档案"""
         self._translations = {}
 
         for lang_code in self._supported_languages:
@@ -61,29 +61,29 @@ class I18nManager:
                         data = json.load(f)
                         self._translations[lang_code] = data
                         debug_log(
-                            f"成功載入語言 {lang_code}: {data.get('meta', {}).get('displayName', lang_code)}"
+                            f"成功加载语言 {lang_code}: {data.get('meta', {}).get('displayName', lang_code)}"
                         )
                 except Exception as e:
-                    debug_log(f"載入語言檔案失敗 {lang_code}: {e}")
-                    # 如果載入失敗，使用空的翻譯
+                    debug_log(f"加载语言档案失败 {lang_code}: {e}")
+                    # 如果加载失败，使用空的翻译
                     self._translations[lang_code] = {}
             else:
-                debug_log(f"找不到語言檔案: {translation_file}")
+                debug_log(f"找不到语言档案: {translation_file}")
                 self._translations[lang_code] = {}
 
     def _detect_language(self) -> str:
-        """自動偵測語言"""
-        # 1. 優先使用用戶保存的語言設定
+        """自动检测语言"""
+        # 1. 优先使用用户保存的语言设定
         saved_lang = self._load_saved_language()
         if saved_lang and saved_lang in self._supported_languages:
             return saved_lang
 
-        # 2. 檢查環境變數
+        # 2. 检查环境变数
         env_lang = os.getenv("MCP_LANGUAGE", "").strip()
         if env_lang and env_lang in self._supported_languages:
             return env_lang
 
-        # 3. 檢查其他環境變數（LANG, LC_ALL 等）
+        # 3. 检查其他环境变数（LANG, LC_ALL 等）
         for env_var in ["LANG", "LC_ALL", "LC_MESSAGES", "LANGUAGE"]:
             env_value = os.getenv(env_var, "").strip()
             if env_value:
@@ -94,10 +94,10 @@ class I18nManager:
                 if env_value.startswith("en"):
                     return "en"
 
-        # 4. 自動偵測系統語言（僅在非測試模式下）
+        # 4. 自动检测系统语言（仅在非测试模式下）
         if not os.getenv("MCP_TEST_MODE"):
             try:
-                # 獲取系統語言
+                # 获取系统语言
                 system_locale = locale.getdefaultlocale()[0]
                 if system_locale:
                     if system_locale.startswith("zh_TW") or system_locale.startswith(
@@ -113,11 +113,11 @@ class I18nManager:
             except Exception:
                 pass
 
-        # 5. 回退到默認語言
+        # 5. 回退到默认语言
         return self._fallback_language
 
     def _load_saved_language(self) -> str | None:
-        """載入保存的語言設定"""
+        """加载保存的语言设定"""
         try:
             if self._config_file.exists():
                 with open(self._config_file, encoding="utf-8") as f:
@@ -129,7 +129,7 @@ class I18nManager:
         return None
 
     def save_language(self, language: str) -> None:
-        """保存語言設定"""
+        """保存语言设定"""
         try:
             config = {"language": language}
             with open(self._config_file, "w", encoding="utf-8") as f:
@@ -138,11 +138,11 @@ class I18nManager:
             pass
 
     def get_current_language(self) -> str:
-        """獲取當前語言"""
+        """获取当前语言"""
         return self._current_language or "zh-TW"
 
     def set_language(self, language: str) -> bool:
-        """設定語言"""
+        """设定语言"""
         if language in self._supported_languages:
             self._current_language = language
             self.save_language(language)
@@ -150,18 +150,18 @@ class I18nManager:
         return False
 
     def get_supported_languages(self) -> list[str]:
-        """獲取支援的語言列表"""
+        """获取支援的语言列表"""
         return self._supported_languages.copy()
 
     def get_language_info(self, language_code: str) -> dict[str, Any]:
-        """獲取語言的元資料信息"""
+        """获取语言的元数据信息"""
         if language_code in self._translations:
             meta = self._translations[language_code].get("meta", {})
             return meta if isinstance(meta, dict) else {}
         return {}
 
     def _get_nested_value(self, data: dict[str, Any], key_path: str) -> str | None:
-        """從巢狀字典中獲取值，支援點分隔的鍵路徑"""
+        """从巢状字典中获取值，支援点分隔的键路径"""
         keys = key_path.split(".")
         current: Any = data
 
@@ -175,33 +175,33 @@ class I18nManager:
 
     def t(self, key: str, **kwargs) -> str:
         """
-        翻譯函數 - 支援新舊兩種鍵值格式
+        翻译函数 - 支援新旧两种键值格式
 
         新格式: 'buttons.submit' -> data['buttons']['submit']
-        舊格式: 'btn_submit_feedback' -> 兼容舊的鍵值
+        旧格式: 'btn_submit_feedback' -> 兼容旧的键值
         """
-        # 獲取當前語言的翻譯
+        # 获取当前语言的翻译
         current_translations = self._translations.get(self._current_language, {})
 
-        # 嘗試新格式（巢狀鍵）
+        # 尝试新格式（巢状键）
         text = self._get_nested_value(current_translations, key)
 
-        # 如果沒有找到，嘗試舊格式的兼容映射
+        # 如果没有找到，尝试旧格式的兼容映射
         if text is None:
             text = self._get_legacy_translation(current_translations, key)
 
-        # 如果還是沒有找到，嘗試使用回退語言
+        # 如果还是没有找到，尝试使用回退语言
         if text is None:
             fallback_translations = self._translations.get(self._fallback_language, {})
             text = self._get_nested_value(fallback_translations, key)
             if text is None:
                 text = self._get_legacy_translation(fallback_translations, key)
 
-        # 最後回退到鍵本身
+        # 最后回退到键本身
         if text is None:
             text = key
 
-        # 處理格式化參數
+        # 处理格式化参数
         if kwargs:
             try:
                 text = text.format(**kwargs)
@@ -213,22 +213,22 @@ class I18nManager:
     def _get_legacy_translation(
         self, translations: dict[str, Any], key: str
     ) -> str | None:
-        """獲取舊格式翻譯的兼容方法"""
-        # 舊鍵到新鍵的映射
+        """获取旧格式翻译的兼容方法"""
+        # 旧键到新键的映射
         legacy_mapping = {
-            # 應用程式
+            # 应用程序
             "app_title": "app.title",
             "project_directory": "app.projectDirectory",
             "language": "app.language",
             "settings": "app.settings",
-            # 分頁
+            # 分页
             "feedback_tab": "tabs.feedback",
             "images_tab": "tabs.images",
-            # 回饋
+            # 反馈
             "feedback_title": "feedback.title",
             "feedback_description": "feedback.description",
             "feedback_placeholder": "feedback.placeholder",
-            # 圖片
+            # 图片
             "images_title": "images.title",
             "images_select": "images.select",
             "images_paste": "images.paste",
@@ -240,7 +240,7 @@ class I18nManager:
             "images_delete_title": "images.deleteTitle",
             "images_size_warning": "images.sizeWarning",
             "images_format_error": "images.formatError",
-            # 按鈕
+            # 按钮
             "submit": "buttons.submit",
             "cancel": "buttons.cancel",
             "close": "buttons.close",
@@ -250,7 +250,7 @@ class I18nManager:
             "btn_select_files": "buttons.selectFiles",
             "btn_paste_clipboard": "buttons.pasteClipboard",
             "btn_clear_all": "buttons.clearAll",
-            # 狀態
+            # 状态
             "feedback_submitted": "status.feedbackSubmitted",
             "feedback_cancelled": "status.feedbackCancelled",
             "timeout_message": "status.timeoutMessage",
@@ -272,11 +272,11 @@ class I18nManager:
             "language_zh_tw": "languageNames.zhTw",
             "language_en": "languageNames.en",
             "language_zh_cn": "languageNames.zhCn",
-            # 測試
+            # 测试
             "test_web_ui_summary": "test.webUiSummary",
         }
 
-        # 檢查是否有對應的新鍵
+        # 检查是否有对应的新键
         new_key = legacy_mapping.get(key)
         if new_key:
             return self._get_nested_value(translations, new_key)
@@ -284,11 +284,11 @@ class I18nManager:
         return None
 
     def get_language_display_name(self, language_code: str) -> str:
-        """獲取語言的顯示名稱"""
-        # 直接從當前語言的翻譯中獲取，避免遞歸
+        """获取语言的显示名称"""
+        # 直接从当前语言的翻译中获取，避免递归
         current_translations = self._translations.get(self._current_language, {})
 
-        # 根據語言代碼構建鍵值
+        # 根据语言代码构建键值
         lang_key = None
         if language_code == "zh-TW":
             lang_key = "languageNames.zhTw"
@@ -300,23 +300,23 @@ class I18nManager:
             # 通用格式
             lang_key = f"languageNames.{language_code.replace('-', '').lower()}"
 
-        # 直接獲取翻譯，避免調用 self.t() 產生遞歸
+        # 直接获取翻译，避免调用 self.t() 产生递归
         if lang_key:
             display_name = self._get_nested_value(current_translations, lang_key)
             if display_name:
                 return display_name
 
-        # 回退到元資料中的顯示名稱
+        # 回退到元数据中的显示名称
         meta = self.get_language_info(language_code)
         display_name = meta.get("displayName", language_code)
         return str(display_name) if display_name else language_code
 
     def reload_translations(self) -> None:
-        """重新載入所有翻譯檔案（開發時使用）"""
+        """重新加载所有翻译档案（开发时使用）"""
         self._load_all_translations()
 
     def add_language(self, language_code: str, translation_file_path: str) -> bool:
-        """動態添加新語言支援"""
+        """动态添加新语言支援"""
         try:
             translation_file = Path(translation_file_path)
             if not translation_file.exists():
@@ -330,20 +330,20 @@ class I18nManager:
                     self._supported_languages.append(language_code)
 
                 debug_log(
-                    f"成功添加語言 {language_code}: {data.get('meta', {}).get('displayName', language_code)}"
+                    f"成功添加语言 {language_code}: {data.get('meta', {}).get('displayName', language_code)}"
                 )
                 return True
         except Exception as e:
-            debug_log(f"添加語言失敗 {language_code}: {e}")
+            debug_log(f"添加语言失败 {language_code}: {e}")
             return False
 
 
-# 全域的國際化管理器實例
+# 全域的国际化管理器实例
 _i18n_manager = None
 
 
 def get_i18n_manager() -> I18nManager:
-    """獲取全域的國際化管理器實例"""
+    """获取全域的国际化管理器实例"""
     global _i18n_manager
     if _i18n_manager is None:
         _i18n_manager = I18nManager()
@@ -351,20 +351,20 @@ def get_i18n_manager() -> I18nManager:
 
 
 def t(key: str, **kwargs) -> str:
-    """便捷的翻譯函數"""
+    """便捷的翻译函数"""
     return get_i18n_manager().t(key, **kwargs)
 
 
 def set_language(language: str) -> bool:
-    """設定語言"""
+    """设定语言"""
     return get_i18n_manager().set_language(language)
 
 
 def get_current_language() -> str:
-    """獲取當前語言"""
+    """获取当前语言"""
     return get_i18n_manager().get_current_language()
 
 
 def reload_translations() -> None:
-    """重新載入翻譯（開發用）"""
+    """重新加载翻译（开发用）"""
     get_i18n_manager().reload_translations()
