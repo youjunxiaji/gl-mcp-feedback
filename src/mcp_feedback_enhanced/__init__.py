@@ -16,7 +16,7 @@ MCP Interactive Feedback Enhanced
 - 重构的模组化架构
 """
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 __author__ = "鼬君夏纪"
 
 import os
