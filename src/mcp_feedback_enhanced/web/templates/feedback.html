@@ -104,8 +104,33 @@
         .md em { color: #e2e8f0; }
         .md del, .md s { color: #506078; text-decoration: line-through; }
         .md code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.2em 0.45em; border-radius: 4px; color: #60a5fa; }
-        .md pre { background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
+        .md pre { position: relative; background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
         .md pre code { background: none; padding: 0; color: #e2e8f0; font-size: 0.85em; line-height: 1.55; }
+        .md pre .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 11px;
+            font-weight: 500;
+            line-height: 1;
+            color: #94a3b8;
+            background: rgba(23, 29, 43, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+            backdrop-filter: blur(4px);
+        }
+        .md pre:hover .copy-btn { opacity: 1; }
+        .md pre .copy-btn:hover { color: #e2e8f0; background: rgba(30, 38, 54, 0.95); border-color: rgba(255, 255, 255, 0.12); }
+        .md pre .copy-btn.copied { opacity: 1; color: #34d399; border-color: rgba(52, 211, 153, 0.3); background: rgba(52, 211, 153, 0.08); }
+        .md pre .copy-btn svg { width: 12px; height: 12px; }
         .md blockquote { border-left: 3px solid #3b82f6; margin: 0.6em 0; padding: 0.5em 1em; background: rgba(59,130,246,0.06); border-radius: 0 8px 8px 0; color: #8494a7; font-style: italic; }
         .md blockquote strong { font-style: normal; }
         .md a { color: #60a5fa; text-decoration: none; }
@@ -341,6 +366,71 @@
     <!-- ===== SCRIPTS ===== -->
     <script src="/static/js/vendor/marked.min.js"></script>
     <script>
+        // --- Code-block copy buttons ---
+        var COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        var CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+        function copyTextToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text);
+            }
+            return new Promise(function(resolve, reject) {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.top = '-9999px';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                try {
+                    var ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    ok ? resolve() : reject(new Error('execCommand copy failed'));
+                } catch (err) {
+                    document.body.removeChild(ta);
+                    reject(err);
+                }
+            });
+        }
+
+        function enhanceCodeBlocks(rootEl) {
+            if (!rootEl) return;
+            var pres = rootEl.querySelectorAll('pre');
+            pres.forEach(function(pre) {
+                if (pre.querySelector(':scope > .copy-btn')) return;
+                var code = pre.querySelector('code');
+                if (!code) return;
+
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'copy-btn';
+                btn.setAttribute('aria-label', '复制代码');
+                btn.innerHTML = COPY_ICON_SVG + '<span>复制</span>';
+
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    var text = code.innerText;
+                    copyTextToClipboard(text).then(function() {
+                        btn.classList.add('copied');
+                        btn.innerHTML = CHECK_ICON_SVG + '<span>已复制</span>';
+                        setTimeout(function() {
+                            btn.classList.remove('copied');
+                            btn.innerHTML = COPY_ICON_SVG + '<span>复制</span>';
+                        }, 1800);
+                    }).catch(function() {
+                        btn.innerHTML = COPY_ICON_SVG + '<span>复制失败</span>';
+                        setTimeout(function() {
+                            btn.innerHTML = COPY_ICON_SVG + '<span>复制</span>';
+                        }, 1800);
+                    });
+                });
+
+                pre.appendChild(btn);
+            });
+        }
+
         // --- Connection status ---
         function setConnStatus(state) {
             var el = document.getElementById('connStatus');
@@ -418,6 +508,7 @@
                     var el = document.getElementById('summaryContent');
                     if (el && typeof marked !== 'undefined') {
                         el.innerHTML = marked.parse(data.session_info.summary || '');
+                        enhanceCodeBlocks(el);
                         if (el.scrollTop > 0) {
                             el.scrollTo({ top: 0, behavior: 'smooth' });
                         }
@@ -548,6 +639,7 @@
             var el = document.getElementById('summaryContent');
             if (el && el.textContent.trim() && typeof marked !== 'undefined') {
                 el.innerHTML = marked.parse(el.textContent);
+                enhanceCodeBlocks(el);
             }
 
             // Connect WebSocket
@@ -688,6 +780,7 @@
             '</div>';
 
             document.body.appendChild(overlay);
+            enhanceCodeBlocks(overlay);
         }
 
         function renderSessions(sessions) {

@@ -369,7 +369,8 @@ for the full contract. Core rules:
    Cursor chat panel.
 3. **While `interactive_feedback` is available, DO NOT use Cursor's built-in
    `AskQuestion` / question-picker tool.** Route every question to the user
-   through `interactive_feedback`'s `summary` (ask with a numbered list).
+   through `interactive_feedback`'s `summary` using the two-zone template
+   below.
 4. **On skip / timeout → call `interactive_feedback` AGAIN** and ask why,
    do NOT assume the conversation is over. Stop only when the user
    explicitly says `结束` / `不用了` / `stop` or equivalent.
@@ -377,7 +378,53 @@ for the full contract. Core rules:
    like "我已完成了您请求的任务。" will be rejected at runtime.
 6. Keep `timeout >= 600`. **Reply to the user in the same language they are
    using** (the user's latest message here is in Chinese — so respond in
-   Chinese), even though this prompt is in English.\
+   Chinese), even though this prompt is in English.
+
+## `summary` two-zone template (MANDATORY whenever you need user choice)
+
+When you need the user to pick something, structure `summary` as two zones
+separated by a Markdown horizontal rule (`---`). The Web UI renders this
+as one continuous Markdown block, so the visual split comes purely from
+your formatting:
+
+```
+## <upper-zone heading: 发现 / 思考 / 进度>
+
+<your findings, analysis, file paths touched, key trade-offs, etc.>
+
+---
+
+## 请你选择
+
+#### Q1. <question 1>
+
+- **[A]** option A 描述【推荐】
+- **[B]** option B 描述
+- **[C]** option C 描述
+- **[D]** 其它（请补充描述）
+
+#### Q2. <question 2 if any>
+
+- **[A]** option A
+- **[B]** option B
+```
+
+Hard rules for the lower zone:
+  - Always start with `## 请你选择` (or the user's language equivalent).
+  - Use `#### Qn. <prompt>` for each question.
+  - Use `**[A]** ... **[B]** ...` bold-bracketed letters for options.
+  - Append `【推荐】` (or the user's language equivalent) to the option you
+    suggest, when you have a real preference.
+  - Always offer an `D. 其它（请补充描述）`-style fallback so the user
+    can answer outside the preset options.
+  - After listing the options, STOP — do NOT add a trailing line that
+    tells the user how to reply (no `请回复 1A 2B …`, no equivalent in
+    other languages). The user already knows how to reply.
+  - The user types their reply as free text — do NOT expect clickable
+    options or a special UI; the panel only renders Markdown.
+
+When you only have findings and no question, the upper zone alone is
+fine — omit the divider and the `## 请你选择` block entirely.\
 """
 
 
@@ -400,10 +447,18 @@ async def interactive_feedback(
         str,
         Field(
             description=(
-                "Markdown summary of the AI's current work / plan / question, "
-                "rendered in the Web UI. MUST be filled in with substantive "
-                "content; empty strings and placeholder phrases (e.g. "
-                "\"我已完成了您请求的任务。\") are rejected at runtime."
+                "Markdown summary rendered in the Web UI as one block. MUST be "
+                "filled in with substantive content; empty strings and "
+                "placeholder phrases (e.g. \"我已完成了您请求的任务。\") are "
+                "rejected at runtime. Whenever you need the user to pick "
+                "something, structure summary as two zones separated by `---`: "
+                "upper zone (## 发现/思考/进度) lists findings/analysis; lower "
+                "zone (## 请你选择) lists questions like `#### Q1. <prompt>` "
+                "with options written as `**[A]** ... **[B]** ...` and an "
+                "optional `【推荐】` tag. After the last option, STOP — do "
+                "NOT add a trailing reply-format line (no `请回复 1A 2B …`). "
+                "The panel only renders Markdown — never expect clickable "
+                "buttons."
             )
         ),
     ] = "",
@@ -474,6 +529,52 @@ async def interactive_feedback(
           runtime and returns a correction notice that you must follow
           by re-calling with a real summary.
 
+    ``summary`` two-zone template (use whenever you need user choice):
+        Render two zones inside ``summary`` separated by a Markdown
+        horizontal rule (``---``). The Web UI shows them as one
+        continuous Markdown block, so the visual split comes purely
+        from your formatting:
+
+            ## <upper-zone heading: 发现 / 思考 / 进度>
+
+            <findings, analysis, file paths, trade-offs ...>
+
+            ---
+
+            ## 请你选择
+
+            #### Q1. <question 1>
+
+            - **[A]** option A 描述【推荐】
+            - **[B]** option B 描述
+            - **[C]** option C 描述
+            - **[D]** 其它（请补充描述）
+
+            #### Q2. <question 2 if any>
+
+            - **[A]** option A
+            - **[B]** option B
+
+        Hard rules for the lower zone:
+            - Always start the lower zone with ``## 请你选择``
+              (or the equivalent in the user's language).
+            - One ``#### Qn. <prompt>`` heading per question.
+            - Options use ``**[A]**`` / ``**[B]**`` bold-bracketed
+              letters; append ``【推荐】`` (or its localized form) to
+              the option you suggest, when you have a real preference.
+            - Always include a ``**[D]** 其它（请补充描述）``-style
+              fallback so the user can reply outside the preset
+              options.
+            - After the last option, STOP — do NOT add a trailing
+              reply-format line (no ``请回复 1A 2B …``, no equivalent
+              in other languages). The user already knows how to reply.
+            - The user types reply as free text — do NOT expect
+              clickable options or a special UI; the panel only
+              renders Markdown.
+
+        When you only have findings and no question, the upper zone
+        alone is fine — omit the divider and the ``## 请你选择`` block.
+
     ``title`` writing rules:
         - Optional. Leave empty when ``summary`` is self-explanatory.
         - Keep concise (≤30 chars) — it's a headline, not a sentence.
@@ -506,10 +607,20 @@ async def interactive_feedback(
             "[interactive_feedback REJECTED]\n"
             "The `summary` you passed is empty or a placeholder phrase; "
             "it will NOT be shown to the user.\n"
-            "You MUST call this tool AGAIN with a real Markdown summary containing:\n"
-            "  1) Your current understanding / progress / proposed plan.\n"
-            "  2) File paths touched and key trade-offs.\n"
-            "  3) Explicit question(s) the user needs to answer.\n"
+            "You MUST call this tool AGAIN with a real Markdown summary "
+            "following the two-zone template:\n"
+            "  ## <upper-zone heading: 发现/思考/进度>\n"
+            "  <findings, analysis, file paths, trade-offs ...>\n"
+            "  ---\n"
+            "  ## 请你选择\n"
+            "  #### Q1. <question>\n"
+            "  - **[A]** option A【推荐】\n"
+            "  - **[B]** option B\n"
+            "  - **[C]** 其它（请补充描述）\n"
+            "After the last option, STOP — do NOT add a trailing "
+            "reply-format line.\n"
+            "When you have only findings and no question, omit the divider "
+            "and the lower zone.\n"
             "Write the summary in the user's language (NOT English, unless "
             "the user is writing in English). Do NOT reply to the user "
             "with plain Cursor chat text in the meantime."
