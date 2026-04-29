@@ -473,6 +473,7 @@
         var ws = null;
         var wsReady = false;
         var wsReplaced = false;
+        var wsRetried = false;
 
         function connectWebSocket() {
             if (wsReplaced) return;
@@ -483,6 +484,7 @@
             ws.onopen = function() {
                 wsReady = true;
                 wsReplaced = false;
+                wsRetried = false;
                 setConnStatus('connected');
                 console.log('WebSocket connected');
             };
@@ -493,7 +495,7 @@
                     wsReplaced = true;
                     wsReady = false;
                     setConnStatus('disconnected');
-                    console.log('Connection replaced by another tab/window');
+                    console.log('Connection replaced by another tab/window, attempting to close tab');
 
                     var btn = document.getElementById('submitBtn');
                     if (btn) {
@@ -502,6 +504,7 @@
                         btn.classList.add('from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
                         btn.disabled = true;
                     }
+                    window.close();
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
@@ -535,7 +538,13 @@
                     return;
                 }
                 setConnStatus('disconnected');
-                console.log('WebSocket closed, reconnecting in 3s...');
+                if (wsRetried) {
+                    console.log('WebSocket reconnect failed, attempting to close tab');
+                    window.close();
+                    return;
+                }
+                wsRetried = true;
+                console.log('WebSocket closed, retrying once in 3s...');
                 setTimeout(connectWebSocket, 3000);
             };
 

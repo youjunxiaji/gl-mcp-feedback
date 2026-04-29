@@ -56,26 +56,8 @@ alwaysApply: true
 - WebSocket：`session_updated` 消息的 `session_info.title` 用于在不刷新页面的情况下更新摘要面板和 `document.title`
 - 前端渲染位置：`#feedbackTitle`（AI 工作摘要面板顶部，位于"AI 工作摘要"标签右侧）+ 浏览器 tab `<title>` + 会话卡片/详情弹窗
 
-### `summary` 写作规范（双区模板）
-`summary` 是唯一承载主体内容的字段，渲染在 `feedback.html` 的 `AI 工作摘要` 面板里（`marked.parse` 渲染 Markdown）。当需要让用户做选择时，AI 必须按「上下两区」模板写：
-
-- **上区**：以 `## 发现` / `## 思考` / `## 进度` 之类标题开头，写发现、分析、文件路径、权衡。
-- **分隔**：单独一行 `---`（Markdown 水平线）。
-- **下区**：以 `## 请你选择` 开头，每题用 `#### Q1. <prompt>` 写题干，选项形如 `**[A]** 描述【推荐】`、`**[B]** 描述`、`**[D]** 其它（请补充描述）`。最后用 `请回复 \`1A 2B\` 这种格式` 收尾。
-
-硬规则：
-- 选项 **必须** 用 `**[A]**` 这种粗体方括号字母标号。
-- 推荐项尾部加 `【推荐】`（用户语言相应等价）。
-- 永远保留一个 `D. 其它（请补充描述）`-style 兜底项。
-- 用户用纯文本回复（如 `1A 2B`），面板不渲染可点击按钮。
-- 如果只有发现没有问题，可以省略分隔线和 `## 请你选择` 区块，仅保留上区。
-
-错例（会让用户混淆）：
-- 把选项写在散文里：「你可以选择 1、2 或 3」。
-- 把实质内容塞进 `title`（`title` 仅 ≤30 字头，主体必须在 `summary`）。
-- 用 ``` 把选项示例包成代码块——会以等宽原文呈现，丧失渲染。
-
-`_CHAT_PROMPT` 与 `interactive_feedback` 的 docstring/Field description 同时承载这套模板，应保持三处一致。
+### MCP 交互规则去哪儿了
+`interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本规则文件不重复这些内容，只描述前端架构本身。
 
 ### index.html 功能
 - 等待页面，显示"等待 MCP 服务调用"提示
