@@ -349,35 +349,25 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
 
 
 # ===== MCP Prompt 定义 =====
-# This prompt only carries the minimal "activate + act now" directive for the
-# current turn. The full interaction contract (when to call, how to write,
-# skip handling, etc.) lives in ``interactive_feedback``'s docstring so that
-# it ships with the MCP package and applies to every user.
+# Ultra-minimal activation prompt. The full interaction contract lives in
+# the user's project rules (gl-mcp-feedback 交互规范) and in
+# ``interactive_feedback``'s own docstring, so this prompt only fires the
+# activation signal for the current turn.
 _CHAT_PROMPT = """\
-# ACTIVATE: gl-mcp-feedback interaction mode
+# 激活：gl-mcp-feedback 互动模式
 
-You MUST use the `interactive_feedback` tool as the PRIMARY channel for
-speaking with the user from this turn onward. See that tool's description
-for the full contract. Core rules:
+请遵循本项目的 gl-mcp-feedback 用户规则。补充约束：
 
-1. **Call `interactive_feedback` IMMEDIATELY**. In `summary`, write a
-   Markdown brief of your current understanding / progress / plan, then wait
-   for the user's feedback before deciding the next step.
-2. **NEVER end a turn with a plain-text reply.** Any substantive content you
-   want the user to read (analysis, plans, code summaries, questions) MUST
-   go through `summary`. The Web UI renders Markdown far better than the
-   Cursor chat panel.
-3. **While `interactive_feedback` is available, DO NOT use Cursor's built-in
-   `AskQuestion` / question-picker tool.** Route every question to the user
-   through `interactive_feedback`'s `summary` (ask with a numbered list).
-4. **On skip / timeout → call `interactive_feedback` AGAIN** and ask why,
-   do NOT assume the conversation is over. Stop only when the user
-   explicitly says `结束` / `不用了` / `stop` or equivalent.
-5. **`summary` must be substantive.** Empty strings and placeholder phrases
-   like "我已完成了您请求的任务。" will be rejected at runtime.
-6. Keep `timeout >= 600`. **Reply to the user in the same language they are
-   using** (the user's latest message here is in Chinese — so respond in
-   Chinese), even though this prompt is in English.\
+1. **立即调用 `interactive_feedback`**：把当前的理解/计划写入
+   `summary`（Markdown），然后等待用户反馈。
+2. **不要用纯文本结束对话**：所有给用户看的实质内容（分析、方案、
+   代码改动总结、需要确认的问题）都必须走 `summary`，因为 Web UI
+   对 Markdown 的渲染效果远好于 Cursor 聊天面板。
+3. **此工具可用时不要使用 `AskQuestion`**：所有要问用户的问题，
+   写成 `summary` 里的有序列表。
+4. **只在用户明确终止时停止**（`结束` / `不用了` / `stop` / `done`）。
+   `summary` 为空字符串、或填占位套话（如"我已完成了您请求的任务。"）
+   会被运行时校验拒绝，必须重新调用并写入真实内容。\
 """
 
 
@@ -424,75 +414,50 @@ async def interactive_feedback(
 ) -> ToolResult:
     """Open a Web UI to collect interactive feedback from the user.
 
-    This tool is the PRIMARY communication channel with the user. Route
-    substantive content (analyses, plans, code summaries, questions needing
-    confirmation) through this tool's ``summary`` parameter rather than the
-    Cursor chat, because the Web UI renders Markdown far better.
+    This tool is the PRIMARY communication channel with the user. The full
+    list of "when to call" scenarios lives in the project's gl-mcp-feedback
+    user rules; this docstring only covers the runtime contract that the
+    tool itself enforces.
 
-    MANDATORY call scenarios — do NOT end the turn without calling:
-        1. After any code modification — summarize the change, wait for
-           the user to test.
-        2. Before implementing a new requirement — explain your
-           understanding and approach, wait for confirmation.
-        3. When a tool call is cancelled/interrupted — ask the user the
-           next step.
-        4. When this MCP call times out — immediately re-call; do not
-           assume the user has left.
-        5. When the user explicitly skips without giving feedback —
-           immediately re-call and ask why they skipped.
-        6. At the end of any multi-step task stage — check in.
-        7. Whenever you would otherwise ask the user a question in plain
-           chat — route it through this tool's ``summary`` instead.
-
-    STRICT PROHIBITIONS:
+    Strict prohibitions:
         - While this tool is available, DO NOT invoke Cursor's built-in
-          ``AskQuestion`` / question-picker tool. Every question to the
-          user MUST go through this tool's ``summary`` (ask with a
-          numbered list inside the Markdown).
-        - DO NOT end your turn with a plain-text reply when you still
-          have output intended for the user to read. Put that output
-          into ``summary`` and call this tool instead.
+          ``AskQuestion``. Route every question through ``summary`` as a
+          numbered list.
+        - DO NOT end the turn with a plain-text reply when there is
+          substantive content for the user to read. Put it in ``summary``.
+        - When the user skips without feedback, re-call this tool to ask
+          why; only stop on explicit termination
+          (``结束`` / ``不用了`` / ``stop`` / ``done``).
         - Allowed parameters: ``project_directory``, ``summary``,
-          ``title``, ``timeout``. ``title`` is OPTIONAL — pass a short
-          headline (≤30 chars) for the Web UI's tab title and summary
-          header. Names such as ``question``, ``choices``, ``options``
-          belong to ``AskQuestion`` — NEVER forward them to this tool.
-          Passing any other keyword argument will cause the call to
-          fail schema validation on the server.
-
-    Only stop calling when the user explicitly says ``结束`` / ``不用了`` /
-    ``stop`` / ``done`` or an equivalent termination phrase.
+          ``title``, ``timeout``. Names like ``question`` / ``choices`` /
+          ``options`` belong to ``AskQuestion`` and will fail schema
+          validation here.
 
     ``summary`` writing rules:
-        - Write in the same language the user is currently using.
-        - Use Markdown: headings (##), lists, tables, code fences for
-          snippets, bold for key decisions.
-        - Include modified file paths, key trade-offs, and explicit
-          questions for the user when applicable.
+        - Markdown: headings (##), lists, tables, code fences, bold for
+          key decisions. Include modified file paths and explicit
+          questions when applicable.
         - NEVER pass an empty string or the placeholder phrase
-          ``我已完成了您请求的任务。``. The tool rejects such values at
-          runtime and returns a correction notice that you must follow
-          by re-calling with a real summary.
+          ``我已完成了您请求的任务。`` — runtime validation rejects them
+          and you must re-call with a real summary.
 
     ``title`` writing rules:
-        - Optional. Leave empty when ``summary`` is self-explanatory.
-        - Keep concise (≤30 chars) — it's a headline, not a sentence.
-        - Use the same language as the user.
+        - Optional, ≤30 chars headline shown in the browser tab and
+          summary header. Leave empty when ``summary`` is
+          self-explanatory.
         - Examples: ``需要你提供更多信息`` / ``修复完成，请验证`` /
-          ``实现方案确认`` / ``Need more context``.
+          ``实现方案确认``.
 
     Args:
         project_directory: Absolute or relative project path. Defaults to cwd.
-        summary: Required. Markdown summary of the AI's current work / plan
-            / question. No empty string, no placeholder phrase.
-        title: Optional short headline shown in the Web UI tab and summary
-            header. Leave empty if there's no concise headline.
+        summary: Required Markdown summary. No empty string, no placeholder.
+        title: Optional short headline for the Web UI tab and summary header.
         timeout: Seconds to wait for user feedback. Keep ``>= 600``.
 
     Returns:
         ToolResult: TextContent with the user's text feedback plus
             MCPImage objects for any uploaded images. An empty result
-            means the user skipped — you MUST re-call this tool to ask why.
+            means the user skipped — re-call to ask why.
     """
     # summary 运行时校验：阻止 AI 使用空串或占位套话偷懒
     # 规范化：去首尾空白 + 去末尾中英文标点，让“我已完成了您请求的任务”“…。”“… .”都能命中
