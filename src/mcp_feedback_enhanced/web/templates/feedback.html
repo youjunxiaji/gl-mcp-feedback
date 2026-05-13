@@ -737,6 +737,11 @@
             return (sessions || []).filter(function(s) { return !hiddenSessionTabs[s.session_id]; });
         }
 
+        function isWorkspaceTabActive() {
+            var workspace = document.getElementById('page-workspace');
+            return !!workspace && !workspace.classList.contains('hidden');
+        }
+
         function formatRemaining(ms) {
             var total = Math.max(0, Math.ceil(ms / 1000));
             var minutes = Math.floor(total / 60);
@@ -868,7 +873,7 @@
             if (!container) return;
             var visibleSessions = getVisibleSessions(sessions);
 
-            if (visibleSessions.length <= 1) {
+            if (!isWorkspaceTabActive() || visibleSessions.length <= 1) {
                 container.innerHTML = '';
                 container.classList.add('hidden');
                 return;
@@ -1776,6 +1781,7 @@
             document.getElementById('page-' + name).classList.remove('hidden');
             btn.className = 'tab-btn tab-active-dot relative px-4 py-2 text-[14px] font-medium rounded-full text-slate-200 bg-surface-overlay shadow-sm ring-1 ring-white/[0.06] transition-all';
 
+            renderSessionTabs(allSessionsCache);
             if (name === 'sessions') loadSessions();
         });
 
