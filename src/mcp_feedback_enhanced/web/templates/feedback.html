@@ -129,7 +129,7 @@
             </div>
             <div class="flex items-center gap-2.5 text-xs text-slate-500">
                 <span title="{{ project_directory }}" class="hidden sm:inline font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition truncate max-w-[300px]">{{ project_directory }}</span>
-                <span class="font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition">{{ session_id[:8] if session_id else '--' }}</span>
+                <span id="sessionBadge" class="font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition">{{ session_id[:8] if session_id else '--' }}</span>
             </div>
         </div>
         <div id="connStatus" class="flex items-center gap-1.5 text-xs font-medium text-amber-400">
@@ -153,6 +153,11 @@
         <button class="tab-btn px-4 py-2 text-[14px] font-medium rounded-full text-slate-500 hover:text-slate-400 hover:bg-surface-overlay transition-all"
                 data-tab="about">关于</button>
     </nav>
+
+    <!-- ===== SESSION TABS ===== -->
+    <div id="sessionTabs" class="flex items-center gap-2 px-5 py-2 bg-surface-base border-b border-white/[0.06] overflow-x-auto shrink-0">
+        <div class="text-xs text-slate-500">会话加载中...</div>
+    </div>
 
     <!-- ===== CONTENT AREA: flex-1, min-h-0 so children can fill ===== -->
     <div class="flex-1 min-h-0 flex flex-col">
@@ -379,22 +384,160 @@
                 : 'Interactive Feedback - 反馈收集';
         }
 
-        // --- WebSocket ---
+        // --- Session state + WebSocket ---
+        var currentSessionId = '{{ session_id }}';
+        var allSessionsCache = [];
+        var sessionDrafts = {};
         var ws = null;
         var wsReady = false;
         var wsReplaced = false;
+        var manualWsClose = false;
 
-        function connectWebSocket() {
-            if (wsReplaced) return;
+        function getShortSessionId(sessionId) {
+            return sessionId ? sessionId.substring(0, 8) : '--';
+        }
+
+        function setSubmitButtonState(label, enabled, tone) {
+            var btn = document.getElementById('submitBtn');
+            if (!btn) return;
+            btn.querySelector('.relative').textContent = label;
+            btn.classList.remove(
+                'from-blue-500', 'to-violet-500',
+                'from-emerald-500', 'to-emerald-600',
+                'from-amber-500', 'to-amber-600',
+                'opacity-70', 'cursor-not-allowed'
+            );
+            if (tone === 'success') {
+                btn.classList.add('from-emerald-500', 'to-emerald-600');
+            } else if (tone === 'warning') {
+                btn.classList.add('from-amber-500', 'to-amber-600');
+            } else {
+                btn.classList.add('from-blue-500', 'to-violet-500');
+            }
+            btn.disabled = !enabled;
+            if (!enabled) btn.classList.add('opacity-70', 'cursor-not-allowed');
+        }
+
+        function saveCurrentDraft() {
+            if (!currentSessionId) return;
+            var textarea = document.getElementById('feedbackText');
+            sessionDrafts[currentSessionId] = textarea ? textarea.value : '';
+        }
+
+        function restoreCurrentDraft() {
+            var textarea = document.getElementById('feedbackText');
+            if (textarea) textarea.value = sessionDrafts[currentSessionId] || '';
+            pendingImages = [];
+            renderImagePreviews();
+        }
+
+        function updateWorkspaceFromSession(sessionInfo) {
+            if (!sessionInfo) return;
+            currentSessionId = sessionInfo.session_id;
+
+            var badge = document.getElementById('sessionBadge');
+            if (badge) badge.textContent = getShortSessionId(currentSessionId);
+
+            var el = document.getElementById('summaryContent');
+            if (el && typeof marked !== 'undefined') {
+                el.innerHTML = marked.parse(sessionInfo.summary || '');
+                el.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+
+            updateFeedbackTitle(sessionInfo.title || '');
+            restoreCurrentDraft();
+
+            var tag = document.getElementById('newTag');
+            if (tag) tag.style.display = sessionInfo.can_submit ? '' : 'none';
+
+            if (sessionInfo.can_submit) {
+                setSubmitButtonState('提交反馈', true, 'primary');
+            } else {
+                setSubmitButtonState('已完成', false, 'success');
+            }
+        }
+
+        function renderSessionTabs(sessions) {
+            var container = document.getElementById('sessionTabs');
+            if (!container) return;
+
+            if (!sessions.length) {
+                container.innerHTML = '<div class="text-xs text-slate-500">暂无会话</div>';
+                return;
+            }
+
+            container.innerHTML = sessions.map(function(s) {
+                var active = s.session_id === currentSessionId;
+                var waiting = s.can_submit && !s.feedback_completed;
+                var label = escapeHtml(s.title || getShortSessionId(s.session_id));
+                var statusCls = waiting ? 'bg-amber-400' : (s.feedback_completed ? 'bg-emerald-400' : 'bg-slate-500');
+                var cls = active
+                    ? 'bg-surface-overlay text-slate-100 border-blue-500/40 shadow-sm'
+                    : 'bg-surface-raised text-slate-500 border-white/[0.06] hover:text-slate-200 hover:border-blue-500/30';
+                return '<button data-session-id="' + escapeHtml(s.session_id) + '" onclick="selectSession(this.dataset.sessionId)" class="shrink-0 max-w-[240px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                    '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
+                    '<span class="truncate">' + label + '</span>' +
+                    '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
+                    '</button>';
+            }).join('');
+        }
+
+        function loadSessionTabs(preferredSessionId) {
+            return fetch('/api/all-sessions')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    allSessionsCache = data.sessions || [];
+                    if (preferredSessionId) {
+                        currentSessionId = preferredSessionId;
+                    } else if (!currentSessionId && allSessionsCache.length) {
+                        currentSessionId = allSessionsCache[0].session_id;
+                    }
+                    renderSessionTabs(allSessionsCache);
+                    return allSessionsCache;
+                })
+                .catch(function() {
+                    var container = document.getElementById('sessionTabs');
+                    if (container) container.innerHTML = '<div class="text-xs text-red-400">会话标签加载失败</div>';
+                    return [];
+                });
+        }
+
+        function selectSession(sessionId) {
+            if (!sessionId || sessionId === currentSessionId) {
+                loadSessionTabs(sessionId);
+                return;
+            }
+            saveCurrentDraft();
+
+            fetch('/api/session/' + encodeURIComponent(sessionId))
+                .then(function(r) { return r.json(); })
+                .then(function(sessionInfo) {
+                    updateWorkspaceFromSession(sessionInfo);
+                    renderSessionTabs(allSessionsCache);
+                    connectWebSocket(sessionInfo.session_id);
+                });
+        }
+
+        function connectWebSocket(sessionId) {
+            var targetSessionId = sessionId || currentSessionId;
+            if (!targetSessionId || wsReplaced) return;
             setConnStatus('connecting');
             var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(protocol + '//' + location.host + '/ws');
+
+            if (ws) {
+                manualWsClose = true;
+                ws.onclose = null;
+                ws.close();
+            }
+
+            manualWsClose = false;
+            ws = new WebSocket(protocol + '//' + location.host + '/ws/' + encodeURIComponent(targetSessionId));
 
             ws.onopen = function() {
                 wsReady = true;
                 wsReplaced = false;
                 setConnStatus('connected');
-                console.log('WebSocket connected');
+                console.log('WebSocket connected: ' + targetSessionId);
             };
 
             ws.onmessage = function(event) {
@@ -403,41 +546,20 @@
                     wsReplaced = true;
                     wsReady = false;
                     setConnStatus('disconnected');
-                    console.log('Connection replaced by another tab/window');
-
-                    var btn = document.getElementById('submitBtn');
-                    if (btn) {
-                        btn.querySelector('.relative').textContent = '连接已转移';
-                        btn.classList.remove('from-blue-500', 'to-violet-500');
-                        btn.classList.add('from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
-                        btn.disabled = true;
-                    }
+                    setSubmitButtonState('连接已转移', false, 'warning');
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
-                    var el = document.getElementById('summaryContent');
-                    if (el && typeof marked !== 'undefined') {
-                        el.innerHTML = marked.parse(data.session_info.summary || '');
-                        if (el.scrollTop > 0) {
-                            el.scrollTo({ top: 0, behavior: 'smooth' });
-                        }
-                    }
-                    updateFeedbackTitle(data.session_info.title || '');
-                    var tag = document.getElementById('newTag');
-                    if (tag) tag.style.display = '';
-
-                    var btn = document.getElementById('submitBtn');
-                    if (btn) {
-                        btn.querySelector('.relative').textContent = '提交反馈';
-                        btn.classList.remove('from-emerald-500', 'to-emerald-600', 'from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
-                        btn.classList.add('from-blue-500', 'to-violet-500');
-                        btn.disabled = false;
-                    }
+                    loadSessionTabs(data.session_info.session_id).then(function() {
+                        updateWorkspaceFromSession(data.session_info);
+                        connectWebSocket(data.session_info.session_id);
+                    });
                 }
             };
 
             ws.onclose = function() {
                 wsReady = false;
+                if (manualWsClose) return;
                 if (wsReplaced) {
                     setConnStatus('disconnected');
                     console.log('WebSocket closed (replaced), will not reconnect');
@@ -445,7 +567,7 @@
                 }
                 setConnStatus('disconnected');
                 console.log('WebSocket closed, reconnecting in 3s...');
-                setTimeout(connectWebSocket, 3000);
+                setTimeout(function() { connectWebSocket(currentSessionId); }, 3000);
             };
 
             ws.onerror = function() {
@@ -520,6 +642,7 @@
 
             ws.send(JSON.stringify({
                 type: 'submit_feedback',
+                session_id: currentSessionId,
                 feedback: feedback,
                 images: imagesPayload,
                 settings: {}
@@ -532,14 +655,8 @@
             var tag = document.getElementById('newTag');
             if (tag) tag.style.display = 'none';
 
-            var btn = document.getElementById('submitBtn');
-            if (btn) {
-                btn.querySelector('.relative').textContent = '已提交';
-                btn.classList.remove('from-blue-500', 'to-violet-500');
-                btn.classList.add('from-emerald-500', 'to-emerald-600');
-                btn.disabled = true;
-                btn.classList.add('opacity-70', 'cursor-not-allowed');
-            }
+            setSubmitButtonState('已提交', false, 'success');
+            loadSessionTabs(currentSessionId);
         }
 
         // --- Init ---
@@ -550,8 +667,12 @@
                 el.innerHTML = marked.parse(el.textContent);
             }
 
-            // Connect WebSocket
-            connectWebSocket();
+            // Load sessions and connect the current session WebSocket
+            loadSessionTabs(currentSessionId).then(function(sessions) {
+                var current = sessions.find(function(s) { return s.session_id === currentSessionId; });
+                if (current) updateWorkspaceFromSession(current);
+                connectWebSocket(currentSessionId);
+            });
 
             // File input change handler
             var fileInput = document.getElementById('imageInput');
@@ -611,6 +732,7 @@
             var map = {
                 waiting: { text: '等待中', cls: 'text-amber-400 bg-amber-400/10 border-amber-400/20' },
                 active: { text: '活跃', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
+                feedback_submitted: { text: '已提交', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
                 completed: { text: '已完成', cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
                 timeout: { text: '超时', cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
                 error: { text: '错误', cls: 'text-red-400 bg-red-400/10 border-red-400/20' }
@@ -651,8 +773,6 @@
         }
 
         // Session detail modal
-        var allSessionsCache = [];
-
         function showSessionDetail(sessionId) {
             var s = allSessionsCache.find(function(x) { return x.session_id === sessionId; });
             if (!s) return;

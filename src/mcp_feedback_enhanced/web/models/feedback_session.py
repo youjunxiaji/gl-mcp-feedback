@@ -481,7 +481,11 @@ class WebFeedbackSession:
         self.settings = settings or {}
         self.images = self._process_images(images)
 
-        # 进入下一步：等待中 → 已提交反馈
+        # 如果还未建立 ACTIVE 状态，提交反馈时先补齐状态流转。
+        if self.status == SessionStatus.WAITING:
+            self.next_step("会话已启动")
+
+        # 进入下一步：活跃中 → 已提交反馈
         self.next_step("已送出反馈，等待下次 MCP 调用")
 
         self.feedback_completed.set()
