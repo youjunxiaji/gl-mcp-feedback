@@ -8,6 +8,7 @@ Web 反馈会话模型
 
 import asyncio
 import base64
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -120,6 +121,17 @@ class WebFeedbackSession:
         self.user_timeout_enabled = False
         self.user_timeout_seconds = 3600  # 默认 1 小时
         self.user_timeout_timer: threading.Timer | None = None
+
+        # MCP 等待保活配置。接近客户端 timeout 前返回续等请求。
+        self.feedback_timeout_seconds = 600
+        self.feedback_actual_timeout_seconds = 570
+        self.feedback_deadline_at: float | None = None
+        self.keepalive_auto_extend_max = self._read_int_env(
+            "MCP_FEEDBACK_AUTO_EXTEND_MAX", 3, min_value=0
+        )
+        self.keepalive_auto_extend_used = 0
+        self.keepalive_manual_extend_tokens = 0
+        self.keepalive_last_reason: str | None = None
 
         # 确保临时目录存在
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,7 +255,92 @@ class WebFeedbackSession:
             "summary": self.summary,
             "title": self.title,
             "session_id": self.session_id,
+            "feedback_timeout_seconds": self.feedback_timeout_seconds,
+            "feedback_actual_timeout_seconds": self.feedback_actual_timeout_seconds,
+            "feedback_deadline_at": self.feedback_deadline_at,
+            "keepalive_auto_extend_max": self.keepalive_auto_extend_max,
+            "keepalive_auto_extend_used": self.keepalive_auto_extend_used,
+            "keepalive_manual_extend_tokens": self.keepalive_manual_extend_tokens,
         }
+
+    @staticmethod
+    def _read_int_env(name: str, default: int, *, min_value: int = 0) -> int:
+        """读取整数环境变量，避免配置错误打断 MCP 服务启动。"""
+        raw_value = os.getenv(name)
+        if raw_value is None:
+            return default
+        try:
+            return max(int(raw_value), min_value)
+        except ValueError:
+            debug_log(f"{name} 值无效 ({raw_value})，使用默认值 {default}")
+            return default
+
+    def _calculate_actual_timeout(self, timeout: int) -> int:
+        """计算比 MCP 客户端 timeout 更短的安全等待窗口。"""
+        if timeout <= 30:
+            return max(timeout - 1, 5)
+
+        margin = self._read_int_env("MCP_FEEDBACK_KEEPALIVE_MARGIN", 30, min_value=1)
+        safe_margin = min(margin, max(timeout - 5, 1))
+        return max(timeout - safe_margin, 5)
+
+    def start_feedback_wait_window(self, timeout: int = 600) -> int:
+        """开始或刷新一次 MCP 等待窗口，并返回实际等待秒数。"""
+        actual_timeout = self._calculate_actual_timeout(timeout)
+        self.feedback_timeout_seconds = timeout
+        self.feedback_actual_timeout_seconds = actual_timeout
+        self.feedback_deadline_at = time.time() + actual_timeout
+        self.last_activity = time.time()
+        debug_log(
+            f"会话 {self.session_id} 刷新等待窗口: "
+            f"actual={actual_timeout}s, raw={timeout}s"
+        )
+        return actual_timeout
+
+    def add_manual_keepalive_extension(self) -> dict[str, Any]:
+        """用户手动增加一次续等额度，不计入自动延长次数。"""
+        self.keepalive_manual_extend_tokens += 1
+        self.last_activity = time.time()
+        debug_log(
+            f"会话 {self.session_id} 手动延长等待，"
+            f"剩余额度: {self.keepalive_manual_extend_tokens}"
+        )
+        return self.get_status_info()
+
+    def _build_keepalive_request(self, reason: str) -> dict[str, Any]:
+        """构建 MCP 保活续等请求。"""
+        self.keepalive_last_reason = reason
+        self.last_activity = time.time()
+        return {
+            "interactive_feedback": "",
+            "images": [],
+            "settings": {},
+            "keepalive_request": True,
+            "keepalive_reason": reason,
+            "session_id": self.session_id,
+            "timeout": self.feedback_timeout_seconds,
+            "actual_timeout": self.feedback_actual_timeout_seconds,
+            "auto_extend_used": self.keepalive_auto_extend_used,
+            "auto_extend_max": self.keepalive_auto_extend_max,
+            "manual_extend_tokens": self.keepalive_manual_extend_tokens,
+        }
+
+    def _consume_keepalive_extension(self) -> dict[str, Any] | None:
+        """在等待窗口到期时消耗一次手动或自动续等额度。"""
+        if self.keepalive_manual_extend_tokens > 0:
+            self.keepalive_manual_extend_tokens -= 1
+            debug_log(f"会话 {self.session_id} 消耗手动续等额度")
+            return self._build_keepalive_request("manual")
+
+        if self.keepalive_auto_extend_used < self.keepalive_auto_extend_max:
+            self.keepalive_auto_extend_used += 1
+            debug_log(
+                f"会话 {self.session_id} 消耗自动续等额度 "
+                f"{self.keepalive_auto_extend_used}/{self.keepalive_auto_extend_max}"
+            )
+            return self._build_keepalive_request("auto")
+
+        return None
 
     def is_active(self) -> bool:
         """检查会话是否活跃"""
@@ -417,14 +514,10 @@ class WebFeedbackSession:
             dict: 反馈结果
         """
         try:
-            # 使用比 MCP 超时稍短的时间（提前处理，避免边界竞争）
-            # 对于短超时（<30秒），提前1秒；对于长超时，提前5秒
-            if timeout <= 30:
-                actual_timeout = max(timeout - 1, 5)  # 短超时提前1秒，最少5秒
-            else:
-                actual_timeout = timeout - 5  # 长超时提前5秒
+            actual_timeout = self.start_feedback_wait_window(timeout)
             debug_log(
-                f"会话 {self.session_id} 开始等待反馈，超时时间: {actual_timeout} 秒（原始: {timeout} 秒）"
+                f"会话 {self.session_id} 开始等待反馈，"
+                f"超时时间: {actual_timeout} 秒（原始: {timeout} 秒）"
             )
 
             loop = asyncio.get_event_loop()
@@ -447,7 +540,12 @@ class WebFeedbackSession:
                     "images": self.images,
                     "settings": self.settings,
                 }
-            # 超时了，立即清理资源
+            keepalive_request = self._consume_keepalive_extension()
+            if keepalive_request:
+                debug_log(f"会话 {self.session_id} 请求 MCP 保活续等")
+                return keepalive_request
+
+            # 自动与手动续等额度均用尽，才真正超时并清理资源
             debug_log(
                 f"会话 {self.session_id} 在 {actual_timeout} 秒后超时，开始清理资源..."
             )

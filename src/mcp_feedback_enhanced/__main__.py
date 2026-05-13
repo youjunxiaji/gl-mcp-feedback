@@ -48,7 +48,7 @@ def main():
         "--web", action="store_true", help="测试 Web UI (自动持续运行)"
     )
     test_parser.add_argument(
-        "--timeout", type=int, default=60, help="测试超时时间 (秒)"
+        "--timeout", type=int, default=600, help="测试超时时间 (秒)"
     )
 
     # 版本命令
@@ -97,7 +97,7 @@ def run_tests(args):
 
     if args.web:
         print("🧪 执行 Web UI 测试...")
-        success = test_web_ui_simple()
+        success = test_web_ui_simple(args.timeout)
         if not success:
             sys.exit(1)
     else:
@@ -108,7 +108,7 @@ def run_tests(args):
         sys.exit(1)
 
 
-def test_web_ui_simple():
+def test_web_ui_simple(timeout: int = 600):
     """简单的 Web UI 测试"""
     try:
         import tempfile
@@ -201,6 +201,13 @@ def process_feedback(data):
 
             if created_session_id:
                 print("✅ 会话创建成功")
+                session = manager.get_session(created_session_id)
+                if session:
+                    actual_timeout = session.start_feedback_wait_window(timeout)
+                    print(
+                        f"⏱️  反馈倒计时已初始化: {actual_timeout} 秒 "
+                        f"(MCP 参数: {timeout} 秒)"
+                    )
 
                 print("🚀 启动 Web 服务器...")
                 manager.start_server()

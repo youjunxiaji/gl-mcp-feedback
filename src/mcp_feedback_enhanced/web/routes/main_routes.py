@@ -49,6 +49,17 @@ def setup_routes(manager: "WebUIManager"):
             "can_submit": not session.feedback_completed.is_set()
             and not session.is_terminal(),
             "user_messages": session.user_messages,
+            "feedback_timeout_seconds": session.feedback_timeout_seconds,
+            "feedback_actual_timeout_seconds": session.feedback_actual_timeout_seconds,
+            "feedback_deadline_at": (
+                int(session.feedback_deadline_at * 1000)
+                if session.feedback_deadline_at
+                else None
+            ),
+            "keepalive_auto_extend_max": session.keepalive_auto_extend_max,
+            "keepalive_auto_extend_used": session.keepalive_auto_extend_used,
+            "keepalive_manual_extend_tokens": session.keepalive_manual_extend_tokens,
+            "keepalive_last_reason": session.keepalive_last_reason,
         }
 
     def build_session_status_response() -> dict:
@@ -175,6 +186,26 @@ def setup_routes(manager: "WebUIManager"):
                     "messageCode": get_msg_code("no_active_session"),
                 },
             )
+
+        return JSONResponse(content=build_session_info(session))
+
+    @manager.app.post("/api/session/{session_id}/title")
+    async def update_session_title(session_id: str, request: Request):
+        """更新指定会话标题，便于前端标签分辨。"""
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "Session not found",
+                    "messageCode": get_msg_code("no_active_session"),
+                },
+            )
+
+        data = await request.json()
+        title = str(data.get("title", "")).strip()[:80]
+        session.title = title
+        session.last_activity = time.time()
 
         return JSONResponse(content=build_session_info(session))
 
@@ -687,6 +718,36 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
             )
         else:
             session.update_timeout_settings(enabled=False)
+
+    elif message_type == "extend_wait":
+        debug_log(f"收到手动延长等待请求: {session.session_id}")
+        session.add_manual_keepalive_extension()
+        if session.websocket:
+            await session.websocket.send_json(
+                {
+                    "type": "wait_extended",
+                    "session_id": session.session_id,
+                    "session_info": {
+                        "session_id": session.session_id,
+                        "feedback_timeout_seconds": session.feedback_timeout_seconds,
+                        "feedback_actual_timeout_seconds": (
+                            session.feedback_actual_timeout_seconds
+                        ),
+                        "feedback_deadline_at": (
+                            int(session.feedback_deadline_at * 1000)
+                            if session.feedback_deadline_at
+                            else None
+                        ),
+                        "keepalive_auto_extend_max": session.keepalive_auto_extend_max,
+                        "keepalive_auto_extend_used": (
+                            session.keepalive_auto_extend_used
+                        ),
+                        "keepalive_manual_extend_tokens": (
+                            session.keepalive_manual_extend_tokens
+                        ),
+                    },
+                }
+            )
 
     else:
         debug_log(f"未知的消息类型: {message_type}")

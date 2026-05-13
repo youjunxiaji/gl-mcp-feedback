@@ -649,6 +649,11 @@ class WebUIManager:
         else:
             debug_log(f"服务器就绪，耗时 {waited:.1f} 秒")
 
+    def ensure_server_running(self):
+        """确保 Web 服务器已启动。"""
+        if self.server_thread is None or not self.server_thread.is_alive():
+            self.start_server()
+
     def open_browser(self, url: str):
         """开启浏览器"""
         try:
@@ -1069,8 +1074,10 @@ async def launch_web_feedback_ui(
         raise RuntimeError("无法创建反馈会话")
 
     # 启动服务器（如果尚未启动）
-    if manager.server_thread is None or not manager.server_thread.is_alive():
-        manager.start_server()
+    manager.ensure_server_running()
+
+    # 让初始页面尽早拿到真实倒计时字段。
+    session.start_feedback_wait_window(timeout)
 
     # 使用根路径 URL
     feedback_url = manager.get_server_url()  # 直接使用根路径
@@ -1100,6 +1107,24 @@ async def launch_web_feedback_ui(
         # 注意：不再自动清理会话和停止服务器，保持持久性
         # 会话将保持活跃状态，等待下次 MCP 调用
         debug_log("会话保持活跃状态，等待下次 MCP 调用")
+
+
+async def continue_web_feedback_session(session_id: str, timeout: int = 600) -> dict:
+    """继续等待既有 Web 反馈会话，用于 MCP 保活续等。"""
+    manager = get_web_ui_manager()
+    session = manager.get_session(session_id)
+    if not session:
+        return {
+            "interactive_feedback": (
+                f"会话 {session_id} 已不存在，请重新调用 interactive_feedback。"
+            ),
+            "images": [],
+            "settings": {},
+        }
+
+    manager.ensure_server_running()
+    debug_log(f"继续等待反馈会话: {session_id}, timeout={timeout}")
+    return await session.wait_for_feedback(timeout)
 
 
 def stop_web_ui():

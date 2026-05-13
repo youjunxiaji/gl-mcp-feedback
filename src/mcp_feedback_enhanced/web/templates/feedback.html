@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <script>
+        (function() {
+            var mode = localStorage.getItem('feedbackThemeMode') || 'auto';
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var resolved = mode === 'auto' ? (prefersDark ? 'dark' : 'light') : mode;
+            document.documentElement.classList.toggle('dark', resolved === 'dark');
+            document.documentElement.classList.toggle('light', resolved === 'light');
+            document.documentElement.dataset.themeMode = mode;
+        })();
+    </script>
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
@@ -22,10 +32,10 @@
                     },
                     colors: {
                         surface: {
-                            base: '#0b0e14',
-                            raised: '#111620',
-                            overlay: '#171d2b',
-                            muted: '#1e2636',
+                            base: 'rgb(var(--surface-base) / <alpha-value>)',
+                            raised: 'rgb(var(--surface-raised) / <alpha-value>)',
+                            overlay: 'rgb(var(--surface-overlay) / <alpha-value>)',
+                            muted: 'rgb(var(--surface-muted) / <alpha-value>)',
                         }
                     },
                 }
@@ -56,6 +66,19 @@
         }
     </style>
     <style>
+        :root {
+            --surface-base: 11 14 20;
+            --surface-raised: 17 22 32;
+            --surface-overlay: 23 29 43;
+            --surface-muted: 30 38 54;
+        }
+        html.light {
+            color-scheme: light;
+            --surface-base: 246 248 251;
+            --surface-raised: 255 255 255;
+            --surface-overlay: 241 245 249;
+            --surface-muted: 226 232 240;
+        }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
@@ -116,6 +139,58 @@
         .md td { padding: 6px 12px; border: 1px solid rgba(255,255,255,0.06); color: #8494a7; }
         .md tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
         .md > *:first-child { margin-top: 0; }
+
+        html.light body { background: #f6f8fb; color: #172033; }
+        html.light ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); }
+        html.light ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.55); }
+        html.light [class*="border-white"] { border-color: #e2e8f0 !important; }
+        html.light [class*="ring-white"] { --tw-ring-color: rgba(15, 23, 42, 0.1) !important; }
+        html.light [class*="text-slate-100"],
+        html.light [class*="text-slate-200"],
+        html.light [class*="text-slate-300"] { color: #172033 !important; }
+        html.light [class*="text-slate-400"],
+        html.light [class*="text-slate-500"],
+        html.light [class*="text-slate-600"] { color: #64748b !important; }
+        html.light textarea,
+        html.light input,
+        html.light select {
+            color: #172033 !important;
+            background: #ffffff !important;
+            border-color: #cbd5e1 !important;
+        }
+        html.light select option { background: #ffffff; color: #172033; }
+        html.light textarea::placeholder,
+        html.light input::placeholder { color: #94a3b8 !important; }
+        html.light .tab-active-dot,
+        html.light .tab-btn:hover { background: #eaf2ff !important; color: #1d4ed8 !important; }
+        html.light .glow-line::after {
+            background: linear-gradient(90deg, transparent, #93c5fd, transparent) !important;
+            opacity: 0.7 !important;
+        }
+        html.light .md h1,
+        html.light .md h2,
+        html.light .md h3,
+        html.light .md h4,
+        html.light .md strong,
+        html.light .md em,
+        html.light .md li::marker { color: #172033 !important; }
+        html.light .md p,
+        html.light .md ul,
+        html.light .md ol,
+        html.light .md td,
+        html.light .md blockquote { color: #475569 !important; }
+        html.light .md h1,
+        html.light .md h2,
+        html.light .md hr,
+        html.light .md table,
+        html.light .md th,
+        html.light .md td { border-color: #e2e8f0 !important; }
+        html.light .md code { background: #eef6ff !important; color: #2563eb !important; }
+        html.light .md pre { background: #f8fafc !important; border-color: #dbe3ef !important; }
+        html.light .md pre code { color: #172033 !important; background: transparent !important; }
+        html.light .md blockquote { background: #eff6ff !important; border-left-color: #3b82f6 !important; }
+        html.light .md th { background: #f1f5f9 !important; color: #172033 !important; }
+        html.light .md tr:nth-child(2n) { background: #f8fafc !important; }
     </style>
 </head>
 <body class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col overflow-hidden antialiased">
@@ -132,12 +207,17 @@
                 <span id="sessionBadge" class="font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition">{{ session_id[:8] if session_id else '--' }}</span>
             </div>
         </div>
-        <div id="connStatus" class="flex items-center gap-1.5 text-xs font-medium text-amber-400">
-            <div id="connDot" class="relative w-[7px] h-[7px]">
-                <div id="connDotInner" class="absolute inset-0 rounded-full bg-amber-400"></div>
-                <div id="connDotPulse" class="absolute -inset-[3px] rounded-full bg-amber-400 opacity-30 animate-[breathe_2.5s_ease-in-out_infinite]"></div>
+        <div class="flex items-center gap-3">
+            <button id="themeToggleBtn" onclick="cycleThemeMode()" title="切换主题" class="w-8 h-8 flex items-center justify-center text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-full hover:text-blue-400 hover:border-blue-500/30 transition">
+                <span class="font-mono text-xs">A</span>
+            </button>
+            <div id="connStatus" class="flex items-center gap-1.5 text-xs font-medium text-amber-400">
+                <div id="connDot" class="relative w-[7px] h-[7px]">
+                    <div id="connDotInner" class="absolute inset-0 rounded-full bg-amber-400"></div>
+                    <div id="connDotPulse" class="absolute -inset-[3px] rounded-full bg-amber-400 opacity-30 animate-[breathe_2.5s_ease-in-out_infinite]"></div>
+                </div>
+                <span id="connText">连接中...</span>
             </div>
-            <span id="connText">连接中...</span>
         </div>
     </header>
 
@@ -179,7 +259,11 @@
             <!-- Feedback (right) -->
             <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
-                    <span class="text-[14px] font-semibold text-slate-300">提供反馈</span>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-[14px] font-semibold text-slate-300">提供反馈</span>
+                        <span id="feedbackCountdown" class="font-mono text-[12px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded-full px-2 py-0.5">--s</span>
+                        <span id="keepaliveMeta" class="font-mono text-[11px] text-slate-500 bg-surface-overlay border border-white/[0.06] rounded-full px-2 py-0.5">自动 0/3 · 手动 0</span>
+                    </div>
                 </div>
                 <div class="flex-1 min-h-0 p-3 flex flex-col gap-2">
                     <textarea id="feedbackText" class="flex-1 min-h-0 w-full bg-surface-base border border-white/[0.06] rounded-xl px-4 py-3 text-[15px] leading-relaxed text-slate-200 resize-none transition-all outline-none focus:border-blue-500/40 focus:shadow-[0_0_20px_rgba(59,130,246,0.12),inset_0_0_0_1px_rgba(59,130,246,0.4)] placeholder:text-slate-600"
@@ -194,12 +278,15 @@
                             附件图片
                         </button>
                         <span id="imageCount" class="hidden text-xs text-blue-400"></span>
-                        <span class="text-xs text-slate-600"><kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">⌘</kbd> + <kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">Enter</kbd> 提交</span>
+                        <span id="shortcutHint" class="text-xs text-slate-600"><kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">⌘</kbd> + <kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">Enter</kbd> 提交</span>
                     </div>
-                    <button id="submitBtn" onclick="submitFeedback()" class="text-[14px] font-semibold text-white bg-gradient-to-br from-blue-500 to-violet-500 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all relative overflow-hidden group">
-                        <span class="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></span>
-                        <span class="relative">提交反馈</span>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button id="extendWaitBtn" onclick="extendWait()" class="text-xs font-medium text-amber-300 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3.5 py-2.5 hover:bg-amber-400/15 transition">延长等待</button>
+                        <button id="submitBtn" onclick="submitFeedback()" class="text-[14px] font-semibold text-white bg-gradient-to-br from-blue-500 to-violet-500 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all relative overflow-hidden group">
+                            <span class="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></span>
+                            <span class="relative">提交反馈</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -229,6 +316,7 @@
                 <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
                     <div class="w-[3px] h-5 rounded-sm bg-amber-500"></div>
                     <span class="text-sm font-semibold text-slate-200">自动定时提交</span>
+                    <span class="text-[10px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">未实现</span>
                 </div>
                 <div class="px-[18px] divide-y divide-white/[0.06]">
                     <div class="flex items-center justify-between py-3.5">
@@ -248,19 +336,38 @@
             </div>
             <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
+                    <div class="w-[3px] h-5 rounded-sm bg-sky-500"></div>
+                    <span class="text-sm font-semibold text-slate-200">界面与快捷键</span>
+                </div>
+                <div class="px-[18px] divide-y divide-white/[0.06]">
+                    <div class="flex items-center justify-between py-3.5">
+                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">提交快捷键模式</div><div class="text-xs text-slate-500">默认或 cursor 模式，可继续添加自定义规则</div></div>
+                        <select id="shortcutModeSelect" onchange="setShortcutMode(this.value)" class="font-sans text-[14px] text-slate-200 bg-surface-base border border-white/[0.06] rounded px-3 py-[7px] min-w-[180px] outline-none focus:border-blue-500 transition cursor-pointer">
+                            <option value="default">默认：Ctrl/Cmd+Enter</option>
+                            <option value="cursor">Cursor：Enter 提交</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center justify-between py-3.5 gap-4">
+                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">自定义快捷规则</div><div class="text-xs text-slate-500">添加后可在上方模式中选择</div></div>
+                        <button onclick="addCustomShortcutRule()" class="text-xs font-medium text-blue-300 border border-blue-400/30 rounded px-3 py-1.5 hover:bg-blue-500/10 transition">新增规则</button>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
+                <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
                     <div class="w-[3px] h-5 rounded-sm bg-violet-500"></div>
                     <span class="text-sm font-semibold text-slate-200">通知与音效</span>
                 </div>
                 <div class="px-[18px] divide-y divide-white/[0.06]">
                     <div class="flex items-center justify-between py-3.5">
                         <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">浏览器通知</div><div class="text-xs text-slate-500">新会话到达时发送桌面通知</div></div>
-                        <button class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-surface-muted');this.classList.toggle('!border-white/[0.06]');this.querySelector('div').classList.toggle('translate-x-5')">
+                        <button id="notificationToggle" class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="toggleSettingSwitch('notification')">
                             <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform translate-x-5"></div>
                         </button>
                     </div>
                     <div class="flex items-center justify-between py-3.5">
                         <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">提示音</div><div class="text-xs text-slate-500">新会话到达时播放提示音</div></div>
-                        <button class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-surface-muted');this.classList.toggle('!border-white/[0.06]');this.querySelector('div').classList.toggle('translate-x-5')">
+                        <button id="audioToggle" class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="toggleSettingSwitch('audio')">
                             <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform translate-x-5"></div>
                         </button>
                     </div>
@@ -343,6 +450,17 @@
         </div>
     </div>
 
+    <div id="submitConfirmModal" class="hidden fixed inset-0 z-[80] items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="w-[min(420px,calc(100vw-32px))] bg-surface-raised border border-white/[0.08] rounded-2xl shadow-2xl p-5">
+            <div class="text-base font-semibold text-slate-100 mb-2">确认提交反馈？</div>
+            <div class="text-sm text-slate-500 leading-relaxed mb-4">按 Enter 确认提交，按 Esc 取消。此确认仅在 cursor 快捷键模式下使用。</div>
+            <div class="flex items-center justify-end gap-2">
+                <button onclick="closeSubmitConfirm()" class="text-sm font-medium text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-lg px-4 py-2 hover:text-slate-200 transition">取消</button>
+                <button onclick="confirmShortcutSubmit()" class="text-sm font-semibold text-white bg-blue-500 rounded-lg px-4 py-2 hover:bg-blue-400 transition">确认提交</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== SCRIPTS ===== -->
     <script src="/static/js/vendor/marked.min.js"></script>
     <script>
@@ -388,6 +506,13 @@
         var currentSessionId = '{{ session_id }}';
         var allSessionsCache = [];
         var sessionDrafts = {};
+        var sessionImages = {};
+        var unreadSessions = {};
+        var countdownTimer = null;
+        var shortcutRules = {};
+        var shortcutMode = localStorage.getItem('feedbackShortcutMode') || 'default';
+        var notificationEnabled = localStorage.getItem('feedbackNotificationEnabled') !== 'false';
+        var audioEnabled = localStorage.getItem('feedbackAudioEnabled') !== 'false';
         var ws = null;
         var wsReady = false;
         var wsReplaced = false;
@@ -395,6 +520,53 @@
 
         function getShortSessionId(sessionId) {
             return sessionId ? sessionId.substring(0, 8) : '--';
+        }
+
+        function getCurrentSessionInfo() {
+            return allSessionsCache.find(function(s) { return s.session_id === currentSessionId; }) || null;
+        }
+
+        function formatRemaining(ms) {
+            var total = Math.max(0, Math.ceil(ms / 1000));
+            var minutes = Math.floor(total / 60);
+            var seconds = total % 60;
+            return minutes > 0 ? (minutes + 'm ' + seconds + 's') : (seconds + 's');
+        }
+
+        function updateCountdown(sessionInfo) {
+            var el = document.getElementById('feedbackCountdown');
+            var meta = document.getElementById('keepaliveMeta');
+            if (!el) return;
+            var info = sessionInfo || getCurrentSessionInfo();
+            if (!info || !info.feedback_deadline_at || !info.can_submit) {
+                el.textContent = '已结束';
+                el.className = 'font-mono text-[12px] text-slate-500 bg-surface-overlay border border-white/[0.06] rounded-full px-2 py-0.5';
+                if (meta) meta.textContent = '自动 --/-- · 手动 --';
+                return;
+            }
+            var remainMs = info.feedback_deadline_at - Date.now();
+            el.textContent = formatRemaining(remainMs);
+            if (meta) {
+                meta.textContent = '自动 ' +
+                    (info.keepalive_auto_extend_used || 0) + '/' +
+                    (info.keepalive_auto_extend_max || 0) +
+                    ' · 手动 ' + (info.keepalive_manual_extend_tokens || 0);
+            }
+            var cls = 'font-mono text-[12px] rounded-full px-2 py-0.5 border ';
+            if (remainMs <= 10000) {
+                cls += 'text-red-300 bg-red-400/10 border-red-400/20';
+            } else if (remainMs <= 60000) {
+                cls += 'text-amber-300 bg-amber-400/10 border-amber-400/20';
+            } else {
+                cls += 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
+            }
+            el.className = cls;
+        }
+
+        function startCountdownLoop() {
+            if (countdownTimer) clearInterval(countdownTimer);
+            updateCountdown();
+            countdownTimer = setInterval(updateCountdown, 1000);
         }
 
         function setSubmitButtonState(label, enabled, tone) {
@@ -421,14 +593,34 @@
         function saveCurrentDraft() {
             if (!currentSessionId) return;
             var textarea = document.getElementById('feedbackText');
-            sessionDrafts[currentSessionId] = textarea ? textarea.value : '';
+            var now = Date.now();
+            sessionDrafts[currentSessionId] = { value: textarea ? textarea.value : '', updatedAt: now };
+            sessionImages[currentSessionId] = { images: pendingImages.slice(), updatedAt: now };
         }
 
         function restoreCurrentDraft() {
             var textarea = document.getElementById('feedbackText');
-            if (textarea) textarea.value = sessionDrafts[currentSessionId] || '';
-            pendingImages = [];
+            var draft = sessionDrafts[currentSessionId];
+            if (textarea) textarea.value = draft ? draft.value : '';
+            var imageDraft = sessionImages[currentSessionId];
+            pendingImages = imageDraft ? imageDraft.images.slice() : [];
             renderImagePreviews();
+        }
+
+        function cleanupExpiredDrafts() {
+            var expiresBefore = Date.now() - 24 * 60 * 60 * 1000;
+            Object.keys(sessionDrafts).forEach(function(sessionId) {
+                if (sessionDrafts[sessionId].updatedAt < expiresBefore) delete sessionDrafts[sessionId];
+            });
+            Object.keys(sessionImages).forEach(function(sessionId) {
+                if (sessionImages[sessionId].updatedAt < expiresBefore) delete sessionImages[sessionId];
+            });
+        }
+
+        function clearCurrentDraft() {
+            if (!currentSessionId) return;
+            delete sessionDrafts[currentSessionId];
+            delete sessionImages[currentSessionId];
         }
 
         function updateWorkspaceFromSession(sessionInfo) {
@@ -446,6 +638,7 @@
 
             updateFeedbackTitle(sessionInfo.title || '');
             restoreCurrentDraft();
+            updateCountdown(sessionInfo);
 
             var tag = document.getElementById('newTag');
             if (tag) tag.style.display = sessionInfo.can_submit ? '' : 'none';
@@ -469,17 +662,43 @@
             container.innerHTML = sessions.map(function(s) {
                 var active = s.session_id === currentSessionId;
                 var waiting = s.can_submit && !s.feedback_completed;
+                var unread = !!unreadSessions[s.session_id] && !active;
                 var label = escapeHtml(s.title || getShortSessionId(s.session_id));
-                var statusCls = waiting ? 'bg-amber-400' : (s.feedback_completed ? 'bg-emerald-400' : 'bg-slate-500');
+                var statusCls = unread ? 'bg-red-400' : (waiting ? 'bg-amber-400' : (s.feedback_completed ? 'bg-emerald-400' : 'bg-slate-500'));
                 var cls = active
                     ? 'bg-surface-overlay text-slate-100 border-blue-500/40 shadow-sm'
-                    : 'bg-surface-raised text-slate-500 border-white/[0.06] hover:text-slate-200 hover:border-blue-500/30';
-                return '<button data-session-id="' + escapeHtml(s.session_id) + '" onclick="selectSession(this.dataset.sessionId)" class="shrink-0 max-w-[240px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                    : (unread ? 'bg-red-500/10 text-red-200 border-red-400/40 hover:bg-red-500/15' : 'bg-surface-raised text-slate-500 border-white/[0.06] hover:text-slate-200 hover:border-blue-500/30');
+                return '<div class="shrink-0 flex items-center gap-1">' +
+                    '<button data-session-id="' + escapeHtml(s.session_id) + '" onclick="selectSession(this.dataset.sessionId)" class="max-w-[240px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
                     '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
                     '<span class="truncate">' + label + '</span>' +
                     '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
-                    '</button>';
+                    '</button>' +
+                    '<button title="修改标题" onclick="editSessionTitle(\'' + escapeHtml(s.session_id) + '\')" class="w-7 h-7 flex items-center justify-center text-[11px] text-slate-500 bg-surface-raised border border-white/[0.06] rounded-full hover:text-blue-400 hover:border-blue-500/30 transition">T</button>' +
+                    '</div>';
             }).join('');
+        }
+
+        function editSessionTitle(sessionId) {
+            var sessionInfo = allSessionsCache.find(function(s) { return s.session_id === sessionId; });
+            var nextTitle = prompt('请输入会话标题', sessionInfo ? (sessionInfo.title || '') : '');
+            if (nextTitle === null) return;
+
+            fetch('/api/session/' + encodeURIComponent(sessionId) + '/title', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: nextTitle })
+            })
+                .then(function(r) { return r.json(); })
+                .then(function(updated) {
+                    allSessionsCache = allSessionsCache.map(function(s) {
+                        return s.session_id === updated.session_id ? updated : s;
+                    });
+                    if (updated.session_id === currentSessionId) {
+                        updateFeedbackTitle(updated.title || '');
+                    }
+                    renderSessionTabs(allSessionsCache);
+                });
         }
 
         function loadSessionTabs(preferredSessionId) {
@@ -487,12 +706,14 @@
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     allSessionsCache = data.sessions || [];
+                    cleanupExpiredDrafts();
                     if (preferredSessionId) {
                         currentSessionId = preferredSessionId;
                     } else if (!currentSessionId && allSessionsCache.length) {
                         currentSessionId = allSessionsCache[0].session_id;
                     }
                     renderSessionTabs(allSessionsCache);
+                    updateCountdown();
                     return allSessionsCache;
                 })
                 .catch(function() {
@@ -508,6 +729,7 @@
                 return;
             }
             saveCurrentDraft();
+            delete unreadSessions[sessionId];
 
             fetch('/api/session/' + encodeURIComponent(sessionId))
                 .then(function(r) { return r.json(); })
@@ -550,10 +772,24 @@
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
-                    loadSessionTabs(data.session_info.session_id).then(function() {
-                        updateWorkspaceFromSession(data.session_info);
-                        connectWebSocket(data.session_info.session_id);
+                    if (data.session_info.session_id !== currentSessionId) {
+                        unreadSessions[data.session_info.session_id] = true;
+                        notifyNewSession(data.session_info);
+                    }
+                    loadSessionTabs(currentSessionId).then(function() {
+                        if (data.session_info.session_id === currentSessionId) {
+                            updateWorkspaceFromSession(data.session_info);
+                        }
                     });
+                    return;
+                }
+                if (data.type === 'wait_extended' && data.session_info) {
+                    allSessionsCache = allSessionsCache.map(function(s) {
+                        if (s.session_id !== data.session_id) return s;
+                        return Object.assign({}, s, data.session_info);
+                    });
+                    updateCountdown(getCurrentSessionInfo());
+                    renderSessionTabs(allSessionsCache);
                 }
             };
 
@@ -585,6 +821,7 @@
             reader.onload = function(e) {
                 var name = file.name || ('paste-' + Date.now() + '.png');
                 pendingImages.push({ data: e.target.result, name: name });
+                saveCurrentDraft();
                 renderImagePreviews();
             };
             reader.readAsDataURL(file);
@@ -592,6 +829,7 @@
 
         function removeImage(idx) {
             pendingImages.splice(idx, 1);
+            saveCurrentDraft();
             renderImagePreviews();
         }
 
@@ -622,6 +860,211 @@
             }).join('');
         }
 
+        // --- Wait extension ---
+        function extendWait() {
+            if (!wsReady || !ws || !currentSessionId) {
+                alert('WebSocket 未连接，请稍后重试');
+                return;
+            }
+            ws.send(JSON.stringify({
+                type: 'extend_wait',
+                session_id: currentSessionId
+            }));
+            var btn = document.getElementById('extendWaitBtn');
+            if (btn) {
+                btn.textContent = '已请求延长';
+                setTimeout(function() { btn.textContent = '延长等待'; }, 1600);
+            }
+        }
+
+        // --- Notifications ---
+        function setSwitchVisual(id, enabled) {
+            var button = document.getElementById(id);
+            if (!button) return;
+            var knob = button.querySelector('div');
+            button.classList.toggle('!bg-surface-muted', !enabled);
+            button.classList.toggle('!border-white/[0.06]', !enabled);
+            button.classList.toggle('bg-blue-500', enabled);
+            button.classList.toggle('border-blue-500', enabled);
+            if (knob) knob.classList.toggle('translate-x-5', enabled);
+        }
+
+        function toggleSettingSwitch(kind) {
+            if (kind === 'notification') {
+                notificationEnabled = !notificationEnabled;
+                localStorage.setItem('feedbackNotificationEnabled', notificationEnabled ? 'true' : 'false');
+                if (notificationEnabled && 'Notification' in window && Notification.permission === 'default') {
+                    Notification.requestPermission();
+                }
+                setSwitchVisual('notificationToggle', notificationEnabled);
+            } else if (kind === 'audio') {
+                audioEnabled = !audioEnabled;
+                localStorage.setItem('feedbackAudioEnabled', audioEnabled ? 'true' : 'false');
+                setSwitchVisual('audioToggle', audioEnabled);
+            }
+        }
+
+        function playNotifySound() {
+            if (!audioEnabled) return;
+            try {
+                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                var osc = ctx.createOscillator();
+                var gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 880;
+                gain.gain.value = 0.06;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                setTimeout(function() { osc.stop(); ctx.close(); }, 160);
+            } catch (e) {
+                console.debug('Audio notification skipped:', e);
+            }
+        }
+
+        function notifyNewSession(sessionInfo) {
+            if (notificationEnabled && 'Notification' in window && Notification.permission === 'granted') {
+                new Notification('新反馈会话到达', {
+                    body: sessionInfo.title || getShortSessionId(sessionInfo.session_id),
+                    tag: sessionInfo.session_id
+                });
+            }
+            playNotifySound();
+        }
+
+        // --- Theme + shortcuts ---
+        function applyThemeMode(mode) {
+            var resolved = mode;
+            if (mode === 'auto') {
+                var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                resolved = prefersDark ? 'dark' : 'light';
+            }
+            document.documentElement.classList.toggle('dark', resolved === 'dark');
+            document.documentElement.classList.toggle('light', resolved === 'light');
+            document.documentElement.dataset.themeMode = mode;
+            localStorage.setItem('feedbackThemeMode', mode);
+            updateThemeButton(mode);
+        }
+
+        function updateThemeButton(mode) {
+            var btn = document.getElementById('themeToggleBtn');
+            if (!btn) return;
+            var labels = {
+                auto: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2M12 19v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M3 12h2M19 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/><circle cx="12" cy="12" r="4"/></svg>',
+                light: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+                dark: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z"/></svg>'
+            };
+            btn.innerHTML = labels[mode] || labels.auto;
+            var titles = { auto: '自动主题', light: '明亮主题', dark: '暗色主题' };
+            btn.title = (titles[mode] || titles.auto) + '，点击切换';
+        }
+
+        function cycleThemeMode() {
+            var current = localStorage.getItem('feedbackThemeMode') || 'auto';
+            var next = current === 'auto' ? 'light' : (current === 'light' ? 'dark' : 'auto');
+            applyThemeMode(next);
+        }
+
+        function loadShortcutRules() {
+            shortcutRules = {
+                default: { label: '默认：Ctrl/Cmd+Enter', submit: 'mod+enter', newline: 'enter', confirm: false },
+                cursor: { label: 'Cursor：Enter 提交', submit: 'enter', newline: 'shift+enter', confirm: true }
+            };
+            try {
+                var customRules = JSON.parse(localStorage.getItem('feedbackCustomShortcutRules') || '[]');
+                customRules.forEach(function(rule) {
+                    if (rule.id && rule.label && rule.submit) shortcutRules[rule.id] = rule;
+                });
+            } catch (e) {
+                localStorage.removeItem('feedbackCustomShortcutRules');
+            }
+            renderShortcutSelect();
+        }
+
+        function renderShortcutSelect() {
+            var select = document.getElementById('shortcutModeSelect');
+            if (!select) return;
+            select.innerHTML = Object.keys(shortcutRules).map(function(id) {
+                return '<option value="' + escapeHtml(id) + '">' + escapeHtml(shortcutRules[id].label) + '</option>';
+            }).join('');
+            if (!shortcutRules[shortcutMode]) shortcutMode = 'default';
+            select.value = shortcutMode;
+            updateShortcutHint();
+        }
+
+        function setShortcutMode(mode) {
+            shortcutMode = shortcutRules[mode] ? mode : 'default';
+            localStorage.setItem('feedbackShortcutMode', shortcutMode);
+            updateShortcutHint();
+        }
+
+        function updateShortcutHint() {
+            var hint = document.getElementById('shortcutHint');
+            var rule = shortcutRules[shortcutMode] || shortcutRules.default;
+            if (!hint) return;
+            hint.textContent = rule.confirm
+                ? 'Enter 提交，Shift+Enter 换行'
+                : 'Ctrl/Cmd+Enter 提交';
+        }
+
+        function addCustomShortcutRule() {
+            var label = prompt('规则名称，例如：Alt+Enter 提交');
+            if (!label) return;
+            var submit = prompt('提交快捷键：enter / mod+enter / alt+enter', 'alt+enter');
+            if (!submit) return;
+            var confirmSubmit = confirm('这个规则提交前是否需要确认？');
+            var id = 'custom-' + Date.now();
+            var customRules = [];
+            try {
+                customRules = JSON.parse(localStorage.getItem('feedbackCustomShortcutRules') || '[]');
+            } catch (e) {
+                customRules = [];
+            }
+            customRules.push({ id: id, label: label, submit: submit.toLowerCase(), newline: 'enter', confirm: confirmSubmit });
+            localStorage.setItem('feedbackCustomShortcutRules', JSON.stringify(customRules));
+            loadShortcutRules();
+            setShortcutMode(id);
+        }
+
+        function eventMatchesShortcut(e, shortcut) {
+            var key = e.key.toLowerCase();
+            if (shortcut === 'enter') return key === 'enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+            if (shortcut === 'shift+enter') return key === 'enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+            if (shortcut === 'mod+enter') return key === 'enter' && (e.ctrlKey || e.metaKey);
+            if (shortcut === 'alt+enter') return key === 'enter' && e.altKey;
+            return false;
+        }
+
+        function openSubmitConfirm() {
+            var modal = document.getElementById('submitConfirmModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeSubmitConfirm() {
+            var modal = document.getElementById('submitConfirmModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function confirmShortcutSubmit() {
+            closeSubmitConfirm();
+            submitFeedback();
+        }
+
+        function handleFeedbackKeydown(e) {
+            if (e.isComposing) return;
+            var rule = shortcutRules[shortcutMode] || shortcutRules.default;
+            if (rule.newline && eventMatchesShortcut(e, rule.newline)) return;
+            if (eventMatchesShortcut(e, rule.submit)) {
+                e.preventDefault();
+                if (rule.confirm) openSubmitConfirm();
+                else submitFeedback();
+            }
+        }
+
         // --- Submit ---
         function submitFeedback() {
             var textarea = document.getElementById('feedbackText');
@@ -650,6 +1093,7 @@
 
             textarea.value = '';
             pendingImages = [];
+            clearCurrentDraft();
             renderImagePreviews();
 
             var tag = document.getElementById('newTag');
@@ -661,6 +1105,17 @@
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', function() {
+            applyThemeMode(localStorage.getItem('feedbackThemeMode') || 'auto');
+            loadShortcutRules();
+            setSwitchVisual('notificationToggle', notificationEnabled);
+            setSwitchVisual('audioToggle', audioEnabled);
+            startCountdownLoop();
+            if (window.matchMedia) {
+                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+                    if ((localStorage.getItem('feedbackThemeMode') || 'auto') === 'auto') applyThemeMode('auto');
+                });
+            }
+
             // Render Markdown summary
             var el = document.getElementById('summaryContent');
             if (el && el.textContent.trim() && typeof marked !== 'undefined') {
@@ -686,12 +1141,8 @@
             // Keyboard shortcuts + paste
             var textarea = document.getElementById('feedbackText');
             if (textarea) {
-                textarea.addEventListener('keydown', function(e) {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                        e.preventDefault();
-                        submitFeedback();
-                    }
-                });
+                textarea.addEventListener('keydown', handleFeedbackKeydown);
+                textarea.addEventListener('input', saveCurrentDraft);
 
                 textarea.addEventListener('paste', function(e) {
                     var items = (e.clipboardData || e.originalEvent.clipboardData).items;
@@ -704,6 +1155,18 @@
                     }
                 });
             }
+
+            document.addEventListener('keydown', function(e) {
+                var modal = document.getElementById('submitConfirmModal');
+                if (!modal || modal.classList.contains('hidden')) return;
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    confirmShortcutSubmit();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeSubmitConfirm();
+                }
+            });
         });
 
         // --- Sessions ---
