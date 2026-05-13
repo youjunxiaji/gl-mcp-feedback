@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ... import __version__
 from ...debug import web_debug_log as debug_log
@@ -115,6 +115,15 @@ def setup_routes(manager: "WebUIManager"):
                 "version": __version__,
                 "has_session": True,
             },
+        )
+
+    @manager.app.get("/sw.js")
+    async def service_worker():
+        """为 PWA 安装能力提供根作用域 Service Worker。"""
+        return FileResponse(
+            Path(__file__).resolve().parent.parent / "static" / "sw.js",
+            media_type="application/javascript",
+            headers={"Service-Worker-Allowed": "/"},
         )
 
     @manager.app.get("/api/translations")
@@ -755,10 +764,10 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
 
 async def _delayed_server_stop(manager: "WebUIManager"):
     """延迟停止服务器"""
-    import asyncio
+    import asyncio  # noqa: PLC0415
 
     await asyncio.sleep(5)  # 等待 5 秒让前端有时间关闭
-    from ..main import stop_web_ui
+    from ..main import stop_web_ui  # noqa: PLC0415
 
     stop_web_ui()
     debug_log("Web UI 服务器已因用户超时而停止")

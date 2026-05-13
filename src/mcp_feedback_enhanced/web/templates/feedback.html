@@ -18,6 +18,12 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
     <link rel="apple-touch-icon" href="/static/icon.svg">
+    <link rel="manifest" href="/static/manifest.webmanifest">
+    <meta name="theme-color" content="#111620">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="MCP Feedback">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
     <!-- Tailwind CSS (local) -->
     <script src="/static/js/vendor/tailwindcss.js"></script>
@@ -84,6 +90,8 @@
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
         ::selection { background: rgba(59,130,246,0.2); }
+        #sessionTabs { scrollbar-width: none; -ms-overflow-style: none; }
+        #sessionTabs::-webkit-scrollbar { display: none; }
 
         .glow-line::after {
             content: '';
@@ -117,6 +125,8 @@
         .md h2 { font-size: 1.4em; font-weight: 600; color: #e2e8f0; margin: 0.5em 0 0.25em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 4px; }
         .md h3 { font-size: 1.2em; font-weight: 600; color: #e2e8f0; margin: 0.4em 0 0.2em; }
         .md h4 { font-size: 1.05em; font-weight: 600; color: #e2e8f0; margin: 0.35em 0 0.15em; }
+        .md h5 { font-size: 0.95em; font-weight: 600; color: #e2e8f0; margin: 0.3em 0 0.15em; }
+        .md h6 { font-size: 0.85em; font-weight: 600; color: #94a3b8; margin: 0.25em 0 0.12em; text-transform: uppercase; letter-spacing: 0.04em; }
         .md p { margin: 0.4em 0; color: #8494a7; line-height: 1.6; }
         .md ul { padding-left: 1.4em; margin: 0.3em 0; color: #8494a7; list-style-type: disc; }
         .md ol { padding-left: 1.4em; margin: 0.3em 0; color: #8494a7; list-style-type: decimal; }
@@ -127,12 +137,20 @@
         .md em { color: #e2e8f0; }
         .md del, .md s { color: #506078; text-decoration: line-through; }
         .md code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.2em 0.45em; border-radius: 4px; color: #60a5fa; }
-        .md pre { background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
+        .md pre { position: relative; background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
         .md pre code { background: none; padding: 0; color: #e2e8f0; font-size: 0.85em; line-height: 1.55; }
+        .md .copy-code-btn { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: #cbd5e1; background: rgba(15,23,42,0.72); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+        .md pre:hover .copy-code-btn, .md .copy-code-btn:focus-visible { opacity: 0.88; }
+        .md .copy-code-btn:hover { opacity: 1; color: #93c5fd; border-color: rgba(96,165,250,0.45); }
         .md blockquote { border-left: 3px solid #3b82f6; margin: 0.6em 0; padding: 0.5em 1em; background: rgba(59,130,246,0.06); border-radius: 0 8px 8px 0; color: #8494a7; font-style: italic; }
         .md blockquote strong { font-style: normal; }
         .md a { color: #60a5fa; text-decoration: none; }
         .md a:hover { text-decoration: underline; }
+        .md details { border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; margin: 0.6em 0; background: rgba(255,255,255,0.03); }
+        .md summary { cursor: pointer; color: #e2e8f0; font-weight: 600; }
+        .md mark { background: rgba(250,204,21,0.22); color: #fde68a; border-radius: 4px; padding: 0.05em 0.25em; }
+        .md kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.78em; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-bottom-width: 2px; border-radius: 5px; padding: 0.1em 0.35em; color: #e2e8f0; }
+        .md abbr[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
         .md hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 1.2em 0; }
         .md table { width: 100%; border-collapse: collapse; margin: 0.6em 0; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; overflow: hidden; }
         .md th { background: #171d2b; font-weight: 600; color: #e2e8f0; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.06); text-align: left; }
@@ -171,9 +189,12 @@
         html.light .md h2,
         html.light .md h3,
         html.light .md h4,
+        html.light .md h5,
         html.light .md strong,
         html.light .md em,
-        html.light .md li::marker { color: #172033 !important; }
+        html.light .md li::marker,
+        html.light .md summary { color: #172033 !important; }
+        html.light .md h6 { color: #64748b !important; }
         html.light .md p,
         html.light .md ul,
         html.light .md ol,
@@ -188,9 +209,34 @@
         html.light .md code { background: #eef6ff !important; color: #2563eb !important; }
         html.light .md pre { background: #f8fafc !important; border-color: #dbe3ef !important; }
         html.light .md pre code { color: #172033 !important; background: transparent !important; }
+        html.light .md .copy-code-btn { color: #475569 !important; background: rgba(255,255,255,0.82) !important; border-color: #cbd5e1 !important; }
+        html.light .md .copy-code-btn:hover { color: #1d4ed8 !important; border-color: #93c5fd !important; }
         html.light .md blockquote { background: #eff6ff !important; border-left-color: #3b82f6 !important; }
+        html.light .md details { background: #f8fafc !important; border-color: #e2e8f0 !important; }
+        html.light .md mark { background: #fef3c7 !important; color: #92400e !important; }
+        html.light .md kbd { background: #f8fafc !important; border-color: #cbd5e1 !important; color: #172033 !important; }
         html.light .md th { background: #f1f5f9 !important; color: #172033 !important; }
         html.light .md tr:nth-child(2n) { background: #f8fafc !important; }
+        .mobile-input-expand-btn { display: none; }
+
+        @media (max-width: 768px) {
+            body { min-width: 0; }
+            header { padding-left: 12px; padding-right: 12px; }
+            #tabNav { padding-left: 12px; padding-right: 12px; overflow-x: auto; scrollbar-width: none; }
+            #tabNav::-webkit-scrollbar { display: none; }
+            #sessionTabs { position: sticky; top: 0; z-index: 40; padding-left: 12px; padding-right: 12px; overflow-x: auto; }
+            #page-workspace { flex-direction: column; padding: 12px; gap: 12px; overflow: hidden; }
+            #page-workspace .summary-panel { flex: 1 1 auto; min-height: 120px; }
+            #page-workspace .feedback-panel { flex: 0 0 auto; min-height: auto; max-height: min(48vh, calc(100% - 120px)); transform-origin: bottom center; }
+            #page-workspace.input-expanded { display: block; }
+            #page-workspace.input-expanded .summary-panel { display: none; }
+            #page-workspace .feedback-panel.feedback-expanded { height: 100%; max-height: none; min-height: 0; }
+            #page-workspace .feedback-panel > .feedback-input-area { flex: 0 0 auto; min-height: auto; }
+            #feedbackText { min-height: 96px; max-height: 35vh; resize: vertical !important; }
+            #page-workspace .feedback-panel.feedback-expanded > .feedback-input-area { flex: 1 1 auto; min-height: 0; }
+            #page-workspace .feedback-panel.feedback-expanded #feedbackText { flex: 1 1 auto; min-height: 220px; max-height: none; }
+            .mobile-input-expand-btn { display: inline-flex; }
+        }
     </style>
 </head>
 <body class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col overflow-hidden antialiased">
@@ -245,7 +291,7 @@
         <!-- WORKSPACE: fixed left-right layout, always occupying the full area when visible -->
         <div id="page-workspace" class="page flex-1 min-h-0 flex flex-row p-4 sm:p-5 gap-4 overflow-hidden">
             <!-- AI Summary (left) -->
-            <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
+            <div class="summary-panel flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
                     <div class="flex items-baseline gap-2.5 min-w-0">
                         <span class="text-[14px] font-semibold text-slate-300 shrink-0">AI 工作摘要</span>
@@ -257,15 +303,18 @@
             </div>
 
             <!-- Feedback (right) -->
-            <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
+            <div class="feedback-panel flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
                     <div class="flex items-center gap-2.5">
                         <span class="text-[14px] font-semibold text-slate-300">提供反馈</span>
                         <span id="feedbackCountdown" class="font-mono text-[12px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded-full px-2 py-0.5">--s</span>
                         <span id="keepaliveMeta" class="font-mono text-[11px] text-slate-500 bg-surface-overlay border border-white/[0.06] rounded-full px-2 py-0.5">自动 0/3 · 手动 0</span>
                     </div>
+                    <button id="inputExpandBtn" onclick="toggleMobileInputExpand()" title="展开输入区" class="mobile-input-expand-btn w-8 h-8 items-center justify-center text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-full hover:text-blue-300 hover:border-blue-500/30 transition">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                    </button>
                 </div>
-                <div class="flex-1 min-h-0 p-3 flex flex-col gap-2">
+                <div class="feedback-input-area flex-1 min-h-0 p-3 flex flex-col gap-2">
                     <textarea id="feedbackText" class="flex-1 min-h-0 w-full bg-surface-base border border-white/[0.06] rounded-xl px-4 py-3 text-[15px] leading-relaxed text-slate-200 resize-none transition-all outline-none focus:border-blue-500/40 focus:shadow-[0_0_20px_rgba(59,130,246,0.12),inset_0_0_0_1px_rgba(59,130,246,0.4)] placeholder:text-slate-600"
                         placeholder="在这里输入你的反馈...&#10;&#10;按 Ctrl+Enter 快速提交&#10;按 Ctrl+V 粘贴剪贴板图片"></textarea>
                     <div id="imagePreview" class="hidden flex-wrap gap-2"></div>
@@ -522,6 +571,140 @@
                 : 'Interactive Feedback - 反馈收集';
         }
 
+        function renderMarkdown(content) {
+            if (!content) return '';
+            if (typeof marked === 'undefined') return escapeHtml(content);
+            return sanitizeHtml(marked.parse(content));
+        }
+
+        function enhanceMarkdownBlocks(container) {
+            if (!container) return;
+            container.querySelectorAll('pre').forEach(function(pre) {
+                if (pre.querySelector('.copy-code-btn')) return;
+                var code = pre.querySelector('code');
+                var text = code ? code.innerText : pre.innerText;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'copy-code-btn';
+                btn.title = '复制代码';
+                btn.setAttribute('aria-label', '复制代码');
+                btn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                btn.addEventListener('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    copyTextToClipboard(text).then(function() {
+                        btn.title = '已复制';
+                        btn.setAttribute('aria-label', '已复制');
+                        btn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+                        setTimeout(function() {
+                            btn.title = '复制代码';
+                            btn.setAttribute('aria-label', '复制代码');
+                            btn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                        }, 1400);
+                    }).catch(function() {
+                        alert('复制失败，请手动选择代码复制');
+                    });
+                });
+                pre.appendChild(btn);
+            });
+        }
+
+        function copyTextToClipboard(text) {
+            var value = String(text || '');
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.permissions && navigator.permissions.query
+                    ? navigator.permissions.query({ name: 'clipboard-write' }).catch(function() { return null; })
+                        .then(function() { return navigator.clipboard.writeText(value); })
+                    : navigator.clipboard.writeText(value);
+            }
+            return new Promise(function(resolve, reject) {
+                var textarea = document.createElement('textarea');
+                textarea.value = value;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    var ok = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    ok ? resolve() : reject(new Error('copy command failed'));
+                } catch (err) {
+                    document.body.removeChild(textarea);
+                    reject(err);
+                }
+            });
+        }
+
+        function sanitizeHtml(html) {
+            var template = document.createElement('template');
+            template.innerHTML = html;
+
+            var allowedTags = {
+                a: true, abbr: true, b: true, blockquote: true, br: true, code: true, del: true,
+                details: true, div: true, em: true, h1: true, h2: true, h3: true,
+                h4: true, h5: true, h6: true, hr: true, i: true, img: true,
+                kbd: true, li: true, mark: true, ol: true, p: true, pre: true,
+                s: true, span: true, strong: true, sub: true, summary: true,
+                sup: true, table: true, tbody: true, td: true, th: true,
+                thead: true, tr: true, ul: true
+            };
+            var globalAttrs = { title: true };
+            var tagAttrs = {
+                a: { href: true, title: true },
+                img: { src: true, alt: true, title: true },
+                ol: { start: true, type: true },
+                td: { colspan: true, rowspan: true },
+                th: { colspan: true, rowspan: true },
+                details: { open: true }
+            };
+            var blockedTags = { script: true, style: true, iframe: true, object: true, embed: true };
+
+            Array.from(template.content.querySelectorAll('*')).forEach(function(el) {
+                var tag = el.tagName.toLowerCase();
+                if (blockedTags[tag]) {
+                    el.remove();
+                    return;
+                }
+
+                if (!allowedTags[tag]) {
+                    while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+                    el.remove();
+                    return;
+                }
+
+                Array.from(el.attributes).forEach(function(attr) {
+                    var name = attr.name.toLowerCase();
+                    var allowed = globalAttrs[name] || (tagAttrs[tag] && tagAttrs[tag][name]);
+                    if (!allowed || name.indexOf('on') === 0) {
+                        el.removeAttribute(attr.name);
+                        return;
+                    }
+
+                    if ((name === 'href' || name === 'src') && !isSafeUrl(attr.value, name)) {
+                        el.removeAttribute(attr.name);
+                    }
+                });
+
+                if (tag === 'a' && el.getAttribute('href')) {
+                    el.setAttribute('target', '_blank');
+                    el.setAttribute('rel', 'noopener noreferrer');
+                }
+            });
+
+            return template.innerHTML;
+        }
+
+        function isSafeUrl(value, attrName) {
+            var url = String(value || '').trim();
+            if (!url) return false;
+            if (url[0] === '/' || url[0] === '#' || url.indexOf('./') === 0 || url.indexOf('../') === 0) return true;
+            if (/^https?:\/\//i.test(url)) return true;
+            if (attrName === 'href' && /^mailto:/i.test(url)) return true;
+            if (attrName === 'src' && /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(url)) return true;
+            return false;
+        }
+
         // --- Session state + WebSocket ---
         var currentSessionId = '{{ session_id }}';
         var allSessionsCache = [];
@@ -535,6 +718,8 @@
         var audioEnabled = localStorage.getItem('feedbackAudioEnabled') !== 'false';
         var previewImageIndex = -1;
         var editingSessionId = null;
+        var hiddenSessionTabs = {};
+        var deferredInstallPrompt = null;
         var ws = null;
         var wsReady = false;
         var wsReplaced = false;
@@ -546,6 +731,10 @@
 
         function getCurrentSessionInfo() {
             return allSessionsCache.find(function(s) { return s.session_id === currentSessionId; }) || null;
+        }
+
+        function getVisibleSessions(sessions) {
+            return (sessions || []).filter(function(s) { return !hiddenSessionTabs[s.session_id]; });
         }
 
         function formatRemaining(ms) {
@@ -654,7 +843,8 @@
 
             var el = document.getElementById('summaryContent');
             if (el && typeof marked !== 'undefined') {
-                el.innerHTML = marked.parse(sessionInfo.summary || '');
+                el.innerHTML = renderMarkdown(sessionInfo.summary || '');
+                enhanceMarkdownBlocks(el);
                 el.scrollTo({ top: 0, behavior: 'smooth' });
             }
 
@@ -676,17 +866,21 @@
         function renderSessionTabs(sessions) {
             var container = document.getElementById('sessionTabs');
             if (!container) return;
+            var visibleSessions = getVisibleSessions(sessions);
 
-            if (!sessions.length) {
-                container.innerHTML = '<div class="text-xs text-slate-500">暂无会话</div>';
+            if (visibleSessions.length <= 1) {
+                container.innerHTML = '';
+                container.classList.add('hidden');
                 return;
             }
+            container.classList.remove('hidden');
 
-            container.innerHTML = sessions.map(function(s) {
+            container.innerHTML = visibleSessions.map(function(s) {
                 var active = s.session_id === currentSessionId;
                 var waiting = s.can_submit && !s.feedback_completed;
                 var unread = !!unreadSessions[s.session_id] && !active;
                 var label = escapeHtml(s.title || getShortSessionId(s.session_id));
+                var escapedSessionId = escapeHtml(s.session_id);
                 var statusCls = unread ? 'bg-red-400' : (waiting ? 'bg-amber-400' : (s.feedback_completed ? 'bg-emerald-400' : 'bg-slate-500'));
                 var cls = active
                     ? 'bg-surface-overlay text-slate-100 border-blue-500/40 shadow-sm'
@@ -694,16 +888,45 @@
                 if (editingSessionId === s.session_id) {
                     return '<div class="shrink-0 max-w-[260px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
                         '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
-                        '<input id="sessionTitleEditor" value="' + label + '" onkeydown="handleTitleEditKeydown(event, \'' + escapeHtml(s.session_id) + '\')" onblur="commitInlineTitleEdit(\'' + escapeHtml(s.session_id) + '\')" class="w-32 bg-transparent border-none outline-none p-0 text-xs font-medium text-inherit" />' +
+                        '<input id="sessionTitleEditor" value="' + label + '" onkeydown="handleTitleEditKeydown(event, \'' + escapedSessionId + '\')" onblur="commitInlineTitleEdit(\'' + escapedSessionId + '\')" class="w-32 bg-transparent border-none outline-none p-0 text-xs font-medium text-inherit" />' +
                         '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
+                        '<button type="button" onclick="closeSessionTab(event, \'' + escapedSessionId + '\')" title="隐藏标签" class="w-4 h-4 flex items-center justify-center rounded-full text-slate-500 hover:text-red-300 hover:bg-red-400/10 transition">&times;</button>' +
                         '</div>';
                 }
-                return '<button data-session-id="' + escapeHtml(s.session_id) + '" onclick="selectSession(this.dataset.sessionId)" title="' + (active ? '点击编辑标题' : '切换会话') + '" class="shrink-0 max-w-[240px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                return '<div role="button" tabindex="0" data-session-id="' + escapedSessionId + '" onclick="selectSession(this.dataset.sessionId)" onkeydown="handleSessionTabKeydown(event, this.dataset.sessionId)" title="' + (active ? '点击编辑标题' : '切换会话') + '" class="shrink-0 max-w-[260px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition cursor-pointer ' + cls + '">' +
                     '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
                     '<span class="truncate">' + label + '</span>' +
                     '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
-                    '</button>';
+                    '<button type="button" onclick="closeSessionTab(event, \'' + escapedSessionId + '\')" title="隐藏标签" class="w-4 h-4 flex items-center justify-center rounded-full text-slate-500 hover:text-red-300 hover:bg-red-400/10 transition">&times;</button>' +
+                    '</div>';
             }).join('');
+        }
+
+        function handleSessionTabKeydown(event, sessionId) {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            selectSession(sessionId);
+        }
+
+        function closeSessionTab(event, sessionId) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            hiddenSessionTabs[sessionId] = true;
+            delete unreadSessions[sessionId];
+            if (editingSessionId === sessionId) editingSessionId = null;
+
+            if (sessionId === currentSessionId) {
+                var next = getVisibleSessions(allSessionsCache).find(function(s) {
+                    return s.session_id !== sessionId;
+                });
+                if (next) {
+                    selectSession(next.session_id);
+                    return;
+                }
+            }
+            renderSessionTabs(allSessionsCache);
         }
 
         function updateSessionTitle(sessionId, nextTitle) {
@@ -767,6 +990,7 @@
                     allSessionsCache = data.sessions || [];
                     cleanupExpiredDrafts();
                     if (preferredSessionId) {
+                        delete hiddenSessionTabs[preferredSessionId];
                         currentSessionId = preferredSessionId;
                     } else if (!currentSessionId && allSessionsCache.length) {
                         currentSessionId = allSessionsCache[0].session_id;
@@ -790,6 +1014,7 @@
             saveCurrentDraft();
             editingSessionId = null;
             delete unreadSessions[sessionId];
+            delete hiddenSessionTabs[sessionId];
 
             fetch('/api/session/' + encodeURIComponent(sessionId))
                 .then(function(r) { return r.json(); })
@@ -832,6 +1057,7 @@
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
+                    delete hiddenSessionTabs[data.session_info.session_id];
                     if (data.session_info.session_id !== currentSessionId) {
                         unreadSessions[data.session_info.session_id] = true;
                         notifyNewSession(data.session_info);
@@ -844,6 +1070,7 @@
                     return;
                 }
                 if (data.type === 'wait_extended' && data.session_info) {
+                    delete hiddenSessionTabs[data.session_id];
                     allSessionsCache = allSessionsCache.map(function(s) {
                         if (s.session_id !== data.session_id) return s;
                         return Object.assign({}, s, data.session_info);
@@ -1090,6 +1317,49 @@
             playNotifySound();
         }
 
+        // --- App install ---
+        function registerPwaInstall() {
+            if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+                navigator.serviceWorker.register('/sw.js').catch(function() {});
+            }
+
+            window.addEventListener('beforeinstallprompt', function(event) {
+                event.preventDefault();
+                deferredInstallPrompt = event;
+                requestAppInstall();
+            });
+
+            window.addEventListener('appinstalled', function() {
+                deferredInstallPrompt = null;
+            });
+        }
+
+        function isRunningStandalone() {
+            return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+        }
+
+        function requestAppInstall() {
+            if (!deferredInstallPrompt || isRunningStandalone()) return;
+            deferredInstallPrompt.prompt();
+            deferredInstallPrompt.userChoice.then(function() {
+                deferredInstallPrompt = null;
+            }).catch(function() {});
+        }
+
+        function toggleMobileInputExpand() {
+            var workspace = document.getElementById('page-workspace');
+            var panel = document.querySelector('#page-workspace .feedback-panel');
+            var btn = document.getElementById('inputExpandBtn');
+            if (!panel || !btn) return;
+            var expanded = panel.classList.toggle('feedback-expanded');
+            if (workspace) workspace.classList.toggle('input-expanded', expanded);
+            btn.title = expanded ? '收起输入区' : '展开输入区';
+            btn.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+            btn.innerHTML = expanded
+                ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>'
+                : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+        }
+
         // --- Theme + shortcuts ---
         function applyThemeMode(mode) {
             var resolved = mode;
@@ -1264,6 +1534,7 @@
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', function() {
+            registerPwaInstall();
             applyThemeMode(localStorage.getItem('feedbackThemeMode') || 'auto');
             loadShortcutRules();
             setSwitchVisual('notificationToggle', notificationEnabled);
@@ -1278,7 +1549,8 @@
             // Render Markdown summary
             var el = document.getElementById('summaryContent');
             if (el && el.textContent.trim() && typeof marked !== 'undefined') {
-                el.innerHTML = marked.parse(el.textContent);
+                el.innerHTML = renderMarkdown(el.textContent);
+                enhanceMarkdownBlocks(el);
             }
 
             // Load sessions and connect the current session WebSocket
@@ -1419,7 +1691,7 @@
             overlay.className = 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-6';
             overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
 
-            var summaryHtml = s.summary && typeof marked !== 'undefined' ? marked.parse(s.summary) : escapeHtml(s.summary || '无摘要');
+            var summaryHtml = s.summary && typeof marked !== 'undefined' ? renderMarkdown(s.summary) : escapeHtml(s.summary || '无摘要');
             var titleRow = s.title
                 ? '<div class="text-slate-500">标题</div><div class="text-slate-200 font-medium break-all">' + escapeHtml(s.title) + '</div>'
                 : '';
@@ -1446,6 +1718,7 @@
             '</div>';
 
             document.body.appendChild(overlay);
+            enhanceMarkdownBlocks(overlay);
         }
 
         function renderSessions(sessions) {

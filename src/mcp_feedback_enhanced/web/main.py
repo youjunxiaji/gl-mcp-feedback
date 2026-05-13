@@ -1159,6 +1159,12 @@ if __name__ == "__main__":
 4. **列表功能**
    - 无序列表项目
    - 有序列表项目
+5. **HTML 块**
+   <details open>
+   <summary>安全 HTML 块</summary>
+   <p>支援 <mark>高亮</mark>、<kbd>Ctrl</kbd> 等 allowlist 标签。</p>
+   <p><abbr title="Model Context Protocol">MCP</abbr> 工具提示：<span title="用于收集用户交互反馈的 MCP 工具">interactive_feedback</span></p>
+   </details>
 
 ### 📋 技术实作
 
@@ -1171,9 +1177,8 @@ element.innerHTML = renderedContent;
 ### 🔗 相关连结
 
 - [marked.js 官方文档](https://marked.js.org/)
-- [DOMPurify 安全清理](https://github.com/cure53/DOMPurify)
 
-> **注意**: 此功能包含 XSS 防护，使用 DOMPurify 进行 HTML 清理。
+> **注意**: 此功能包含 XSS 防护，使用内建 allowlist 清理 HTML。
 
 ---
 
