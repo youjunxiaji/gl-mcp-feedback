@@ -461,6 +461,26 @@
         </div>
     </div>
 
+    <div id="imagePreviewModal" onclick="closeImagePreview()" class="hidden fixed inset-0 z-[90] items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+        <div onclick="event.stopPropagation()" class="w-[min(960px,calc(100vw-32px))] max-h-[calc(100vh-32px)] flex flex-col bg-surface-raised border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/[0.06] shrink-0">
+                <div class="min-w-0">
+                    <div id="imagePreviewName" class="text-sm font-semibold text-slate-200 truncate">图片预览</div>
+                    <div id="imagePreviewIndex" class="text-xs text-slate-500 font-mono mt-0.5">0 / 0</div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="deletePreviewImage()" class="text-xs font-medium text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-1.5 hover:bg-red-500/15 transition">删除</button>
+                    <button onclick="closeImagePreview()" class="w-8 h-8 flex items-center justify-center text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-lg hover:text-slate-100 transition">x</button>
+                </div>
+            </div>
+            <div class="relative flex-1 min-h-0 flex items-center justify-center bg-surface-base p-4">
+                <button onclick="nextPreviewImage(-1)" class="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-slate-300 bg-surface-overlay/90 border border-white/[0.06] rounded-full hover:text-blue-300 transition">&lt;</button>
+                <img id="imagePreviewLarge" src="" alt="图片预览" class="max-w-full max-h-[calc(100vh-170px)] object-contain rounded-lg">
+                <button onclick="nextPreviewImage(1)" class="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-slate-300 bg-surface-overlay/90 border border-white/[0.06] rounded-full hover:text-blue-300 transition">&gt;</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== SCRIPTS ===== -->
     <script src="/static/js/vendor/marked.min.js"></script>
     <script>
@@ -511,8 +531,10 @@
         var countdownTimer = null;
         var shortcutRules = {};
         var shortcutMode = localStorage.getItem('feedbackShortcutMode') || 'default';
-        var notificationEnabled = localStorage.getItem('feedbackNotificationEnabled') !== 'false';
+        var notificationEnabled = getInitialNotificationEnabled();
         var audioEnabled = localStorage.getItem('feedbackAudioEnabled') !== 'false';
+        var previewImageIndex = -1;
+        var editingSessionId = null;
         var ws = null;
         var wsReady = false;
         var wsReplaced = false;
@@ -637,6 +659,7 @@
             }
 
             updateFeedbackTitle(sessionInfo.title || '');
+            closeImagePreview();
             restoreCurrentDraft();
             updateCountdown(sessionInfo);
 
@@ -668,22 +691,22 @@
                 var cls = active
                     ? 'bg-surface-overlay text-slate-100 border-blue-500/40 shadow-sm'
                     : (unread ? 'bg-red-500/10 text-red-200 border-red-400/40 hover:bg-red-500/15' : 'bg-surface-raised text-slate-500 border-white/[0.06] hover:text-slate-200 hover:border-blue-500/30');
-                return '<div class="shrink-0 flex items-center gap-1">' +
-                    '<button data-session-id="' + escapeHtml(s.session_id) + '" onclick="selectSession(this.dataset.sessionId)" class="max-w-[240px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                if (editingSessionId === s.session_id) {
+                    return '<div class="shrink-0 max-w-[260px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                        '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
+                        '<input id="sessionTitleEditor" value="' + label + '" onkeydown="handleTitleEditKeydown(event, \'' + escapeHtml(s.session_id) + '\')" onblur="commitInlineTitleEdit(\'' + escapeHtml(s.session_id) + '\')" class="w-32 bg-transparent border-none outline-none p-0 text-xs font-medium text-inherit" />' +
+                        '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
+                        '</div>';
+                }
+                return '<button data-session-id="' + escapeHtml(s.session_id) + '" onclick="selectSession(this.dataset.sessionId)" title="' + (active ? '点击编辑标题' : '切换会话') + '" class="shrink-0 max-w-[240px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
                     '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
                     '<span class="truncate">' + label + '</span>' +
                     '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
-                    '</button>' +
-                    '<button title="修改标题" onclick="editSessionTitle(\'' + escapeHtml(s.session_id) + '\')" class="w-7 h-7 flex items-center justify-center text-[11px] text-slate-500 bg-surface-raised border border-white/[0.06] rounded-full hover:text-blue-400 hover:border-blue-500/30 transition">T</button>' +
-                    '</div>';
+                    '</button>';
             }).join('');
         }
 
-        function editSessionTitle(sessionId) {
-            var sessionInfo = allSessionsCache.find(function(s) { return s.session_id === sessionId; });
-            var nextTitle = prompt('请输入会话标题', sessionInfo ? (sessionInfo.title || '') : '');
-            if (nextTitle === null) return;
-
+        function updateSessionTitle(sessionId, nextTitle) {
             fetch('/api/session/' + encodeURIComponent(sessionId) + '/title', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -699,6 +722,42 @@
                     }
                     renderSessionTabs(allSessionsCache);
                 });
+        }
+
+        function startInlineTitleEdit(sessionId) {
+            if (sessionId !== currentSessionId) return;
+            editingSessionId = sessionId;
+            renderSessionTabs(allSessionsCache);
+            setTimeout(function() {
+                var input = document.getElementById('sessionTitleEditor');
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 0);
+        }
+
+        function commitInlineTitleEdit(sessionId) {
+            if (editingSessionId !== sessionId) return;
+            var input = document.getElementById('sessionTitleEditor');
+            var nextTitle = input ? input.value.trim() : '';
+            editingSessionId = null;
+            updateSessionTitle(sessionId, nextTitle);
+        }
+
+        function cancelInlineTitleEdit() {
+            editingSessionId = null;
+            renderSessionTabs(allSessionsCache);
+        }
+
+        function handleTitleEditKeydown(event, sessionId) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitInlineTitleEdit(sessionId);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelInlineTitleEdit();
+            }
         }
 
         function loadSessionTabs(preferredSessionId) {
@@ -725,10 +784,11 @@
 
         function selectSession(sessionId) {
             if (!sessionId || sessionId === currentSessionId) {
-                loadSessionTabs(sessionId);
+                startInlineTitleEdit(sessionId);
                 return;
             }
             saveCurrentDraft();
+            editingSessionId = null;
             delete unreadSessions[sessionId];
 
             fetch('/api/session/' + encodeURIComponent(sessionId))
@@ -831,6 +891,12 @@
             pendingImages.splice(idx, 1);
             saveCurrentDraft();
             renderImagePreviews();
+            if (previewImageIndex === idx) {
+                if (pendingImages.length === 0) closeImagePreview();
+                else showPreviewImage(Math.min(idx, pendingImages.length - 1));
+            } else if (previewImageIndex > idx) {
+                previewImageIndex -= 1;
+            }
         }
 
         function renderImagePreviews() {
@@ -853,11 +919,55 @@
             }
 
             container.innerHTML = pendingImages.map(function(img, i) {
-                return '<div class="relative group">' +
+                return '<div onclick="openImagePreview(' + i + ')" class="relative group cursor-zoom-in">' +
                     '<img src="' + img.data + '" class="w-16 h-16 object-cover rounded-lg border border-white/[0.06]">' +
-                    '<button onclick="removeImage(' + i + ')" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition">&times;</button>' +
+                    '<button onclick="event.stopPropagation(); removeImage(' + i + ')" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition">&times;</button>' +
                     '</div>';
             }).join('');
+        }
+
+        function openImagePreview(index) {
+            if (index < 0 || index >= pendingImages.length) return;
+            var modal = document.getElementById('imagePreviewModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            showPreviewImage(index);
+        }
+
+        function closeImagePreview() {
+            var modal = document.getElementById('imagePreviewModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            previewImageIndex = -1;
+        }
+
+        function showPreviewImage(index) {
+            if (pendingImages.length === 0) {
+                closeImagePreview();
+                return;
+            }
+            var normalized = (index + pendingImages.length) % pendingImages.length;
+            var image = pendingImages[normalized];
+            previewImageIndex = normalized;
+
+            var imgEl = document.getElementById('imagePreviewLarge');
+            var nameEl = document.getElementById('imagePreviewName');
+            var indexEl = document.getElementById('imagePreviewIndex');
+            if (imgEl) imgEl.src = image.data;
+            if (nameEl) nameEl.textContent = image.name || '图片预览';
+            if (indexEl) indexEl.textContent = (normalized + 1) + ' / ' + pendingImages.length;
+        }
+
+        function nextPreviewImage(delta) {
+            if (previewImageIndex < 0 || pendingImages.length === 0) return;
+            showPreviewImage(previewImageIndex + delta);
+        }
+
+        function deletePreviewImage() {
+            if (previewImageIndex < 0) return;
+            removeImage(previewImageIndex);
         }
 
         // --- Wait extension ---
@@ -878,6 +988,12 @@
         }
 
         // --- Notifications ---
+        function getInitialNotificationEnabled() {
+            if (!('Notification' in window)) return false;
+            if (Notification.permission !== 'granted') return false;
+            return localStorage.getItem('feedbackNotificationEnabled') !== 'false';
+        }
+
         function setSwitchVisual(id, enabled) {
             var button = document.getElementById(id);
             if (!button) return;
@@ -889,14 +1005,54 @@
             if (knob) knob.classList.toggle('translate-x-5', enabled);
         }
 
+        function setNotificationEnabled(enabled) {
+            notificationEnabled = !!enabled && 'Notification' in window && Notification.permission === 'granted';
+            localStorage.setItem('feedbackNotificationEnabled', notificationEnabled ? 'true' : 'false');
+            setSwitchVisual('notificationToggle', notificationEnabled);
+        }
+
+        function toggleNotificationSetting() {
+            if (!('Notification' in window)) {
+                setNotificationEnabled(false);
+                alert('当前浏览器不支持桌面通知');
+                return;
+            }
+
+            if (notificationEnabled) {
+                setNotificationEnabled(false);
+                return;
+            }
+
+            if (Notification.permission === 'granted') {
+                setNotificationEnabled(true);
+                new Notification('通知已启用', {
+                    body: '新反馈会话到达时会发送浏览器通知',
+                    tag: 'mcp-feedback-notification-enabled'
+                });
+                return;
+            }
+
+            if (Notification.permission === 'denied') {
+                setNotificationEnabled(false);
+                alert('浏览器已阻止通知，请在站点权限中允许通知');
+                return;
+            }
+
+            Notification.requestPermission().then(function(permission) {
+                var granted = permission === 'granted';
+                setNotificationEnabled(granted);
+                if (granted) {
+                    new Notification('通知已启用', {
+                        body: '新反馈会话到达时会发送浏览器通知',
+                        tag: 'mcp-feedback-notification-enabled'
+                    });
+                }
+            });
+        }
+
         function toggleSettingSwitch(kind) {
             if (kind === 'notification') {
-                notificationEnabled = !notificationEnabled;
-                localStorage.setItem('feedbackNotificationEnabled', notificationEnabled ? 'true' : 'false');
-                if (notificationEnabled && 'Notification' in window && Notification.permission === 'default') {
-                    Notification.requestPermission();
-                }
-                setSwitchVisual('notificationToggle', notificationEnabled);
+                toggleNotificationSetting();
             } else if (kind === 'audio') {
                 audioEnabled = !audioEnabled;
                 localStorage.setItem('feedbackAudioEnabled', audioEnabled ? 'true' : 'false');
@@ -928,6 +1084,8 @@
                     body: sessionInfo.title || getShortSessionId(sessionInfo.session_id),
                     tag: sessionInfo.session_id
                 });
+            } else if (notificationEnabled) {
+                setNotificationEnabled(false);
             }
             playNotifySound();
         }
@@ -950,7 +1108,7 @@
             var btn = document.getElementById('themeToggleBtn');
             if (!btn) return;
             var labels = {
-                auto: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2M12 19v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M3 12h2M19 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/><circle cx="12" cy="12" r="4"/></svg>',
+                auto: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
                 light: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
                 dark: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z"/></svg>'
             };
@@ -1093,6 +1251,7 @@
 
             textarea.value = '';
             pendingImages = [];
+            closeImagePreview();
             clearCurrentDraft();
             renderImagePreviews();
 
@@ -1158,13 +1317,29 @@
 
             document.addEventListener('keydown', function(e) {
                 var modal = document.getElementById('submitConfirmModal');
-                if (!modal || modal.classList.contains('hidden')) return;
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    confirmShortcutSubmit();
-                } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    closeSubmitConfirm();
+                if (modal && !modal.classList.contains('hidden')) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        confirmShortcutSubmit();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeSubmitConfirm();
+                    }
+                    return;
+                }
+
+                var imageModal = document.getElementById('imagePreviewModal');
+                if (imageModal && !imageModal.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeImagePreview();
+                    } else if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        nextPreviewImage(-1);
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        nextPreviewImage(1);
+                    }
                 }
             });
         });
