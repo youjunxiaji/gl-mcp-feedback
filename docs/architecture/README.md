@@ -12,15 +12,16 @@
 | [組件詳細說明](./component-details.md) | 各層級組件的詳細功能和實現 | 開發人員、維護人員 |
 | [交互流程文檔](./interaction-flows.md) | AI 助手與 MCP 服務的完整交互流程 | 集成開發人員 |
 | [API 參考文檔](./api-reference.md) | MCP 工具接口和 WebSocket API 規範 | API 使用者、前端開發 |
+| [并发会话设计说明](./concurrent-sessions.md) | 多个 MCP 反馈会话并行等待与 session 级 WebSocket 设计 | 開發人員、維護人員 |
 | [部署指南](./deployment-guide.md) | 環境配置、部署選項和故障排除 | 運維人員、系統管理員 |
 
 ### 🏗️ 架構概覽
 
-MCP Feedback Enhanced 採用**單一活躍會話 + 持久化 Web UI**的創新架構，實現了 AI 助手與用戶之間的無縫交互體驗。
+MCP Feedback Enhanced 採用**并发会话池 + 持久化 Web UI**架構，實現了 AI 助手與用戶之間的無縫交互體驗。
 
 #### 核心特性
 - **智能環境檢測**: 自動識別 Local/SSH Remote/WSL 環境
-- **單一活躍會話**: 替代傳統多會話管理，提升性能和用戶體驗
+- **并发会话池**: 支援多个 MCP 反馈会话同步等待，并通过会话标签切换
 - **持久化 Web UI**: 支援多次循環調用，無需重複開啟瀏覽器
 - **實時雙向通信**: WebSocket 實現前後端狀態同步
 - **智能資源管理**: 自動清理和會話生命週期管理

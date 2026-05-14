@@ -67,7 +67,10 @@ def init_encoding():
                 stdout_buffer = sys.stdout.detach()  # type: ignore[union-attr]
 
             sys.stdin = io.TextIOWrapper(
-                stdin_buffer, encoding="utf-8", errors="replace", newline=None  # type: ignore[arg-type]
+                stdin_buffer,
+                encoding="utf-8",
+                errors="replace",
+                newline=None,  # type: ignore[arg-type]
             )
             sys.stdout = io.TextIOWrapper(
                 stdout_buffer,  # type: ignore[arg-type]
@@ -348,6 +351,69 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
     return mcp_images
 
 
+def create_keepalive_text(result: dict) -> str:
+    """创建 MCP 保活续等提示，提醒 AI 使用轻量续等工具。"""
+    session_id = result.get("session_id", "")
+    timeout = result.get("timeout", 600)
+    actual_timeout = result.get("actual_timeout", max(int(timeout) - 30, 5))
+    auto_used = result.get("auto_extend_used", 0)
+    auto_max = result.get("auto_extend_max", 3)
+    manual_tokens = result.get("manual_extend_tokens", 0)
+    reason = result.get("keepalive_reason", "auto")
+    return (
+        "=== MCP 保活请求 ===\n"
+        "用户仍在 Web 页面编辑反馈，尚未提交。\n"
+        "请立即调用 continue_feedback_session 继续等待同一个会话，"
+        "不要重发 summary。\n\n"
+        f"session_id: {session_id}\n"
+        f"timeout: {timeout}\n"
+        f"actual_wait_seconds: {actual_timeout}\n"
+        f"reason: {reason}\n"
+        f"auto_extend_used: {auto_used}/{auto_max}\n"
+        f"manual_extend_tokens: {manual_tokens}"
+    )
+
+
+def create_tool_result_from_feedback(result: dict) -> ToolResult:
+    """将 Web 反馈结果转换成 MCP ToolResult。"""
+    config_warnings = result.get("config_warnings") or []
+    warning_text = ""
+    if config_warnings:
+        from .web.hub_client import format_config_guidance
+
+        warning_text = format_config_guidance(config_warnings)
+
+    if result.get("keepalive_request"):
+        text = create_keepalive_text(result)
+        if warning_text:
+            text = f"{warning_text}\n{text}"
+        return ToolResult(content=[TextContent(type="text", text=text)])
+
+    if not result:
+        return ToolResult(content=[TextContent(type="text", text="用户取消了反馈。")])
+
+    save_feedback_to_file(result)
+
+    feedback_items = []
+    if warning_text:
+        feedback_items.append(TextContent(type="text", text=warning_text))
+    if result.get("interactive_feedback"):
+        feedback_text = create_feedback_text(result)
+        feedback_items.append(TextContent(type="text", text=feedback_text))
+        debug_log("文字反馈已添加")
+
+    if result.get("images"):
+        mcp_images = process_images(result["images"])
+        feedback_items.extend(mcp_images)
+        debug_log(f"已添加 {len(mcp_images)} 张图片")
+
+    if not feedback_items:
+        feedback_items.append(TextContent(type="text", text="用户未提供任何反馈内容。"))
+
+    debug_log(f"反馈收集完成，共 {len(feedback_items)} 个项目")
+    return ToolResult(content=feedback_items)
+
+
 # ===== MCP Prompt 定义 =====
 # This prompt only carries the minimal "activate + act now" directive for the
 # current turn. The full interaction contract (when to call, how to write,
@@ -395,7 +461,9 @@ def gl_mcp_feedback() -> str:
 # ===== MCP 工具定义 =====
 @mcp.tool()
 async def interactive_feedback(
-    project_directory: Annotated[str, Field(description="Project directory path.")] = ".",
+    project_directory: Annotated[
+        str, Field(description="Project directory path.")
+    ] = ".",
     summary: Annotated[
         str,
         Field(
@@ -403,7 +471,7 @@ async def interactive_feedback(
                 "Markdown summary of the AI's current work / plan / question, "
                 "rendered in the Web UI. MUST be filled in with substantive "
                 "content; empty strings and placeholder phrases (e.g. "
-                "\"我已完成了您请求的任务。\") are rejected at runtime."
+                '"我已完成了您请求的任务。") are rejected at runtime.'
             )
         ),
     ] = "",
@@ -413,8 +481,8 @@ async def interactive_feedback(
             description=(
                 "Optional short headline (max ~30 chars) for this feedback "
                 "round, displayed in the browser tab and at the top of the "
-                "AI summary panel. Should be concise (e.g. \"需要你提供更多信息\", "
-                "\"修复完成，请验证\"). Leave empty when there's no good headline."
+                'AI summary panel. Should be concise (e.g. "需要你提供更多信息", '
+                '"修复完成，请验证"). Leave empty when there\'s no good headline.'
             )
         ),
     ] = "",
@@ -536,36 +604,7 @@ async def interactive_feedback(
             project_directory, summary, timeout, title=title
         )
 
-        # 处理取消情况
-        if not result:
-            return ToolResult(content=[TextContent(type="text", text="用户取消了反馈。")])
-
-        # 保存详细结果
-        save_feedback_to_file(result)
-
-        # 创建反馈项目列表
-        feedback_items = []
-
-        # 添加文字反馈（图片通过 MCPImage 单独传递，不包含在文本中）
-        if result.get("interactive_feedback"):
-            feedback_text = create_feedback_text(result)
-            feedback_items.append(TextContent(type="text", text=feedback_text))
-            debug_log("文字反馈已添加")
-
-        # 添加图片反馈
-        if result.get("images"):
-            mcp_images = process_images(result["images"])
-            feedback_items.extend(mcp_images)
-            debug_log(f"已添加 {len(mcp_images)} 张图片")
-
-        # 确保至少有一个反馈项目
-        if not feedback_items:
-            feedback_items.append(
-                TextContent(type="text", text="用户未提供任何反馈内容。")
-            )
-
-        debug_log(f"反馈收集完成，共 {len(feedback_items)} 个项目")
-        return ToolResult(content=feedback_items)
+        return create_tool_result_from_feedback(result)
 
     except Exception as e:
         error_id = ErrorHandler.log_error_with_context(
@@ -578,6 +617,46 @@ async def interactive_feedback(
         user_error_msg = ErrorHandler.format_user_error(e, include_technical=False)
         debug_log(f"反馈收集错误 [错误ID: {error_id}]: {e!s}")
 
+        return ToolResult(content=[TextContent(type="text", text=user_error_msg)])
+
+
+@mcp.tool()
+async def continue_feedback_session(
+    session_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Existing Web feedback session id returned by an MCP keepalive "
+                "request. Continue waiting for that session without resending "
+                "summary/title."
+            )
+        ),
+    ],
+    timeout: Annotated[
+        int,
+        Field(
+            description=(
+                "Seconds to wait before returning another keepalive request. "
+                "Use 600 unless the MCP client configuration requires a smaller value."
+            )
+        ),
+    ] = 600,
+) -> ToolResult:
+    """Continue waiting for an existing feedback session without creating a new one."""
+    try:
+        debug_log(f"继续等待 Web 反馈会话: {session_id}, timeout={timeout}")
+        from .web import continue_web_feedback_session as web_continue
+
+        result = await web_continue(session_id, timeout)
+        return create_tool_result_from_feedback(result)
+    except Exception as e:
+        error_id = ErrorHandler.log_error_with_context(
+            e,
+            context={"operation": "反馈会话续等", "session_id": session_id},
+            error_type=ErrorType.SYSTEM,
+        )
+        user_error_msg = ErrorHandler.format_user_error(e, include_technical=False)
+        debug_log(f"反馈会话续等错误 [错误ID: {error_id}]: {e!s}")
         return ToolResult(content=[TextContent(type="text", text=user_error_msg)])
 
 
@@ -646,6 +725,18 @@ def get_system_info() -> str:
             "WSLENV": os.getenv("WSLENV"),
         },
     }
+    try:
+        from .web.hub_client import (
+            format_config_guidance,
+            validate_mcp_web_config,
+        )
+
+        warnings = validate_mcp_web_config()
+        system_info["Web 配置提示"] = warnings
+        if warnings:
+            system_info["Web 配置示例"] = format_config_guidance(warnings)
+    except Exception as e:
+        system_info["Web 配置提示"] = [f"配置诊断失败: {e}"]
 
     return json.dumps(system_info, ensure_ascii=False, indent=2)
 
@@ -681,6 +772,25 @@ def main():
         debug_log("调用 mcp.run()...")
 
     try:
+        if os.getenv("MCP_WEB_ALWAYS_ON", "").lower() in ("true", "1", "yes", "on"):
+            try:
+                from .web.hub_client import (
+                    ensure_hub_running,
+                    is_shared_mode,
+                )
+
+                if is_shared_mode():
+                    import asyncio
+
+                    asyncio.run(ensure_hub_running())
+                else:
+                    from .web import get_web_ui_manager
+
+                    get_web_ui_manager().ensure_server_running()
+                debug_log("MCP_WEB_ALWAYS_ON 已启用，Web 等待页已启动")
+            except Exception as e:
+                debug_log(f"MCP_WEB_ALWAYS_ON 启动失败，继续启动 MCP: {e}")
+
         mcp.run()
     except KeyboardInterrupt:
         if debug_enabled:

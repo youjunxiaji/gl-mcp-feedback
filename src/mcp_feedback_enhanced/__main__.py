@@ -42,13 +42,20 @@ def main():
     # 服务器命令（默认）
     subparsers.add_parser("server", help="启动 MCP 服务器（默认）")
 
+    hub_parser = subparsers.add_parser("web-hub", help=argparse.SUPPRESS)
+    hub_parser.add_argument("--host", default="127.0.0.1")
+    hub_parser.add_argument("--port", type=int, default=8765)
+    hub_parser.add_argument("--token", required=True)
+    hub_parser.add_argument("--idle-timeout", type=int, default=1800)
+    hub_parser.add_argument("--state-file", default="")
+
     # 测试命令
     test_parser = subparsers.add_parser("test", help="执行测试")
     test_parser.add_argument(
         "--web", action="store_true", help="测试 Web UI (自动持续运行)"
     )
     test_parser.add_argument(
-        "--timeout", type=int, default=60, help="测试超时时间 (秒)"
+        "--timeout", type=int, default=600, help="测试超时时间 (秒)"
     )
 
     # 版本命令
@@ -58,6 +65,8 @@ def main():
 
     if args.command == "test":
         run_tests(args)
+    elif args.command == "web-hub":
+        run_web_hub(args)
     elif args.command == "version":
         show_version()
     elif args.command == "server" or args.command is None:
@@ -73,6 +82,63 @@ def run_server():
     from .server import main as server_main
 
     return server_main()
+
+
+def run_web_hub(args):
+    """启动由 MCP client 维护的共享 Web Hub。"""
+    import time
+    from pathlib import Path
+
+    from .web.hub_client import HubConnection, write_hub_state
+    from .web.main import WebUIManager
+    from .web.utils.port_manager import PortManager
+
+    os.environ["MCP_WEB_HUB"] = "true"
+    os.environ["MCP_WEB_HUB_TOKEN"] = args.token
+    os.environ["MCP_WEB_HOST"] = args.host
+    os.environ["MCP_WEB_PORT"] = str(args.port)
+    os.environ["MCP_WEB_PORT_AUTO_CLEANUP"] = "false"
+
+    if not PortManager.is_port_available(args.host, args.port):
+        print(
+            f"Web Hub 端口 {args.host}:{args.port} 已被占用，无法启动 shared Hub。",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    manager = WebUIManager(port=args.port)
+    manager.ensure_server_running()
+
+    connection = HubConnection(
+        url=f"http://{manager.host}:{manager.port}",
+        host=manager.host,
+        port=manager.port,
+        token=args.token,
+        pid=os.getpid(),
+    )
+    write_hub_state(connection)
+
+    state_path = Path(args.state_file) if args.state_file else None
+    idle_timeout = max(int(args.idle_timeout), 0)
+    idle_since = time.time()
+
+    try:
+        while True:
+            has_pending_session = any(
+                not session.feedback_completed.is_set() and not session.is_terminal()
+                for session in manager.sessions.values()
+            )
+            if has_pending_session:
+                idle_since = time.time()
+            elif idle_timeout > 0 and time.time() - idle_since >= idle_timeout:
+                break
+            time.sleep(5)
+    finally:
+        if state_path and state_path.exists():
+            try:
+                state_path.unlink()
+            except OSError:
+                pass
 
 
 def run_tests(args):
@@ -97,7 +163,7 @@ def run_tests(args):
 
     if args.web:
         print("🧪 执行 Web UI 测试...")
-        success = test_web_ui_simple()
+        success = test_web_ui_simple(args.timeout)
         if not success:
             sys.exit(1)
     else:
@@ -108,7 +174,7 @@ def run_tests(args):
         sys.exit(1)
 
 
-def test_web_ui_simple():
+def test_web_ui_simple(timeout: int = 600):
     """简单的 Web UI 测试"""
     try:
         import tempfile
@@ -138,6 +204,9 @@ def test_web_ui_simple():
 验证 **combinedSummaryContent** 区域的 Markdown 语法显示功能
 
 ### ✨ 支援的语法特性
+
+##### 五级标题
+###### 六级标题
 
 #### 文字格式
 - **粗体文字** 使用双星号
@@ -169,38 +238,72 @@ def process_feedback(data):
 
 **有序列表：**
 1. 初始化 Markdown 渲染器
-2. 加载 marked.js 和 DOMPurify
-3. 配置安全选项
+2. 加载 marked.js
+3. 通过内建 allowlist 清理 HTML
 4. 渲染内容
 
 #### 连结和引用
 - 专案连结：[MCP Feedback Enhanced](https://github.com/example/mcp-feedback-enhanced)
 - 文档连结：[Marked.js 官方文档](https://marked.js.org/)
 
-> **重要提示：** 所有 HTML 输出都经过 DOMPurify 清理，确保安全性。
+> **重要提示：** Markdown 与允许的 HTML 块都会经过内建 allowlist 清理。
+
+#### HTML 块范例
+<details open>
+<summary>可展开 HTML 块</summary>
+<div>
+  <p>这里包含 <mark>高亮文字</mark> 和 <kbd>Ctrl</kbd> + <kbd>Enter</kbd>。</p>
+  <p><abbr title="Model Context Protocol">MCP</abbr> 工具提示：<span title="用于收集用户交互反馈的 MCP 工具">interactive_feedback</span></p>
+</div>
+</details>
 
 #### 表格范例
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 标题渲染 | ✅ | 支援 H1-H6 |
-| 代码高亮 | ✅ | 基本语法高亮 |
+| 代码区块 | ✅ | 基础代码块显示 |
 | 列表功能 | ✅ | 有序/无序列表 |
-| 连结处理 | ✅ | 安全连结渲染 |
+| HTML 块 | ✅ | 支援 allowlist 内的安全 HTML |
 
 ---
 
 ### 🔒 安全特性
-- XSS 防护：使用 DOMPurify 清理
-- 白名单标签：仅允许安全的 HTML 标签
+- XSS 防护：使用内建 allowlist 清理
+- 白名单标签：仅允许安全的 HTML 标签与属性
 - URL 验证：限制允许的 URL 协议
 
 ### 📝 测试结果
 如果您能看到上述内容以正确的格式显示，表示 Markdown 渲染功能运作正常！"""
 
-            created_session_id = manager.create_session(temp_dir, markdown_test_content)
+            secondary_markdown_test_content = """# 第二个测试会话
+
+这个会话用于测试多会话标签、横向拖动、隐藏标签和移动端布局。
+
+```bash
+echo "copy from second session"
+```
+
+请尝试关闭其中一个标签，确认它只从顶部标签栏隐藏，不影响会话管理列表。
+"""
+
+            created_session_id = manager.create_session(
+                temp_dir, markdown_test_content, title="Markdown 渲染测试"
+            )
+            second_session_id = manager.create_session(
+                temp_dir, secondary_markdown_test_content, title="移动端标签测试"
+            )
 
             if created_session_id:
                 print("✅ 会话创建成功")
+                for session_id in (created_session_id, second_session_id):
+                    session = manager.get_session(session_id)
+                    if not session:
+                        continue
+                    actual_timeout = session.start_feedback_wait_window(timeout)
+                    print(
+                        f"⏱️  会话 {session_id[:8]} 倒计时已初始化: "
+                        f"{actual_timeout} 秒 (MCP 参数: {timeout} 秒)"
+                    )
 
                 print("🚀 启动 Web 服务器...")
                 manager.start_server()

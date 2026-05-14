@@ -1,0 +1,18 @@
+{
+  "name": "MCP Feedback",
+  "short_name": "Feedback",
+  "description": "Interactive feedback collection UI for MCP agents.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111620",
+  "theme_color": "#111620",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

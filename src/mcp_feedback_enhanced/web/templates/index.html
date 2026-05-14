@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <script>
+        (function() {
+            var mode = localStorage.getItem('feedbackThemeMode') || 'auto';
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var resolved = mode === 'auto' ? (prefersDark ? 'dark' : 'light') : mode;
+            document.documentElement.classList.toggle('dark', resolved === 'dark');
+            document.documentElement.classList.toggle('light', resolved === 'light');
+            document.documentElement.dataset.themeMode = mode;
+        })();
+    </script>
 
     <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
     <link rel="apple-touch-icon" href="/static/icon.svg">
@@ -20,10 +30,10 @@
                     },
                     colors: {
                         surface: {
-                            base: '#0b0e14',
-                            raised: '#111620',
-                            overlay: '#171d2b',
-                            muted: '#1e2636',
+                            base: 'rgb(var(--surface-base) / <alpha-value>)',
+                            raised: 'rgb(var(--surface-raised) / <alpha-value>)',
+                            overlay: 'rgb(var(--surface-overlay) / <alpha-value>)',
+                            muted: 'rgb(var(--surface-muted) / <alpha-value>)',
                         }
                     },
                 }
@@ -54,6 +64,26 @@
         }
     </style>
     <style>
+        :root {
+            --surface-base: 11 14 20;
+            --surface-raised: 17 22 32;
+            --surface-overlay: 23 29 43;
+            --surface-muted: 30 38 54;
+        }
+        html.light {
+            color-scheme: light;
+            --surface-base: 246 248 251;
+            --surface-raised: 255 255 255;
+            --surface-overlay: 241 245 249;
+            --surface-muted: 226 232 240;
+        }
+        html.light body { background: #f6f8fb; color: #172033; }
+        html.light [class*="text-slate-100"],
+        html.light [class*="text-slate-200"],
+        html.light [class*="text-slate-300"] { color: #172033 !important; }
+        html.light [class*="text-slate-400"],
+        html.light [class*="text-slate-500"],
+        html.light [class*="text-slate-600"] { color: #64748b !important; }
         @keyframes breathe {
             0%, 100% { opacity: 0.35; transform: scale(1); }
             50% { opacity: 0.1; transform: scale(1.5); }
@@ -99,6 +129,11 @@
     </div>
 
     <script>
+        function sendPageHeartbeat() {
+            fetch('/api/page-heartbeat', { method: 'POST', keepalive: true })
+                .catch(function() {});
+        }
+
         function checkSession() {
             fetch('/api/status')
                 .then(function(r) { return r.json(); })
@@ -110,6 +145,8 @@
                 .catch(function() {});
         }
 
+        sendPageHeartbeat();
+        setInterval(sendPageHeartbeat, 5000);
         setInterval(checkSession, 3000);
     </script>
 </body>

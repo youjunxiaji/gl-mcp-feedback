@@ -7,12 +7,13 @@
 """
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ... import __version__
 from ...debug import web_debug_log as debug_log
@@ -30,6 +31,76 @@ if TYPE_CHECKING:
 
 def setup_routes(manager: "WebUIManager"):
     """设置路由"""
+
+    def require_hub_auth(request: Request):
+        """校验 managed Web Hub 的本地 API token。"""
+        if not getattr(manager, "hub_token", ""):
+            return None
+        expected = f"Bearer {manager.hub_token}"
+        if request.headers.get("authorization") != expected:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "message": "Invalid hub token"},
+            )
+        return None
+
+    def build_session_info(session) -> dict:
+        """构建前端/API 共用的会话信息。"""
+        source_info = getattr(session, "source_info", {}) or {}
+        source_project_directory = source_info.get(
+            "project_directory", session.project_directory
+        )
+        source_project_name = (
+            source_info.get("project_name")
+            or Path(source_project_directory or session.project_directory).name
+        )
+        return {
+            "session_id": session.session_id,
+            "project_directory": session.project_directory,
+            "source_info": source_info,
+            "source_project_name": source_project_name,
+            "source_project_directory": source_project_directory,
+            "summary": session.summary,
+            "title": session.title,
+            "status": session.status.value,
+            "status_message": session.status_message,
+            "created_at": int(session.created_at * 1000),
+            "last_activity": int(session.last_activity * 1000),
+            "feedback_completed": session.feedback_completed.is_set(),
+            "images_count": len(session.images),
+            "has_websocket": session.websocket is not None,
+            "is_current": session == manager.current_session,
+            "can_submit": not session.feedback_completed.is_set()
+            and not session.is_terminal(),
+            "user_messages": session.user_messages,
+            "feedback_timeout_seconds": session.feedback_timeout_seconds,
+            "feedback_actual_timeout_seconds": session.feedback_actual_timeout_seconds,
+            "feedback_deadline_at": (
+                int(session.feedback_deadline_at * 1000)
+                if session.feedback_deadline_at
+                else None
+            ),
+            "keepalive_auto_extend_max": session.keepalive_auto_extend_max,
+            "keepalive_auto_extend_used": session.keepalive_auto_extend_used,
+            "keepalive_manual_extend_tokens": session.keepalive_manual_extend_tokens,
+            "keepalive_last_reason": session.keepalive_last_reason,
+        }
+
+    def build_session_status_response() -> dict:
+        """构建当前会话状态响应，同时兼容 /api/status 和 /api/session-status。"""
+        current_session = manager.get_current_session()
+        if not current_session:
+            return {
+                "has_session": False,
+                "status": "no_session",
+                "messageCode": get_msg_code("no_active_session"),
+            }
+
+        return {
+            "has_session": True,
+            "status": "active",
+            "session_info": build_session_info(current_session),
+        }
 
     @manager.app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -70,6 +141,15 @@ def setup_routes(manager: "WebUIManager"):
             },
         )
 
+    @manager.app.get("/sw.js")
+    async def service_worker():
+        """为 PWA 安装能力提供根作用域 Service Worker。"""
+        return FileResponse(
+            Path(__file__).resolve().parent.parent / "static" / "sw.js",
+            media_type="application/javascript",
+            headers={"Service-Worker-Allowed": "/"},
+        )
+
     @manager.app.get("/api/translations")
     async def get_translations():
         """获取翻译数据 - 从 Web 专用翻译档案加载"""
@@ -99,39 +179,117 @@ def setup_routes(manager: "WebUIManager"):
         debug_log(f"Web 翻译 API 返回 {len(translations)} 种语言的数据")
         return JSONResponse(content=translations)
 
+    @manager.app.get("/api/hub/health")
+    async def hub_health(request: Request):
+        """Managed Web Hub 健康检查。"""
+        auth_error = require_hub_auth(request)
+        if auth_error:
+            return auth_error
+        return JSONResponse(
+            content={
+                "app": "gl-mcp-feedback",
+                "hub": bool(getattr(manager, "is_hub", False)),
+                "version": __version__,
+                "pid": os.getpid(),
+                "host": manager.host,
+                "port": manager.port,
+                "active_sessions": len(manager.sessions),
+            }
+        )
+
+    @manager.app.post("/api/page-heartbeat")
+    async def page_heartbeat():
+        """记录浏览器页面存活，覆盖等待页尚未建立 WebSocket 的场景。"""
+        manager._page_last_seen_at = time.time()
+        current_session = manager.get_current_session()
+        return JSONResponse(
+            content={
+                "ok": True,
+                "session_count": len(manager.sessions),
+                "current_session_id": (
+                    current_session.session_id if current_session else None
+                ),
+            }
+        )
+
+    @manager.app.post("/api/hub/sessions")
+    async def hub_create_session(request: Request):
+        """跨进程注册反馈会话到 managed Web Hub。"""
+        auth_error = require_hub_auth(request)
+        if auth_error:
+            return auth_error
+
+        data = await request.json()
+        project_directory = data.get("project_directory") or "."
+        source = data.get("source") or {}
+        source.setdefault("project_directory", project_directory)
+        session_id = manager.create_session(
+            project_directory,
+            data.get("summary") or "",
+            title=data.get("title") or "",
+            session_id=data.get("session_id"),
+            source_info=source,
+        )
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "session_create_failed"},
+            )
+
+        timeout = int(data.get("timeout") or 600)
+        session.start_feedback_wait_window(timeout)
+        await manager.notify_existing_tab_to_refresh()
+        if os.getenv("MCP_TEST_MODE", "").lower() != "true":
+            await manager.smart_open_browser(manager.get_server_url())
+        return JSONResponse(
+            content={
+                "session_id": session_id,
+                "web_url": manager.get_server_url(),
+                "session_info": build_session_info(session),
+            }
+        )
+
+    @manager.app.post("/api/hub/sessions/{session_id}/wait")
+    async def hub_wait_session(session_id: str, request: Request):
+        """Long-poll 等待 managed Hub 中的反馈结果。"""
+        auth_error = require_hub_auth(request)
+        if auth_error:
+            return auth_error
+
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "session_not_found", "session_id": session_id},
+            )
+
+        data = await request.json()
+        timeout = int(data.get("timeout") or 600)
+        try:
+            result = await session.wait_for_feedback(timeout)
+            return JSONResponse(content=result)
+        except TimeoutError as exc:
+            return JSONResponse(
+                status_code=408,
+                content={"error": "timeout", "message": str(exc)},
+            )
+        except Exception as exc:
+            debug_log(f"Hub 等待会话 {session_id} 失败: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "wait_failed", "message": str(exc)},
+            )
+
     @manager.app.get("/api/session-status")
     async def get_session_status(request: Request):
         """获取当前会话状态"""
-        current_session = manager.get_current_session()
+        return JSONResponse(content=build_session_status_response())
 
-        # 从请求头获取客户端语言
-        lang = (
-            request.headers.get("Accept-Language", "zh-TW").split(",")[0].split("-")[0]
-        )
-        if lang == "zh":
-            lang = "zh-TW"
-
-        if not current_session:
-            return JSONResponse(
-                content={
-                    "has_session": False,
-                    "status": "no_session",
-                    "messageCode": get_msg_code("no_active_session"),
-                }
-            )
-
-        return JSONResponse(
-            content={
-                "has_session": True,
-                "status": "active",
-                "session_info": {
-                    "project_directory": current_session.project_directory,
-                    "summary": current_session.summary,
-                    "title": current_session.title,
-                    "feedback_completed": current_session.feedback_completed.is_set(),
-                },
-            }
-        )
+    @manager.app.get("/api/status")
+    async def get_status(request: Request):
+        """等待页兼容状态接口。"""
+        return JSONResponse(content=build_session_status_response())
 
     @manager.app.get("/api/current-session")
     async def get_current_session(request: Request):
@@ -149,16 +307,42 @@ def setup_routes(manager: "WebUIManager"):
                 },
             )
 
-        return JSONResponse(
-            content={
-                "session_id": current_session.session_id,
-                "project_directory": current_session.project_directory,
-                "summary": current_session.summary,
-                "title": current_session.title,
-                "feedback_completed": current_session.feedback_completed.is_set(),
-                "images_count": len(current_session.images),
-            }
-        )
+        return JSONResponse(content=build_session_info(current_session))
+
+    @manager.app.get("/api/session/{session_id}")
+    async def get_session_detail(session_id: str):
+        """获取指定会话详细信息。"""
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "Session not found",
+                    "messageCode": get_msg_code("no_active_session"),
+                },
+            )
+
+        return JSONResponse(content=build_session_info(session))
+
+    @manager.app.post("/api/session/{session_id}/title")
+    async def update_session_title(session_id: str, request: Request):
+        """更新指定会话标题，便于前端标签分辨。"""
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "Session not found",
+                    "messageCode": get_msg_code("no_active_session"),
+                },
+            )
+
+        data = await request.json()
+        title = str(data.get("title", "")).strip()[:80]
+        session.title = title
+        session.last_activity = time.time()
+
+        return JSONResponse(content=build_session_info(session))
 
     @manager.app.get("/api/all-sessions")
     async def get_all_sessions(request: Request):
@@ -168,21 +352,7 @@ def setup_routes(manager: "WebUIManager"):
             sessions_data = []
 
             for session_id, session in manager.sessions.items():
-                session_info = {
-                    "session_id": session.session_id,
-                    "project_directory": session.project_directory,
-                    "summary": session.summary,
-                    "title": session.title,
-                    "status": session.status.value,
-                    "status_message": session.status_message,
-                    "created_at": int(session.created_at * 1000),
-                    "last_activity": int(session.last_activity * 1000),
-                    "feedback_completed": session.feedback_completed.is_set(),
-                    "has_websocket": session.websocket is not None,
-                    "is_current": session == manager.current_session,
-                    "user_messages": session.user_messages,
-                }
-                sessions_data.append(session_info)
+                sessions_data.append(build_session_info(session))
 
             # 按创建时间排序（最新的在前）
             sessions_data.sort(key=lambda x: x["created_at"], reverse=True)
@@ -240,31 +410,50 @@ def setup_routes(manager: "WebUIManager"):
 
     @manager.app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket, lang: str = "zh-TW"):
-        """WebSocket 端点 - 重构后移除 session_id 依赖"""
-        # 获取当前活跃会话
+        """旧版 WebSocket 端点，默认连接最近会话。"""
         session = manager.get_current_session()
         if not session:
             await websocket.close(code=4004, reason="No active session")
             return
 
+        await connect_session_websocket(websocket, session, lang)
+
+    @manager.app.websocket("/ws/{session_id}")
+    async def websocket_session_endpoint(
+        websocket: WebSocket, session_id: str, lang: str = "zh-TW"
+    ):
+        """按 session_id 绑定的 WebSocket 端点。"""
+        session = manager.get_session(session_id)
+        if not session:
+            await websocket.close(code=4004, reason="Session not found")
+            return
+
+        await connect_session_websocket(websocket, session, lang)
+
+    async def connect_session_websocket(websocket: WebSocket, session, lang: str):
+        """建立指定会话的 WebSocket 连接。"""
         await websocket.accept()
 
         debug_log(f"WebSocket 连接建立，语言由前端处理: {lang}")
 
         old_websocket = session.websocket
         if old_websocket and old_websocket != websocket:
-            debug_log("会话已有 WebSocket 连接，通知旧连接让位后替换")
+            debug_log("会话已有 WebSocket 连接，通知同会话旧连接让位后替换")
             try:
-                await old_websocket.send_json({
-                    "type": "connection_replaced",
-                    "messageCode": get_msg_code("connection_replaced"),
-                })
-                await old_websocket.close(code=4001, reason="Replaced by new connection")
+                await old_websocket.send_json(
+                    {
+                        "type": "connection_replaced",
+                        "messageCode": get_msg_code("connection_replaced"),
+                    }
+                )
+                await old_websocket.close(
+                    code=4001, reason="Replaced by new connection"
+                )
             except Exception as e:
                 debug_log(f"关闭旧 WebSocket 连接时出错（可忽略）: {e}")
 
         session.websocket = websocket
-        debug_log(f"WebSocket 连接建立: 当前活跃会话 {session.session_id}")
+        debug_log(f"WebSocket 连接建立: 会话 {session.session_id}")
 
         # 发送连接成功消息
         try:
@@ -283,12 +472,7 @@ def setup_routes(manager: "WebUIManager"):
                         "type": "session_updated",
                         "action": "new_session_created",
                         "messageCode": get_msg_code("new_session_created"),
-                        "session_info": {
-                            "project_directory": session.project_directory,
-                            "summary": session.summary,
-                            "title": session.title,
-                            "session_id": session.session_id,
-                        },
+                        "session_info": build_session_info(session),
                     }
                 )
                 manager._pending_session_update = False
@@ -308,15 +492,15 @@ def setup_routes(manager: "WebUIManager"):
                 data = await websocket.receive_text()
                 message = json.loads(data)
 
-                current_session = manager.get_current_session()
-                if current_session:
-                    if current_session.websocket == websocket:
-                        await handle_websocket_message(manager, current_session, message)
+                active_session = manager.get_session(session.session_id)
+                if active_session:
+                    if active_session.websocket == websocket:
+                        await handle_websocket_message(manager, active_session, message)
                     else:
-                        debug_log("此 WebSocket 已被新连接替代，关闭当前连接")
+                        debug_log("此会话 WebSocket 已被新连接替代，关闭当前连接")
                         break
                 else:
-                    debug_log("没有活跃会话，关闭 WebSocket 连接")
+                    debug_log("会话已不存在，关闭 WebSocket 连接")
                     break
 
         except WebSocketDisconnect:
@@ -326,9 +510,9 @@ def setup_routes(manager: "WebUIManager"):
         except Exception as e:
             debug_log(f"WebSocket 错误: {e}")
         finally:
-            current_session = manager.get_current_session()
-            if current_session and current_session.websocket == websocket:
-                current_session.websocket = None
+            active_session = manager.get_session(session.session_id)
+            if active_session and active_session.websocket == websocket:
+                active_session.websocket = None
                 debug_log("已清理会话中的 WebSocket 连接")
 
     @manager.app.post("/api/save-settings")
@@ -669,6 +853,36 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
             )
         else:
             session.update_timeout_settings(enabled=False)
+
+    elif message_type == "extend_wait":
+        debug_log(f"收到手动延长等待请求: {session.session_id}")
+        session.add_manual_keepalive_extension()
+        if session.websocket:
+            await session.websocket.send_json(
+                {
+                    "type": "wait_extended",
+                    "session_id": session.session_id,
+                    "session_info": {
+                        "session_id": session.session_id,
+                        "feedback_timeout_seconds": session.feedback_timeout_seconds,
+                        "feedback_actual_timeout_seconds": (
+                            session.feedback_actual_timeout_seconds
+                        ),
+                        "feedback_deadline_at": (
+                            int(session.feedback_deadline_at * 1000)
+                            if session.feedback_deadline_at
+                            else None
+                        ),
+                        "keepalive_auto_extend_max": session.keepalive_auto_extend_max,
+                        "keepalive_auto_extend_used": (
+                            session.keepalive_auto_extend_used
+                        ),
+                        "keepalive_manual_extend_tokens": (
+                            session.keepalive_manual_extend_tokens
+                        ),
+                    },
+                }
+            )
 
     else:
         debug_log(f"未知的消息类型: {message_type}")

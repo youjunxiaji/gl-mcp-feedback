@@ -4,10 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <script>
+        (function() {
+            var mode = localStorage.getItem('feedbackThemeMode') || 'auto';
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var resolved = mode === 'auto' ? (prefersDark ? 'dark' : 'light') : mode;
+            document.documentElement.classList.toggle('dark', resolved === 'dark');
+            document.documentElement.classList.toggle('light', resolved === 'light');
+            document.documentElement.dataset.themeMode = mode;
+        })();
+    </script>
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
     <link rel="apple-touch-icon" href="/static/icon.svg">
+    <link rel="manifest" href="/static/manifest.webmanifest">
+    <meta name="theme-color" content="#111620">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="MCP Feedback">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
     <!-- Tailwind CSS (local) -->
     <script src="/static/js/vendor/tailwindcss.js"></script>
@@ -22,10 +38,10 @@
                     },
                     colors: {
                         surface: {
-                            base: '#0b0e14',
-                            raised: '#111620',
-                            overlay: '#171d2b',
-                            muted: '#1e2636',
+                            base: 'rgb(var(--surface-base) / <alpha-value>)',
+                            raised: 'rgb(var(--surface-raised) / <alpha-value>)',
+                            overlay: 'rgb(var(--surface-overlay) / <alpha-value>)',
+                            muted: 'rgb(var(--surface-muted) / <alpha-value>)',
                         }
                     },
                 }
@@ -56,11 +72,26 @@
         }
     </style>
     <style>
+        :root {
+            --surface-base: 11 14 20;
+            --surface-raised: 17 22 32;
+            --surface-overlay: 23 29 43;
+            --surface-muted: 30 38 54;
+        }
+        html.light {
+            color-scheme: light;
+            --surface-base: 246 248 251;
+            --surface-raised: 255 255 255;
+            --surface-overlay: 241 245 249;
+            --surface-muted: 226 232 240;
+        }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
         ::selection { background: rgba(59,130,246,0.2); }
+        #sessionTabs { scrollbar-width: none; -ms-overflow-style: none; }
+        #sessionTabs::-webkit-scrollbar { display: none; }
 
         .glow-line::after {
             content: '';
@@ -94,6 +125,8 @@
         .md h2 { font-size: 1.4em; font-weight: 600; color: #e2e8f0; margin: 0.5em 0 0.25em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 4px; }
         .md h3 { font-size: 1.2em; font-weight: 600; color: #e2e8f0; margin: 0.4em 0 0.2em; }
         .md h4 { font-size: 1.05em; font-weight: 600; color: #e2e8f0; margin: 0.35em 0 0.15em; }
+        .md h5 { font-size: 0.95em; font-weight: 600; color: #e2e8f0; margin: 0.3em 0 0.15em; }
+        .md h6 { font-size: 0.85em; font-weight: 600; color: #94a3b8; margin: 0.25em 0 0.12em; text-transform: uppercase; letter-spacing: 0.04em; }
         .md p { margin: 0.4em 0; color: #8494a7; line-height: 1.6; }
         .md ul { padding-left: 1.4em; margin: 0.3em 0; color: #8494a7; list-style-type: disc; }
         .md ol { padding-left: 1.4em; margin: 0.3em 0; color: #8494a7; list-style-type: decimal; }
@@ -104,18 +137,106 @@
         .md em { color: #e2e8f0; }
         .md del, .md s { color: #506078; text-decoration: line-through; }
         .md code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.2em 0.45em; border-radius: 4px; color: #60a5fa; }
-        .md pre { background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
+        .md pre { position: relative; background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
         .md pre code { background: none; padding: 0; color: #e2e8f0; font-size: 0.85em; line-height: 1.55; }
+        .md .copy-code-btn { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: #cbd5e1; background: rgba(15,23,42,0.72); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+        .md pre:hover .copy-code-btn, .md .copy-code-btn:focus-visible { opacity: 0.88; }
+        .md .copy-code-btn:hover { opacity: 1; color: #93c5fd; border-color: rgba(96,165,250,0.45); }
         .md blockquote { border-left: 3px solid #3b82f6; margin: 0.6em 0; padding: 0.5em 1em; background: rgba(59,130,246,0.06); border-radius: 0 8px 8px 0; color: #8494a7; font-style: italic; }
         .md blockquote strong { font-style: normal; }
         .md a { color: #60a5fa; text-decoration: none; }
         .md a:hover { text-decoration: underline; }
+        .md details { border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px; margin: 0.6em 0; background: rgba(255,255,255,0.03); }
+        .md summary { cursor: pointer; color: #e2e8f0; font-weight: 600; }
+        .md mark { background: rgba(250,204,21,0.22); color: #fde68a; border-radius: 4px; padding: 0.05em 0.25em; }
+        .md kbd { font-family: 'JetBrains Mono', monospace; font-size: 0.78em; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-bottom-width: 2px; border-radius: 5px; padding: 0.1em 0.35em; color: #e2e8f0; }
+        .md abbr[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
         .md hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 1.2em 0; }
         .md table { width: 100%; border-collapse: collapse; margin: 0.6em 0; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; overflow: hidden; }
         .md th { background: #171d2b; font-weight: 600; color: #e2e8f0; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.06); text-align: left; }
         .md td { padding: 6px 12px; border: 1px solid rgba(255,255,255,0.06); color: #8494a7; }
         .md tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
         .md > *:first-child { margin-top: 0; }
+
+        html.light body { background: #f6f8fb; color: #172033; }
+        html.light ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); }
+        html.light ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.55); }
+        html.light [class*="border-white"] { border-color: #e2e8f0 !important; }
+        html.light [class*="ring-white"] { --tw-ring-color: rgba(15, 23, 42, 0.1) !important; }
+        html.light [class*="text-slate-100"],
+        html.light [class*="text-slate-200"],
+        html.light [class*="text-slate-300"] { color: #172033 !important; }
+        html.light [class*="text-slate-400"],
+        html.light [class*="text-slate-500"],
+        html.light [class*="text-slate-600"] { color: #64748b !important; }
+        html.light textarea,
+        html.light input,
+        html.light select {
+            color: #172033 !important;
+            background: #ffffff !important;
+            border-color: #cbd5e1 !important;
+        }
+        html.light select option { background: #ffffff; color: #172033; }
+        html.light textarea::placeholder,
+        html.light input::placeholder { color: #94a3b8 !important; }
+        html.light .tab-active-dot,
+        html.light .tab-btn:hover { background: #eaf2ff !important; color: #1d4ed8 !important; }
+        html.light .glow-line::after {
+            background: linear-gradient(90deg, transparent, #93c5fd, transparent) !important;
+            opacity: 0.7 !important;
+        }
+        html.light .md h1,
+        html.light .md h2,
+        html.light .md h3,
+        html.light .md h4,
+        html.light .md h5,
+        html.light .md strong,
+        html.light .md em,
+        html.light .md li::marker,
+        html.light .md summary { color: #172033 !important; }
+        html.light .md h6 { color: #64748b !important; }
+        html.light .md p,
+        html.light .md ul,
+        html.light .md ol,
+        html.light .md td,
+        html.light .md blockquote { color: #475569 !important; }
+        html.light .md h1,
+        html.light .md h2,
+        html.light .md hr,
+        html.light .md table,
+        html.light .md th,
+        html.light .md td { border-color: #e2e8f0 !important; }
+        html.light .md code { background: #eef6ff !important; color: #2563eb !important; }
+        html.light .md pre { background: #f8fafc !important; border-color: #dbe3ef !important; }
+        html.light .md pre code { color: #172033 !important; background: transparent !important; }
+        html.light .md .copy-code-btn { color: #475569 !important; background: rgba(255,255,255,0.82) !important; border-color: #cbd5e1 !important; }
+        html.light .md .copy-code-btn:hover { color: #1d4ed8 !important; border-color: #93c5fd !important; }
+        html.light .md blockquote { background: #eff6ff !important; border-left-color: #3b82f6 !important; }
+        html.light .md details { background: #f8fafc !important; border-color: #e2e8f0 !important; }
+        html.light .md mark { background: #fef3c7 !important; color: #92400e !important; }
+        html.light .md kbd { background: #f8fafc !important; border-color: #cbd5e1 !important; color: #172033 !important; }
+        html.light .md th { background: #f1f5f9 !important; color: #172033 !important; }
+        html.light .md tr:nth-child(2n) { background: #f8fafc !important; }
+        .mobile-input-expand-btn { display: none; }
+
+        @media (max-width: 768px) {
+            body { min-width: 0; }
+            header { padding-left: 12px; padding-right: 12px; }
+            #tabNav { padding-left: 12px; padding-right: 12px; overflow-x: auto; scrollbar-width: none; }
+            #tabNav::-webkit-scrollbar { display: none; }
+            #sessionTabs { position: sticky; top: 0; z-index: 40; padding-left: 12px; padding-right: 12px; overflow-x: auto; }
+            #page-workspace { flex-direction: column; padding: 12px; gap: 12px; overflow: hidden; }
+            #page-workspace .summary-panel { flex: 1 1 auto; min-height: 120px; }
+            #page-workspace .feedback-panel { flex: 0 0 auto; min-height: auto; max-height: min(48vh, calc(100% - 120px)); transform-origin: bottom center; }
+            #page-workspace.input-expanded { display: block; }
+            #page-workspace.input-expanded .summary-panel { display: none; }
+            #page-workspace .feedback-panel.feedback-expanded { height: 100%; max-height: none; min-height: 0; }
+            #page-workspace .feedback-panel > .feedback-input-area { flex: 0 0 auto; min-height: auto; }
+            #feedbackText { min-height: 96px; max-height: 35vh; resize: vertical !important; }
+            #page-workspace .feedback-panel.feedback-expanded > .feedback-input-area { flex: 1 1 auto; min-height: 0; }
+            #page-workspace .feedback-panel.feedback-expanded #feedbackText { flex: 1 1 auto; min-height: 220px; max-height: none; }
+            .mobile-input-expand-btn { display: inline-flex; }
+        }
     </style>
 </head>
 <body class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col overflow-hidden antialiased">
@@ -129,15 +250,20 @@
             </div>
             <div class="flex items-center gap-2.5 text-xs text-slate-500">
                 <span title="{{ project_directory }}" class="hidden sm:inline font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition truncate max-w-[300px]">{{ project_directory }}</span>
-                <span class="font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition">{{ session_id[:8] if session_id else '--' }}</span>
+                <span id="sessionBadge" class="font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition">{{ session_id[:8] if session_id else '--' }}</span>
             </div>
         </div>
-        <div id="connStatus" class="flex items-center gap-1.5 text-xs font-medium text-amber-400">
-            <div id="connDot" class="relative w-[7px] h-[7px]">
-                <div id="connDotInner" class="absolute inset-0 rounded-full bg-amber-400"></div>
-                <div id="connDotPulse" class="absolute -inset-[3px] rounded-full bg-amber-400 opacity-30 animate-[breathe_2.5s_ease-in-out_infinite]"></div>
+        <div class="flex items-center gap-3">
+            <button id="themeToggleBtn" onclick="cycleThemeMode()" title="切换主题" class="w-8 h-8 flex items-center justify-center text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-full hover:text-blue-400 hover:border-blue-500/30 transition">
+                <span class="font-mono text-xs">A</span>
+            </button>
+            <div id="connStatus" class="flex items-center gap-1.5 text-xs font-medium text-amber-400">
+                <div id="connDot" class="relative w-[7px] h-[7px]">
+                    <div id="connDotInner" class="absolute inset-0 rounded-full bg-amber-400"></div>
+                    <div id="connDotPulse" class="absolute -inset-[3px] rounded-full bg-amber-400 opacity-30 animate-[breathe_2.5s_ease-in-out_infinite]"></div>
+                </div>
+                <span id="connText">连接中...</span>
             </div>
-            <span id="connText">连接中...</span>
         </div>
     </header>
 
@@ -154,13 +280,18 @@
                 data-tab="about">关于</button>
     </nav>
 
+    <!-- ===== SESSION TABS ===== -->
+    <div id="sessionTabs" class="flex items-center gap-2 px-5 py-2 bg-surface-base border-b border-white/[0.06] overflow-x-auto shrink-0">
+        <div class="text-xs text-slate-500">会话加载中...</div>
+    </div>
+
     <!-- ===== CONTENT AREA: flex-1, min-h-0 so children can fill ===== -->
     <div class="flex-1 min-h-0 flex flex-col">
 
         <!-- WORKSPACE: fixed left-right layout, always occupying the full area when visible -->
         <div id="page-workspace" class="page flex-1 min-h-0 flex flex-row p-4 sm:p-5 gap-4 overflow-hidden">
             <!-- AI Summary (left) -->
-            <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
+            <div class="summary-panel flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
                     <div class="flex items-baseline gap-2.5 min-w-0">
                         <span class="text-[14px] font-semibold text-slate-300 shrink-0">AI 工作摘要</span>
@@ -172,11 +303,18 @@
             </div>
 
             <!-- Feedback (right) -->
-            <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
+            <div class="feedback-panel flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
-                    <span class="text-[14px] font-semibold text-slate-300">提供反馈</span>
+                    <div class="flex items-center gap-2.5">
+                        <span class="text-[14px] font-semibold text-slate-300">提供反馈</span>
+                        <span id="feedbackCountdown" class="font-mono text-[12px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 rounded-full px-2 py-0.5">--s</span>
+                        <span id="keepaliveMeta" class="font-mono text-[11px] text-slate-500 bg-surface-overlay border border-white/[0.06] rounded-full px-2 py-0.5">自动 0/3 · 手动 0</span>
+                    </div>
+                    <button id="inputExpandBtn" onclick="toggleMobileInputExpand()" title="展开输入区" class="mobile-input-expand-btn w-8 h-8 items-center justify-center text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-full hover:text-blue-300 hover:border-blue-500/30 transition">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+                    </button>
                 </div>
-                <div class="flex-1 min-h-0 p-3 flex flex-col gap-2">
+                <div class="feedback-input-area flex-1 min-h-0 p-3 flex flex-col gap-2">
                     <textarea id="feedbackText" class="flex-1 min-h-0 w-full bg-surface-base border border-white/[0.06] rounded-xl px-4 py-3 text-[15px] leading-relaxed text-slate-200 resize-none transition-all outline-none focus:border-blue-500/40 focus:shadow-[0_0_20px_rgba(59,130,246,0.12),inset_0_0_0_1px_rgba(59,130,246,0.4)] placeholder:text-slate-600"
                         placeholder="在这里输入你的反馈...&#10;&#10;按 Ctrl+Enter 快速提交&#10;按 Ctrl+V 粘贴剪贴板图片"></textarea>
                     <div id="imagePreview" class="hidden flex-wrap gap-2"></div>
@@ -189,12 +327,15 @@
                             附件图片
                         </button>
                         <span id="imageCount" class="hidden text-xs text-blue-400"></span>
-                        <span class="text-xs text-slate-600"><kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">⌘</kbd> + <kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">Enter</kbd> 提交</span>
+                        <span id="shortcutHint" class="text-xs text-slate-600"><kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">⌘</kbd> + <kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">Enter</kbd> 提交</span>
                     </div>
-                    <button id="submitBtn" onclick="submitFeedback()" class="text-[14px] font-semibold text-white bg-gradient-to-br from-blue-500 to-violet-500 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all relative overflow-hidden group">
-                        <span class="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></span>
-                        <span class="relative">提交反馈</span>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button id="extendWaitBtn" onclick="extendWait()" class="text-xs font-medium text-amber-300 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3.5 py-2.5 hover:bg-amber-400/15 transition">延长等待</button>
+                        <button id="submitBtn" onclick="submitFeedback()" class="text-[14px] font-semibold text-white bg-gradient-to-br from-blue-500 to-violet-500 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all relative overflow-hidden group">
+                            <span class="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></span>
+                            <span class="relative">提交反馈</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -224,6 +365,7 @@
                 <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
                     <div class="w-[3px] h-5 rounded-sm bg-amber-500"></div>
                     <span class="text-sm font-semibold text-slate-200">自动定时提交</span>
+                    <span class="text-[10px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">未实现</span>
                 </div>
                 <div class="px-[18px] divide-y divide-white/[0.06]">
                     <div class="flex items-center justify-between py-3.5">
@@ -243,19 +385,38 @@
             </div>
             <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
                 <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
+                    <div class="w-[3px] h-5 rounded-sm bg-sky-500"></div>
+                    <span class="text-sm font-semibold text-slate-200">界面与快捷键</span>
+                </div>
+                <div class="px-[18px] divide-y divide-white/[0.06]">
+                    <div class="flex items-center justify-between py-3.5">
+                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">提交快捷键模式</div><div class="text-xs text-slate-500">默认或 cursor 模式，可继续添加自定义规则</div></div>
+                        <select id="shortcutModeSelect" onchange="setShortcutMode(this.value)" class="font-sans text-[14px] text-slate-200 bg-surface-base border border-white/[0.06] rounded px-3 py-[7px] min-w-[180px] outline-none focus:border-blue-500 transition cursor-pointer">
+                            <option value="default">默认：Ctrl/Cmd+Enter</option>
+                            <option value="cursor">Cursor：Enter 提交</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center justify-between py-3.5 gap-4">
+                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">自定义快捷规则</div><div class="text-xs text-slate-500">添加后可在上方模式中选择</div></div>
+                        <button onclick="addCustomShortcutRule()" class="text-xs font-medium text-blue-300 border border-blue-400/30 rounded px-3 py-1.5 hover:bg-blue-500/10 transition">新增规则</button>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
+                <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
                     <div class="w-[3px] h-5 rounded-sm bg-violet-500"></div>
                     <span class="text-sm font-semibold text-slate-200">通知与音效</span>
                 </div>
                 <div class="px-[18px] divide-y divide-white/[0.06]">
                     <div class="flex items-center justify-between py-3.5">
                         <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">浏览器通知</div><div class="text-xs text-slate-500">新会话到达时发送桌面通知</div></div>
-                        <button class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-surface-muted');this.classList.toggle('!border-white/[0.06]');this.querySelector('div').classList.toggle('translate-x-5')">
+                        <button id="notificationToggle" class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="toggleSettingSwitch('notification')">
                             <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform translate-x-5"></div>
                         </button>
                     </div>
                     <div class="flex items-center justify-between py-3.5">
                         <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">提示音</div><div class="text-xs text-slate-500">新会话到达时播放提示音</div></div>
-                        <button class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-surface-muted');this.classList.toggle('!border-white/[0.06]');this.querySelector('div').classList.toggle('translate-x-5')">
+                        <button id="audioToggle" class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="toggleSettingSwitch('audio')">
                             <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform translate-x-5"></div>
                         </button>
                     </div>
@@ -338,6 +499,37 @@
         </div>
     </div>
 
+    <div id="submitConfirmModal" class="hidden fixed inset-0 z-[80] items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="w-[min(420px,calc(100vw-32px))] bg-surface-raised border border-white/[0.08] rounded-2xl shadow-2xl p-5">
+            <div class="text-base font-semibold text-slate-100 mb-2">确认提交反馈？</div>
+            <div class="text-sm text-slate-500 leading-relaxed mb-4">按 Enter 确认提交，按 Esc 取消。此确认仅在 cursor 快捷键模式下使用。</div>
+            <div class="flex items-center justify-end gap-2">
+                <button onclick="closeSubmitConfirm()" class="text-sm font-medium text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-lg px-4 py-2 hover:text-slate-200 transition">取消</button>
+                <button onclick="confirmShortcutSubmit()" class="text-sm font-semibold text-white bg-blue-500 rounded-lg px-4 py-2 hover:bg-blue-400 transition">确认提交</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="imagePreviewModal" onclick="closeImagePreview()" class="hidden fixed inset-0 z-[90] items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+        <div onclick="event.stopPropagation()" class="w-[min(960px,calc(100vw-32px))] max-h-[calc(100vh-32px)] flex flex-col bg-surface-raised border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/[0.06] shrink-0">
+                <div class="min-w-0">
+                    <div id="imagePreviewName" class="text-sm font-semibold text-slate-200 truncate">图片预览</div>
+                    <div id="imagePreviewIndex" class="text-xs text-slate-500 font-mono mt-0.5">0 / 0</div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="deletePreviewImage()" class="text-xs font-medium text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-1.5 hover:bg-red-500/15 transition">删除</button>
+                    <button onclick="closeImagePreview()" class="w-8 h-8 flex items-center justify-center text-slate-400 bg-surface-overlay border border-white/[0.06] rounded-lg hover:text-slate-100 transition">x</button>
+                </div>
+            </div>
+            <div class="relative flex-1 min-h-0 flex items-center justify-center bg-surface-base p-4">
+                <button onclick="nextPreviewImage(-1)" class="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-slate-300 bg-surface-overlay/90 border border-white/[0.06] rounded-full hover:text-blue-300 transition">&lt;</button>
+                <img id="imagePreviewLarge" src="" alt="图片预览" class="max-w-full max-h-[calc(100vh-170px)] object-contain rounded-lg">
+                <button onclick="nextPreviewImage(1)" class="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-slate-300 bg-surface-overlay/90 border border-white/[0.06] rounded-full hover:text-blue-300 transition">&gt;</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== SCRIPTS ===== -->
     <script src="/static/js/vendor/marked.min.js"></script>
     <script>
@@ -379,22 +571,492 @@
                 : 'Interactive Feedback - 反馈收集';
         }
 
-        // --- WebSocket ---
+        function renderMarkdown(content) {
+            if (!content) return '';
+            if (typeof marked === 'undefined') return escapeHtml(content);
+            return sanitizeHtml(marked.parse(content));
+        }
+
+        function enhanceMarkdownBlocks(container) {
+            if (!container) return;
+            container.querySelectorAll('pre').forEach(function(pre) {
+                if (pre.querySelector('.copy-code-btn')) return;
+                var code = pre.querySelector('code');
+                var text = code ? code.innerText : pre.innerText;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'copy-code-btn';
+                btn.title = '复制代码';
+                btn.setAttribute('aria-label', '复制代码');
+                btn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                btn.addEventListener('click', function(event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    copyTextToClipboard(text).then(function() {
+                        btn.title = '已复制';
+                        btn.setAttribute('aria-label', '已复制');
+                        btn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+                        setTimeout(function() {
+                            btn.title = '复制代码';
+                            btn.setAttribute('aria-label', '复制代码');
+                            btn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+                        }, 1400);
+                    }).catch(function() {
+                        alert('复制失败，请手动选择代码复制');
+                    });
+                });
+                pre.appendChild(btn);
+            });
+        }
+
+        function copyTextToClipboard(text) {
+            var value = String(text || '');
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.permissions && navigator.permissions.query
+                    ? navigator.permissions.query({ name: 'clipboard-write' }).catch(function() { return null; })
+                        .then(function() { return navigator.clipboard.writeText(value); })
+                    : navigator.clipboard.writeText(value);
+            }
+            return new Promise(function(resolve, reject) {
+                var textarea = document.createElement('textarea');
+                textarea.value = value;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.left = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    var ok = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    ok ? resolve() : reject(new Error('copy command failed'));
+                } catch (err) {
+                    document.body.removeChild(textarea);
+                    reject(err);
+                }
+            });
+        }
+
+        function sanitizeHtml(html) {
+            var template = document.createElement('template');
+            template.innerHTML = html;
+
+            var allowedTags = {
+                a: true, abbr: true, b: true, blockquote: true, br: true, code: true, del: true,
+                details: true, div: true, em: true, h1: true, h2: true, h3: true,
+                h4: true, h5: true, h6: true, hr: true, i: true, img: true,
+                kbd: true, li: true, mark: true, ol: true, p: true, pre: true,
+                s: true, span: true, strong: true, sub: true, summary: true,
+                sup: true, table: true, tbody: true, td: true, th: true,
+                thead: true, tr: true, ul: true
+            };
+            var globalAttrs = { title: true };
+            var tagAttrs = {
+                a: { href: true, title: true },
+                img: { src: true, alt: true, title: true },
+                ol: { start: true, type: true },
+                td: { colspan: true, rowspan: true },
+                th: { colspan: true, rowspan: true },
+                details: { open: true }
+            };
+            var blockedTags = { script: true, style: true, iframe: true, object: true, embed: true };
+
+            Array.from(template.content.querySelectorAll('*')).forEach(function(el) {
+                var tag = el.tagName.toLowerCase();
+                if (blockedTags[tag]) {
+                    el.remove();
+                    return;
+                }
+
+                if (!allowedTags[tag]) {
+                    while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+                    el.remove();
+                    return;
+                }
+
+                Array.from(el.attributes).forEach(function(attr) {
+                    var name = attr.name.toLowerCase();
+                    var allowed = globalAttrs[name] || (tagAttrs[tag] && tagAttrs[tag][name]);
+                    if (!allowed || name.indexOf('on') === 0) {
+                        el.removeAttribute(attr.name);
+                        return;
+                    }
+
+                    if ((name === 'href' || name === 'src') && !isSafeUrl(attr.value, name)) {
+                        el.removeAttribute(attr.name);
+                    }
+                });
+
+                if (tag === 'a' && el.getAttribute('href')) {
+                    el.setAttribute('target', '_blank');
+                    el.setAttribute('rel', 'noopener noreferrer');
+                }
+            });
+
+            return template.innerHTML;
+        }
+
+        function isSafeUrl(value, attrName) {
+            var url = String(value || '').trim();
+            if (!url) return false;
+            if (url[0] === '/' || url[0] === '#' || url.indexOf('./') === 0 || url.indexOf('../') === 0) return true;
+            if (/^https?:\/\//i.test(url)) return true;
+            if (attrName === 'href' && /^mailto:/i.test(url)) return true;
+            if (attrName === 'src' && /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(url)) return true;
+            return false;
+        }
+
+        // --- Session state + WebSocket ---
+        var currentSessionId = '{{ session_id }}';
+        var allSessionsCache = [];
+        var sessionDrafts = {};
+        var sessionImages = {};
+        var unreadSessions = {};
+        var countdownTimer = null;
+        var shortcutRules = {};
+        var shortcutMode = localStorage.getItem('feedbackShortcutMode') || 'default';
+        var notificationEnabled = getInitialNotificationEnabled();
+        var audioEnabled = localStorage.getItem('feedbackAudioEnabled') !== 'false';
+        var previewImageIndex = -1;
+        var editingSessionId = null;
+        var hiddenSessionTabs = {};
+        var deferredInstallPrompt = null;
         var ws = null;
         var wsReady = false;
         var wsReplaced = false;
+        var manualWsClose = false;
 
-        function connectWebSocket() {
-            if (wsReplaced) return;
+        function getShortSessionId(sessionId) {
+            return sessionId ? sessionId.substring(0, 8) : '--';
+        }
+
+        function getCurrentSessionInfo() {
+            return allSessionsCache.find(function(s) { return s.session_id === currentSessionId; }) || null;
+        }
+
+        function getSessionDisplayLabel(sessionInfo) {
+            var title = sessionInfo.title || getShortSessionId(sessionInfo.session_id);
+            var project = sessionInfo.source_project_name || '';
+            return project ? (project + ' · ' + title) : title;
+        }
+
+        function getVisibleSessions(sessions) {
+            return (sessions || []).filter(function(s) { return !hiddenSessionTabs[s.session_id]; });
+        }
+
+        function isWorkspaceTabActive() {
+            var workspace = document.getElementById('page-workspace');
+            return !!workspace && !workspace.classList.contains('hidden');
+        }
+
+        function formatRemaining(ms) {
+            var total = Math.max(0, Math.ceil(ms / 1000));
+            var minutes = Math.floor(total / 60);
+            var seconds = total % 60;
+            return minutes > 0 ? (minutes + 'm ' + seconds + 's') : (seconds + 's');
+        }
+
+        function updateCountdown(sessionInfo) {
+            var el = document.getElementById('feedbackCountdown');
+            var meta = document.getElementById('keepaliveMeta');
+            if (!el) return;
+            var info = sessionInfo || getCurrentSessionInfo();
+            if (!info || !info.feedback_deadline_at || !info.can_submit) {
+                el.textContent = '已结束';
+                el.className = 'font-mono text-[12px] text-slate-500 bg-surface-overlay border border-white/[0.06] rounded-full px-2 py-0.5';
+                if (meta) meta.textContent = '自动 --/-- · 手动 --';
+                return;
+            }
+            var remainMs = info.feedback_deadline_at - Date.now();
+            el.textContent = formatRemaining(remainMs);
+            if (meta) {
+                meta.textContent = '自动 ' +
+                    (info.keepalive_auto_extend_used || 0) + '/' +
+                    (info.keepalive_auto_extend_max || 0) +
+                    ' · 手动 ' + (info.keepalive_manual_extend_tokens || 0);
+            }
+            var cls = 'font-mono text-[12px] rounded-full px-2 py-0.5 border ';
+            if (remainMs <= 10000) {
+                cls += 'text-red-300 bg-red-400/10 border-red-400/20';
+            } else if (remainMs <= 60000) {
+                cls += 'text-amber-300 bg-amber-400/10 border-amber-400/20';
+            } else {
+                cls += 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
+            }
+            el.className = cls;
+        }
+
+        function startCountdownLoop() {
+            if (countdownTimer) clearInterval(countdownTimer);
+            updateCountdown();
+            countdownTimer = setInterval(updateCountdown, 1000);
+        }
+
+        function setSubmitButtonState(label, enabled, tone) {
+            var btn = document.getElementById('submitBtn');
+            if (!btn) return;
+            btn.querySelector('.relative').textContent = label;
+            btn.classList.remove(
+                'from-blue-500', 'to-violet-500',
+                'from-emerald-500', 'to-emerald-600',
+                'from-amber-500', 'to-amber-600',
+                'opacity-70', 'cursor-not-allowed'
+            );
+            if (tone === 'success') {
+                btn.classList.add('from-emerald-500', 'to-emerald-600');
+            } else if (tone === 'warning') {
+                btn.classList.add('from-amber-500', 'to-amber-600');
+            } else {
+                btn.classList.add('from-blue-500', 'to-violet-500');
+            }
+            btn.disabled = !enabled;
+            if (!enabled) btn.classList.add('opacity-70', 'cursor-not-allowed');
+        }
+
+        function saveCurrentDraft() {
+            if (!currentSessionId) return;
+            var textarea = document.getElementById('feedbackText');
+            var now = Date.now();
+            sessionDrafts[currentSessionId] = { value: textarea ? textarea.value : '', updatedAt: now };
+            sessionImages[currentSessionId] = { images: pendingImages.slice(), updatedAt: now };
+        }
+
+        function restoreCurrentDraft() {
+            var textarea = document.getElementById('feedbackText');
+            var draft = sessionDrafts[currentSessionId];
+            if (textarea) textarea.value = draft ? draft.value : '';
+            var imageDraft = sessionImages[currentSessionId];
+            pendingImages = imageDraft ? imageDraft.images.slice() : [];
+            renderImagePreviews();
+        }
+
+        function cleanupExpiredDrafts() {
+            var expiresBefore = Date.now() - 24 * 60 * 60 * 1000;
+            Object.keys(sessionDrafts).forEach(function(sessionId) {
+                if (sessionDrafts[sessionId].updatedAt < expiresBefore) delete sessionDrafts[sessionId];
+            });
+            Object.keys(sessionImages).forEach(function(sessionId) {
+                if (sessionImages[sessionId].updatedAt < expiresBefore) delete sessionImages[sessionId];
+            });
+        }
+
+        function clearCurrentDraft() {
+            if (!currentSessionId) return;
+            delete sessionDrafts[currentSessionId];
+            delete sessionImages[currentSessionId];
+        }
+
+        function updateWorkspaceFromSession(sessionInfo) {
+            if (!sessionInfo) return;
+            currentSessionId = sessionInfo.session_id;
+
+            var badge = document.getElementById('sessionBadge');
+            if (badge) badge.textContent = getShortSessionId(currentSessionId);
+
+            var el = document.getElementById('summaryContent');
+            if (el && typeof marked !== 'undefined') {
+                el.innerHTML = renderMarkdown(sessionInfo.summary || '');
+                enhanceMarkdownBlocks(el);
+                el.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+
+            updateFeedbackTitle(sessionInfo.title || '');
+            closeImagePreview();
+            restoreCurrentDraft();
+            updateCountdown(sessionInfo);
+
+            var tag = document.getElementById('newTag');
+            if (tag) tag.style.display = sessionInfo.can_submit ? '' : 'none';
+
+            if (sessionInfo.can_submit) {
+                setSubmitButtonState('提交反馈', true, 'primary');
+            } else {
+                setSubmitButtonState('已完成', false, 'success');
+            }
+        }
+
+        function renderSessionTabs(sessions) {
+            var container = document.getElementById('sessionTabs');
+            if (!container) return;
+            var visibleSessions = getVisibleSessions(sessions);
+
+            if (!isWorkspaceTabActive() || visibleSessions.length <= 1) {
+                container.innerHTML = '';
+                container.classList.add('hidden');
+                return;
+            }
+            container.classList.remove('hidden');
+
+            container.innerHTML = visibleSessions.map(function(s) {
+                var active = s.session_id === currentSessionId;
+                var waiting = s.can_submit && !s.feedback_completed;
+                var unread = !!unreadSessions[s.session_id] && !active;
+                var label = escapeHtml(getSessionDisplayLabel(s));
+                var editValue = escapeHtml(s.title || getShortSessionId(s.session_id));
+                var escapedSessionId = escapeHtml(s.session_id);
+                var statusCls = unread ? 'bg-red-400' : (waiting ? 'bg-amber-400' : (s.feedback_completed ? 'bg-emerald-400' : 'bg-slate-500'));
+                var cls = active
+                    ? 'bg-surface-overlay text-slate-100 border-blue-500/40 shadow-sm'
+                    : (unread ? 'bg-red-500/10 text-red-200 border-red-400/40 hover:bg-red-500/15' : 'bg-surface-raised text-slate-500 border-white/[0.06] hover:text-slate-200 hover:border-blue-500/30');
+                if (editingSessionId === s.session_id) {
+                    return '<div class="shrink-0 w-[min(70vw,520px)] max-w-[calc(100vw-32px)] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                        '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
+                        '<input id="sessionTitleEditor" value="' + editValue + '" onkeydown="handleTitleEditKeydown(event, \'' + escapedSessionId + '\')" onblur="commitInlineTitleEdit(\'' + escapedSessionId + '\')" class="min-w-0 flex-1 bg-transparent border-none outline-none p-0 text-xs font-medium text-inherit" />' +
+                        '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
+                        '<button type="button" onclick="closeSessionTab(event, \'' + escapedSessionId + '\')" title="隐藏标签" class="w-4 h-4 flex items-center justify-center rounded-full text-slate-500 hover:text-red-300 hover:bg-red-400/10 transition">&times;</button>' +
+                        '</div>';
+                }
+                return '<div role="button" tabindex="0" data-session-id="' + escapedSessionId + '" onclick="selectSession(this.dataset.sessionId)" onkeydown="handleSessionTabKeydown(event, this.dataset.sessionId)" title="' + (active ? '点击编辑标题' : '切换会话') + '" class="shrink-0 max-w-[260px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition cursor-pointer ' + cls + '">' +
+                    '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
+                    '<span class="truncate">' + label + '</span>' +
+                    '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
+                    '<button type="button" onclick="closeSessionTab(event, \'' + escapedSessionId + '\')" title="隐藏标签" class="w-4 h-4 flex items-center justify-center rounded-full text-slate-500 hover:text-red-300 hover:bg-red-400/10 transition">&times;</button>' +
+                    '</div>';
+            }).join('');
+        }
+
+        function handleSessionTabKeydown(event, sessionId) {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            selectSession(sessionId);
+        }
+
+        function closeSessionTab(event, sessionId) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            hiddenSessionTabs[sessionId] = true;
+            delete unreadSessions[sessionId];
+            if (editingSessionId === sessionId) editingSessionId = null;
+
+            if (sessionId === currentSessionId) {
+                var next = getVisibleSessions(allSessionsCache).find(function(s) {
+                    return s.session_id !== sessionId;
+                });
+                if (next) {
+                    selectSession(next.session_id);
+                    return;
+                }
+            }
+            renderSessionTabs(allSessionsCache);
+        }
+
+        function updateSessionTitle(sessionId, nextTitle) {
+            fetch('/api/session/' + encodeURIComponent(sessionId) + '/title', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: nextTitle })
+            })
+                .then(function(r) { return r.json(); })
+                .then(function(updated) {
+                    allSessionsCache = allSessionsCache.map(function(s) {
+                        return s.session_id === updated.session_id ? updated : s;
+                    });
+                    if (updated.session_id === currentSessionId) {
+                        updateFeedbackTitle(updated.title || '');
+                    }
+                    renderSessionTabs(allSessionsCache);
+                });
+        }
+
+        function startInlineTitleEdit(sessionId) {
+            if (sessionId !== currentSessionId) return;
+            editingSessionId = sessionId;
+            renderSessionTabs(allSessionsCache);
+            setTimeout(function() {
+                var input = document.getElementById('sessionTitleEditor');
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 0);
+        }
+
+        function commitInlineTitleEdit(sessionId) {
+            if (editingSessionId !== sessionId) return;
+            var input = document.getElementById('sessionTitleEditor');
+            var nextTitle = input ? input.value.trim() : '';
+            editingSessionId = null;
+            updateSessionTitle(sessionId, nextTitle);
+        }
+
+        function cancelInlineTitleEdit() {
+            editingSessionId = null;
+            renderSessionTabs(allSessionsCache);
+        }
+
+        function handleTitleEditKeydown(event, sessionId) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitInlineTitleEdit(sessionId);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelInlineTitleEdit();
+            }
+        }
+
+        function loadSessionTabs(preferredSessionId) {
+            return fetch('/api/all-sessions')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    allSessionsCache = data.sessions || [];
+                    cleanupExpiredDrafts();
+                    if (preferredSessionId) {
+                        delete hiddenSessionTabs[preferredSessionId];
+                        currentSessionId = preferredSessionId;
+                    } else if (!currentSessionId && allSessionsCache.length) {
+                        currentSessionId = allSessionsCache[0].session_id;
+                    }
+                    renderSessionTabs(allSessionsCache);
+                    updateCountdown();
+                    return allSessionsCache;
+                })
+                .catch(function() {
+                    var container = document.getElementById('sessionTabs');
+                    if (container) container.innerHTML = '<div class="text-xs text-red-400">会话标签加载失败</div>';
+                    return [];
+                });
+        }
+
+        function selectSession(sessionId) {
+            if (!sessionId || sessionId === currentSessionId) {
+                startInlineTitleEdit(sessionId);
+                return;
+            }
+            saveCurrentDraft();
+            editingSessionId = null;
+            delete unreadSessions[sessionId];
+            delete hiddenSessionTabs[sessionId];
+
+            fetch('/api/session/' + encodeURIComponent(sessionId))
+                .then(function(r) { return r.json(); })
+                .then(function(sessionInfo) {
+                    updateWorkspaceFromSession(sessionInfo);
+                    renderSessionTabs(allSessionsCache);
+                    connectWebSocket(sessionInfo.session_id);
+                });
+        }
+
+        function connectWebSocket(sessionId) {
+            var targetSessionId = sessionId || currentSessionId;
+            if (!targetSessionId || wsReplaced) return;
             setConnStatus('connecting');
             var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(protocol + '//' + location.host + '/ws');
+
+            if (ws) {
+                manualWsClose = true;
+                ws.onclose = null;
+                ws.close();
+            }
+
+            manualWsClose = false;
+            ws = new WebSocket(protocol + '//' + location.host + '/ws/' + encodeURIComponent(targetSessionId));
 
             ws.onopen = function() {
                 wsReady = true;
                 wsReplaced = false;
                 setConnStatus('connected');
-                console.log('WebSocket connected');
+                console.log('WebSocket connected: ' + targetSessionId);
             };
 
             ws.onmessage = function(event) {
@@ -403,41 +1065,36 @@
                     wsReplaced = true;
                     wsReady = false;
                     setConnStatus('disconnected');
-                    console.log('Connection replaced by another tab/window');
-
-                    var btn = document.getElementById('submitBtn');
-                    if (btn) {
-                        btn.querySelector('.relative').textContent = '连接已转移';
-                        btn.classList.remove('from-blue-500', 'to-violet-500');
-                        btn.classList.add('from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
-                        btn.disabled = true;
-                    }
+                    setSubmitButtonState('连接已转移', false, 'warning');
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
-                    var el = document.getElementById('summaryContent');
-                    if (el && typeof marked !== 'undefined') {
-                        el.innerHTML = marked.parse(data.session_info.summary || '');
-                        if (el.scrollTop > 0) {
-                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                    delete hiddenSessionTabs[data.session_info.session_id];
+                    if (data.session_info.session_id !== currentSessionId) {
+                        unreadSessions[data.session_info.session_id] = true;
+                        notifyNewSession(data.session_info);
+                    }
+                    loadSessionTabs(currentSessionId).then(function() {
+                        if (data.session_info.session_id === currentSessionId) {
+                            updateWorkspaceFromSession(data.session_info);
                         }
-                    }
-                    updateFeedbackTitle(data.session_info.title || '');
-                    var tag = document.getElementById('newTag');
-                    if (tag) tag.style.display = '';
-
-                    var btn = document.getElementById('submitBtn');
-                    if (btn) {
-                        btn.querySelector('.relative').textContent = '提交反馈';
-                        btn.classList.remove('from-emerald-500', 'to-emerald-600', 'from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
-                        btn.classList.add('from-blue-500', 'to-violet-500');
-                        btn.disabled = false;
-                    }
+                    });
+                    return;
+                }
+                if (data.type === 'wait_extended' && data.session_info) {
+                    delete hiddenSessionTabs[data.session_id];
+                    allSessionsCache = allSessionsCache.map(function(s) {
+                        if (s.session_id !== data.session_id) return s;
+                        return Object.assign({}, s, data.session_info);
+                    });
+                    updateCountdown(getCurrentSessionInfo());
+                    renderSessionTabs(allSessionsCache);
                 }
             };
 
             ws.onclose = function() {
                 wsReady = false;
+                if (manualWsClose) return;
                 if (wsReplaced) {
                     setConnStatus('disconnected');
                     console.log('WebSocket closed (replaced), will not reconnect');
@@ -445,7 +1102,7 @@
                 }
                 setConnStatus('disconnected');
                 console.log('WebSocket closed, reconnecting in 3s...');
-                setTimeout(connectWebSocket, 3000);
+                setTimeout(function() { connectWebSocket(currentSessionId); }, 3000);
             };
 
             ws.onerror = function() {
@@ -463,6 +1120,7 @@
             reader.onload = function(e) {
                 var name = file.name || ('paste-' + Date.now() + '.png');
                 pendingImages.push({ data: e.target.result, name: name });
+                saveCurrentDraft();
                 renderImagePreviews();
             };
             reader.readAsDataURL(file);
@@ -470,7 +1128,14 @@
 
         function removeImage(idx) {
             pendingImages.splice(idx, 1);
+            saveCurrentDraft();
             renderImagePreviews();
+            if (previewImageIndex === idx) {
+                if (pendingImages.length === 0) closeImagePreview();
+                else showPreviewImage(Math.min(idx, pendingImages.length - 1));
+            } else if (previewImageIndex > idx) {
+                previewImageIndex -= 1;
+            }
         }
 
         function renderImagePreviews() {
@@ -493,11 +1158,351 @@
             }
 
             container.innerHTML = pendingImages.map(function(img, i) {
-                return '<div class="relative group">' +
+                return '<div onclick="openImagePreview(' + i + ')" class="relative group cursor-zoom-in">' +
                     '<img src="' + img.data + '" class="w-16 h-16 object-cover rounded-lg border border-white/[0.06]">' +
-                    '<button onclick="removeImage(' + i + ')" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition">&times;</button>' +
+                    '<button onclick="event.stopPropagation(); removeImage(' + i + ')" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition">&times;</button>' +
                     '</div>';
             }).join('');
+        }
+
+        function openImagePreview(index) {
+            if (index < 0 || index >= pendingImages.length) return;
+            var modal = document.getElementById('imagePreviewModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            showPreviewImage(index);
+        }
+
+        function closeImagePreview() {
+            var modal = document.getElementById('imagePreviewModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            previewImageIndex = -1;
+        }
+
+        function showPreviewImage(index) {
+            if (pendingImages.length === 0) {
+                closeImagePreview();
+                return;
+            }
+            var normalized = (index + pendingImages.length) % pendingImages.length;
+            var image = pendingImages[normalized];
+            previewImageIndex = normalized;
+
+            var imgEl = document.getElementById('imagePreviewLarge');
+            var nameEl = document.getElementById('imagePreviewName');
+            var indexEl = document.getElementById('imagePreviewIndex');
+            if (imgEl) imgEl.src = image.data;
+            if (nameEl) nameEl.textContent = image.name || '图片预览';
+            if (indexEl) indexEl.textContent = (normalized + 1) + ' / ' + pendingImages.length;
+        }
+
+        function nextPreviewImage(delta) {
+            if (previewImageIndex < 0 || pendingImages.length === 0) return;
+            showPreviewImage(previewImageIndex + delta);
+        }
+
+        function deletePreviewImage() {
+            if (previewImageIndex < 0) return;
+            removeImage(previewImageIndex);
+        }
+
+        // --- Wait extension ---
+        function extendWait() {
+            if (!wsReady || !ws || !currentSessionId) {
+                alert('WebSocket 未连接，请稍后重试');
+                return;
+            }
+            ws.send(JSON.stringify({
+                type: 'extend_wait',
+                session_id: currentSessionId
+            }));
+            var btn = document.getElementById('extendWaitBtn');
+            if (btn) {
+                btn.textContent = '已请求延长';
+                setTimeout(function() { btn.textContent = '延长等待'; }, 1600);
+            }
+        }
+
+        // --- Notifications ---
+        function getInitialNotificationEnabled() {
+            if (!('Notification' in window)) return false;
+            if (Notification.permission !== 'granted') return false;
+            return localStorage.getItem('feedbackNotificationEnabled') !== 'false';
+        }
+
+        function setSwitchVisual(id, enabled) {
+            var button = document.getElementById(id);
+            if (!button) return;
+            var knob = button.querySelector('div');
+            button.classList.toggle('!bg-surface-muted', !enabled);
+            button.classList.toggle('!border-white/[0.06]', !enabled);
+            button.classList.toggle('bg-blue-500', enabled);
+            button.classList.toggle('border-blue-500', enabled);
+            if (knob) knob.classList.toggle('translate-x-5', enabled);
+        }
+
+        function setNotificationEnabled(enabled) {
+            notificationEnabled = !!enabled && 'Notification' in window && Notification.permission === 'granted';
+            localStorage.setItem('feedbackNotificationEnabled', notificationEnabled ? 'true' : 'false');
+            setSwitchVisual('notificationToggle', notificationEnabled);
+        }
+
+        function toggleNotificationSetting() {
+            if (!('Notification' in window)) {
+                setNotificationEnabled(false);
+                alert('当前浏览器不支持桌面通知');
+                return;
+            }
+
+            if (notificationEnabled) {
+                setNotificationEnabled(false);
+                return;
+            }
+
+            if (Notification.permission === 'granted') {
+                setNotificationEnabled(true);
+                new Notification('通知已启用', {
+                    body: '新反馈会话到达时会发送浏览器通知',
+                    tag: 'mcp-feedback-notification-enabled'
+                });
+                return;
+            }
+
+            if (Notification.permission === 'denied') {
+                setNotificationEnabled(false);
+                alert('浏览器已阻止通知，请在站点权限中允许通知');
+                return;
+            }
+
+            Notification.requestPermission().then(function(permission) {
+                var granted = permission === 'granted';
+                setNotificationEnabled(granted);
+                if (granted) {
+                    new Notification('通知已启用', {
+                        body: '新反馈会话到达时会发送浏览器通知',
+                        tag: 'mcp-feedback-notification-enabled'
+                    });
+                }
+            });
+        }
+
+        function toggleSettingSwitch(kind) {
+            if (kind === 'notification') {
+                toggleNotificationSetting();
+            } else if (kind === 'audio') {
+                audioEnabled = !audioEnabled;
+                localStorage.setItem('feedbackAudioEnabled', audioEnabled ? 'true' : 'false');
+                setSwitchVisual('audioToggle', audioEnabled);
+            }
+        }
+
+        function playNotifySound() {
+            if (!audioEnabled) return;
+            try {
+                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                var osc = ctx.createOscillator();
+                var gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 880;
+                gain.gain.value = 0.06;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                setTimeout(function() { osc.stop(); ctx.close(); }, 160);
+            } catch (e) {
+                console.debug('Audio notification skipped:', e);
+            }
+        }
+
+        function notifyNewSession(sessionInfo) {
+            if (notificationEnabled && 'Notification' in window && Notification.permission === 'granted') {
+                new Notification('新反馈会话到达', {
+                    body: sessionInfo.title || getShortSessionId(sessionInfo.session_id),
+                    tag: sessionInfo.session_id
+                });
+            } else if (notificationEnabled) {
+                setNotificationEnabled(false);
+            }
+            playNotifySound();
+        }
+
+        // --- App install ---
+        function registerPwaInstall() {
+            if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+                navigator.serviceWorker.register('/sw.js').catch(function() {});
+            }
+
+            window.addEventListener('beforeinstallprompt', function(event) {
+                event.preventDefault();
+                deferredInstallPrompt = event;
+                requestAppInstall();
+            });
+
+            window.addEventListener('appinstalled', function() {
+                deferredInstallPrompt = null;
+            });
+        }
+
+        function isRunningStandalone() {
+            return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+        }
+
+        function requestAppInstall() {
+            if (!deferredInstallPrompt || isRunningStandalone()) return;
+            deferredInstallPrompt.prompt();
+            deferredInstallPrompt.userChoice.then(function() {
+                deferredInstallPrompt = null;
+            }).catch(function() {});
+        }
+
+        function toggleMobileInputExpand() {
+            var workspace = document.getElementById('page-workspace');
+            var panel = document.querySelector('#page-workspace .feedback-panel');
+            var btn = document.getElementById('inputExpandBtn');
+            if (!panel || !btn) return;
+            var expanded = panel.classList.toggle('feedback-expanded');
+            if (workspace) workspace.classList.toggle('input-expanded', expanded);
+            btn.title = expanded ? '收起输入区' : '展开输入区';
+            btn.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+            btn.innerHTML = expanded
+                ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>'
+                : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+        }
+
+        // --- Theme + shortcuts ---
+        function applyThemeMode(mode) {
+            var resolved = mode;
+            if (mode === 'auto') {
+                var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                resolved = prefersDark ? 'dark' : 'light';
+            }
+            document.documentElement.classList.toggle('dark', resolved === 'dark');
+            document.documentElement.classList.toggle('light', resolved === 'light');
+            document.documentElement.dataset.themeMode = mode;
+            localStorage.setItem('feedbackThemeMode', mode);
+            updateThemeButton(mode);
+        }
+
+        function updateThemeButton(mode) {
+            var btn = document.getElementById('themeToggleBtn');
+            if (!btn) return;
+            var labels = {
+                auto: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
+                light: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>',
+                dark: '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z"/></svg>'
+            };
+            btn.innerHTML = labels[mode] || labels.auto;
+            var titles = { auto: '自动主题', light: '明亮主题', dark: '暗色主题' };
+            btn.title = (titles[mode] || titles.auto) + '，点击切换';
+        }
+
+        function cycleThemeMode() {
+            var current = localStorage.getItem('feedbackThemeMode') || 'auto';
+            var next = current === 'auto' ? 'light' : (current === 'light' ? 'dark' : 'auto');
+            applyThemeMode(next);
+        }
+
+        function loadShortcutRules() {
+            shortcutRules = {
+                default: { label: '默认：Ctrl/Cmd+Enter', submit: 'mod+enter', newline: 'enter', confirm: false },
+                cursor: { label: 'Cursor：Enter 提交', submit: 'enter', newline: 'shift+enter', confirm: true }
+            };
+            try {
+                var customRules = JSON.parse(localStorage.getItem('feedbackCustomShortcutRules') || '[]');
+                customRules.forEach(function(rule) {
+                    if (rule.id && rule.label && rule.submit) shortcutRules[rule.id] = rule;
+                });
+            } catch (e) {
+                localStorage.removeItem('feedbackCustomShortcutRules');
+            }
+            renderShortcutSelect();
+        }
+
+        function renderShortcutSelect() {
+            var select = document.getElementById('shortcutModeSelect');
+            if (!select) return;
+            select.innerHTML = Object.keys(shortcutRules).map(function(id) {
+                return '<option value="' + escapeHtml(id) + '">' + escapeHtml(shortcutRules[id].label) + '</option>';
+            }).join('');
+            if (!shortcutRules[shortcutMode]) shortcutMode = 'default';
+            select.value = shortcutMode;
+            updateShortcutHint();
+        }
+
+        function setShortcutMode(mode) {
+            shortcutMode = shortcutRules[mode] ? mode : 'default';
+            localStorage.setItem('feedbackShortcutMode', shortcutMode);
+            updateShortcutHint();
+        }
+
+        function updateShortcutHint() {
+            var hint = document.getElementById('shortcutHint');
+            var rule = shortcutRules[shortcutMode] || shortcutRules.default;
+            if (!hint) return;
+            hint.textContent = rule.confirm
+                ? 'Enter 提交，Shift+Enter 换行'
+                : 'Ctrl/Cmd+Enter 提交';
+        }
+
+        function addCustomShortcutRule() {
+            var label = prompt('规则名称，例如：Alt+Enter 提交');
+            if (!label) return;
+            var submit = prompt('提交快捷键：enter / mod+enter / alt+enter', 'alt+enter');
+            if (!submit) return;
+            var confirmSubmit = confirm('这个规则提交前是否需要确认？');
+            var id = 'custom-' + Date.now();
+            var customRules = [];
+            try {
+                customRules = JSON.parse(localStorage.getItem('feedbackCustomShortcutRules') || '[]');
+            } catch (e) {
+                customRules = [];
+            }
+            customRules.push({ id: id, label: label, submit: submit.toLowerCase(), newline: 'enter', confirm: confirmSubmit });
+            localStorage.setItem('feedbackCustomShortcutRules', JSON.stringify(customRules));
+            loadShortcutRules();
+            setShortcutMode(id);
+        }
+
+        function eventMatchesShortcut(e, shortcut) {
+            var key = e.key.toLowerCase();
+            if (shortcut === 'enter') return key === 'enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+            if (shortcut === 'shift+enter') return key === 'enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+            if (shortcut === 'mod+enter') return key === 'enter' && (e.ctrlKey || e.metaKey);
+            if (shortcut === 'alt+enter') return key === 'enter' && e.altKey;
+            return false;
+        }
+
+        function openSubmitConfirm() {
+            var modal = document.getElementById('submitConfirmModal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeSubmitConfirm() {
+            var modal = document.getElementById('submitConfirmModal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function confirmShortcutSubmit() {
+            closeSubmitConfirm();
+            submitFeedback();
+        }
+
+        function handleFeedbackKeydown(e) {
+            if (e.isComposing) return;
+            var rule = shortcutRules[shortcutMode] || shortcutRules.default;
+            if (rule.newline && eventMatchesShortcut(e, rule.newline)) return;
+            if (eventMatchesShortcut(e, rule.submit)) {
+                e.preventDefault();
+                if (rule.confirm) openSubmitConfirm();
+                else submitFeedback();
+            }
         }
 
         // --- Submit ---
@@ -520,6 +1525,7 @@
 
             ws.send(JSON.stringify({
                 type: 'submit_feedback',
+                session_id: currentSessionId,
                 feedback: feedback,
                 images: imagesPayload,
                 settings: {}
@@ -527,31 +1533,66 @@
 
             textarea.value = '';
             pendingImages = [];
+            closeImagePreview();
+            clearCurrentDraft();
             renderImagePreviews();
 
             var tag = document.getElementById('newTag');
             if (tag) tag.style.display = 'none';
 
-            var btn = document.getElementById('submitBtn');
-            if (btn) {
-                btn.querySelector('.relative').textContent = '已提交';
-                btn.classList.remove('from-blue-500', 'to-violet-500');
-                btn.classList.add('from-emerald-500', 'to-emerald-600');
-                btn.disabled = true;
-                btn.classList.add('opacity-70', 'cursor-not-allowed');
-            }
+            setSubmitButtonState('已提交', false, 'success');
+            loadSessionTabs(currentSessionId);
+        }
+
+        var lastHeartbeatSessionCount = null;
+
+        function sendPageHeartbeat() {
+            fetch('/api/page-heartbeat', { method: 'POST', keepalive: true })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (
+                        lastHeartbeatSessionCount !== null &&
+                        typeof data.session_count === 'number' &&
+                        data.session_count !== lastHeartbeatSessionCount
+                    ) {
+                        loadSessionTabs(currentSessionId);
+                    }
+                    if (typeof data.session_count === 'number') {
+                        lastHeartbeatSessionCount = data.session_count;
+                    }
+                })
+                .catch(function() {});
         }
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', function() {
+            registerPwaInstall();
+            sendPageHeartbeat();
+            setInterval(sendPageHeartbeat, 5000);
+            applyThemeMode(localStorage.getItem('feedbackThemeMode') || 'auto');
+            loadShortcutRules();
+            setSwitchVisual('notificationToggle', notificationEnabled);
+            setSwitchVisual('audioToggle', audioEnabled);
+            startCountdownLoop();
+            if (window.matchMedia) {
+                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+                    if ((localStorage.getItem('feedbackThemeMode') || 'auto') === 'auto') applyThemeMode('auto');
+                });
+            }
+
             // Render Markdown summary
             var el = document.getElementById('summaryContent');
             if (el && el.textContent.trim() && typeof marked !== 'undefined') {
-                el.innerHTML = marked.parse(el.textContent);
+                el.innerHTML = renderMarkdown(el.textContent);
+                enhanceMarkdownBlocks(el);
             }
 
-            // Connect WebSocket
-            connectWebSocket();
+            // Load sessions and connect the current session WebSocket
+            loadSessionTabs(currentSessionId).then(function(sessions) {
+                var current = sessions.find(function(s) { return s.session_id === currentSessionId; });
+                if (current) updateWorkspaceFromSession(current);
+                connectWebSocket(currentSessionId);
+            });
 
             // File input change handler
             var fileInput = document.getElementById('imageInput');
@@ -565,12 +1606,8 @@
             // Keyboard shortcuts + paste
             var textarea = document.getElementById('feedbackText');
             if (textarea) {
-                textarea.addEventListener('keydown', function(e) {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                        e.preventDefault();
-                        submitFeedback();
-                    }
-                });
+                textarea.addEventListener('keydown', handleFeedbackKeydown);
+                textarea.addEventListener('input', saveCurrentDraft);
 
                 textarea.addEventListener('paste', function(e) {
                     var items = (e.clipboardData || e.originalEvent.clipboardData).items;
@@ -583,6 +1620,34 @@
                     }
                 });
             }
+
+            document.addEventListener('keydown', function(e) {
+                var modal = document.getElementById('submitConfirmModal');
+                if (modal && !modal.classList.contains('hidden')) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        confirmShortcutSubmit();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeSubmitConfirm();
+                    }
+                    return;
+                }
+
+                var imageModal = document.getElementById('imagePreviewModal');
+                if (imageModal && !imageModal.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeImagePreview();
+                    } else if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        nextPreviewImage(-1);
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        nextPreviewImage(1);
+                    }
+                }
+            });
         });
 
         // --- Sessions ---
@@ -611,6 +1676,7 @@
             var map = {
                 waiting: { text: '等待中', cls: 'text-amber-400 bg-amber-400/10 border-amber-400/20' },
                 active: { text: '活跃', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
+                feedback_submitted: { text: '已提交', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
                 completed: { text: '已完成', cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
                 timeout: { text: '超时', cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
                 error: { text: '错误', cls: 'text-red-400 bg-red-400/10 border-red-400/20' }
@@ -634,6 +1700,7 @@
             var titleHtml = s.title
                 ? '<div class="text-[13px] font-semibold text-slate-200 mb-1.5 truncate" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + '</div>'
                 : '';
+            var projectLabel = s.source_project_directory || s.project_directory || '--';
             return '<div class="bg-surface-raised border ' + borderCls + ' rounded-2xl p-4 hover:shadow-lg transition">' +
                 '<div class="flex items-center justify-between mb-2">' +
                     '<span class="font-mono text-xs text-blue-400 bg-blue-500/[0.12] px-2.5 py-0.5 rounded-full">' + sid + '</span>' +
@@ -642,7 +1709,7 @@
                 titleHtml +
                 '<div class="text-xs text-slate-500 space-y-0.5">' +
                     '<div>创建时间：' + formatTime(s.created_at) + '</div>' +
-                    '<div>项目：' + escapeHtml(s.project_directory || '--') + '</div>' +
+                    '<div>项目：' + escapeHtml(projectLabel) + '</div>' +
                 '</div>' +
                 '<div class="flex gap-2 mt-3">' +
                     '<button onclick="showSessionDetail(\'' + s.session_id + '\')" class="text-xs font-medium text-slate-400 border border-white/[0.06] rounded px-3 py-1.5 hover:text-slate-200 hover:border-blue-500 hover:bg-blue-500/10 transition">查看详情</button>' +
@@ -651,8 +1718,6 @@
         }
 
         // Session detail modal
-        var allSessionsCache = [];
-
         function showSessionDetail(sessionId) {
             var s = allSessionsCache.find(function(x) { return x.session_id === sessionId; });
             if (!s) return;
@@ -661,10 +1726,11 @@
             overlay.className = 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-6';
             overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
 
-            var summaryHtml = s.summary && typeof marked !== 'undefined' ? marked.parse(s.summary) : escapeHtml(s.summary || '无摘要');
+            var summaryHtml = s.summary && typeof marked !== 'undefined' ? renderMarkdown(s.summary) : escapeHtml(s.summary || '无摘要');
             var titleRow = s.title
                 ? '<div class="text-slate-500">标题</div><div class="text-slate-200 font-medium break-all">' + escapeHtml(s.title) + '</div>'
                 : '';
+            var projectLabel = s.source_project_directory || s.project_directory || '--';
 
             overlay.innerHTML = '<div class="bg-surface-raised border border-white/[0.06] rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden">' +
                 '<div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">' +
@@ -678,7 +1744,7 @@
                         '<div class="text-slate-500">状态</div><div>' + statusLabel(s.status) + '</div>' +
                         '<div class="text-slate-500">创建时间</div><div class="text-slate-300">' + formatTime(s.created_at) + '</div>' +
                         '<div class="text-slate-500">最后活动</div><div class="text-slate-300">' + formatTime(s.last_activity) + '</div>' +
-                        '<div class="text-slate-500">项目</div><div class="text-slate-300 break-all">' + escapeHtml(s.project_directory || '--') + '</div>' +
+                        '<div class="text-slate-500">项目</div><div class="text-slate-300 break-all">' + escapeHtml(projectLabel) + '</div>' +
                     '</div>' +
                     '<div class="border-t border-white/[0.06] pt-4">' +
                         '<div class="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">AI 工作摘要</div>' +
@@ -688,6 +1754,7 @@
             '</div>';
 
             document.body.appendChild(overlay);
+            enhanceMarkdownBlocks(overlay);
         }
 
         function renderSessions(sessions) {
@@ -745,6 +1812,7 @@
             document.getElementById('page-' + name).classList.remove('hidden');
             btn.className = 'tab-btn tab-active-dot relative px-4 py-2 text-[14px] font-medium rounded-full text-slate-200 bg-surface-overlay shadow-sm ring-1 ring-white/[0.06] transition-all';
 
+            renderSessionTabs(allSessionsCache);
             if (name === 'sessions') loadSessions();
         });
 
