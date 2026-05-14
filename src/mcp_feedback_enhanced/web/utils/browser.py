@@ -57,9 +57,15 @@ def open_browser_in_wsl(url: str) -> None:
     """
     try:
         # 尝试使用 cmd.exe 启动浏览器
-        cmd = ["cmd.exe", "/c", "start", url]
+        cmd = ["cmd.exe", "/c", "start", "", url]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
         )
 
         if result.returncode == 0:
@@ -74,9 +80,15 @@ def open_browser_in_wsl(url: str) -> None:
 
     try:
         # 尝试使用 powershell.exe 启动浏览器
-        cmd = ["powershell.exe", "-c", f'Start-Process "{url}"']
+        cmd = ["powershell.exe", "-NoProfile", "-Command", "Start-Process", url]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
         )
 
         if result.returncode == 0:
@@ -93,7 +105,13 @@ def open_browser_in_wsl(url: str) -> None:
         # 最后尝试使用 wslview（如果安装了 wslu 包）
         cmd = ["wslview", url]
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
         )
 
         if result.returncode == 0:

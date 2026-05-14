@@ -376,10 +376,18 @@ def create_keepalive_text(result: dict) -> str:
 
 def create_tool_result_from_feedback(result: dict) -> ToolResult:
     """将 Web 反馈结果转换成 MCP ToolResult。"""
+    config_warnings = result.get("config_warnings") or []
+    warning_text = ""
+    if config_warnings:
+        from .web.hub_client import format_config_guidance
+
+        warning_text = format_config_guidance(config_warnings)
+
     if result.get("keepalive_request"):
-        return ToolResult(
-            content=[TextContent(type="text", text=create_keepalive_text(result))]
-        )
+        text = create_keepalive_text(result)
+        if warning_text:
+            text = f"{warning_text}\n{text}"
+        return ToolResult(content=[TextContent(type="text", text=text)])
 
     if not result:
         return ToolResult(content=[TextContent(type="text", text="用户取消了反馈。")])
@@ -387,6 +395,8 @@ def create_tool_result_from_feedback(result: dict) -> ToolResult:
     save_feedback_to_file(result)
 
     feedback_items = []
+    if warning_text:
+        feedback_items.append(TextContent(type="text", text=warning_text))
     if result.get("interactive_feedback"):
         feedback_text = create_feedback_text(result)
         feedback_items.append(TextContent(type="text", text=feedback_text))
@@ -635,7 +645,7 @@ async def continue_feedback_session(
     """Continue waiting for an existing feedback session without creating a new one."""
     try:
         debug_log(f"继续等待 Web 反馈会话: {session_id}, timeout={timeout}")
-        from .web import continue_web_feedback_session as web_continue  # noqa: PLC0415
+        from .web import continue_web_feedback_session as web_continue
 
         result = await web_continue(session_id, timeout)
         return create_tool_result_from_feedback(result)
@@ -715,6 +725,18 @@ def get_system_info() -> str:
             "WSLENV": os.getenv("WSLENV"),
         },
     }
+    try:
+        from .web.hub_client import (
+            format_config_guidance,
+            validate_mcp_web_config,
+        )
+
+        warnings = validate_mcp_web_config()
+        system_info["Web 配置提示"] = warnings
+        if warnings:
+            system_info["Web 配置示例"] = format_config_guidance(warnings)
+    except Exception as e:
+        system_info["Web 配置提示"] = [f"配置诊断失败: {e}"]
 
     return json.dumps(system_info, ensure_ascii=False, indent=2)
 
@@ -752,9 +774,19 @@ def main():
     try:
         if os.getenv("MCP_WEB_ALWAYS_ON", "").lower() in ("true", "1", "yes", "on"):
             try:
-                from .web import get_web_ui_manager  # noqa: PLC0415
+                from .web.hub_client import (
+                    ensure_hub_running,
+                    is_shared_mode,
+                )
 
-                get_web_ui_manager().ensure_server_running()
+                if is_shared_mode():
+                    import asyncio
+
+                    asyncio.run(ensure_hub_running())
+                else:
+                    from .web import get_web_ui_manager
+
+                    get_web_ui_manager().ensure_server_running()
                 debug_log("MCP_WEB_ALWAYS_ON 已启用，Web 等待页已启动")
             except Exception as e:
                 debug_log(f"MCP_WEB_ALWAYS_ON 启动失败，继续启动 MCP: {e}")

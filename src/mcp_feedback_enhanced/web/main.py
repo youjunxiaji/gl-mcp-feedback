@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 from ..debug import web_debug_log as debug_log
 from ..utils.error_handler import ErrorHandler, ErrorType
 from ..utils.memory_monitor import get_memory_monitor
+from .hub_client import is_shared_mode, should_auto_cleanup_port
 from .models import CleanupReason, SessionStatus, WebFeedbackSession
 from .routes import setup_routes
 from .utils import get_browser_opener
@@ -71,8 +72,8 @@ class WebUIManager:
         else:
             debug_log(f"未设定 MCP_WEB_PORT 环境变数，使用默认端口 {preferred_port}")
 
-        # 使用增强的端口管理，测试模式下禁用自动清理避免权限问题
-        auto_cleanup = os.environ.get("MCP_TEST_MODE", "").lower() != "true"
+        # 端口自动清理默认关闭，避免多个 MCP 项目互相终止 Web 进程。
+        auto_cleanup = should_auto_cleanup_port()
 
         if port is not None:
             # 如果明确指定了端口，使用指定的端口
@@ -121,6 +122,18 @@ class WebUIManager:
 
         # 会话更新通知标记
         self._pending_session_update = False
+        self._last_browser_open_at = 0.0
+        self._browser_open_grace_seconds = 5.0
+        self._browser_open_lock = asyncio.Lock()
+        self._page_last_seen_at = 0.0
+        self._page_presence_ttl_seconds = 15.0
+        self.hub_token = os.getenv("MCP_WEB_HUB_TOKEN", "")
+        self.is_hub = os.getenv("MCP_WEB_HUB", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
         # 会话清理统计
         self.cleanup_stats: dict[str, Any] = {
@@ -328,7 +341,13 @@ class WebUIManager:
             raise RuntimeError(f"Templates directory not found: {web_templates_path}")
 
     def create_session(
-        self, project_directory: str, summary: str, *, title: str = ""
+        self,
+        project_directory: str,
+        summary: str,
+        *,
+        title: str = "",
+        session_id: str | None = None,
+        source_info: dict[str, Any] | None = None,
     ) -> str:
         """创建新的反馈会话 - 重构为单一活跃会话模式，保留标签页状态。
 
@@ -341,10 +360,25 @@ class WebUIManager:
             新会话的 session_id。
         """
         with self._session_lock:
+            if session_id and session_id in self.sessions:
+                session = self.sessions[session_id]
+                session.project_directory = project_directory
+                session.summary = summary
+                session.title = title or session.title
+                if source_info is not None:
+                    session.source_info = source_info
+                self.current_session = session
+                debug_log(f"复用既有反馈会话: {session_id}")
+                return session_id
+
             # 创建新会话。多会话模式下，新会话不再替换或完成旧会话。
-            session_id = str(uuid.uuid4())
+            session_id = session_id or str(uuid.uuid4())
             session = WebFeedbackSession(
-                session_id, project_directory, summary, title=title
+                session_id,
+                project_directory,
+                summary,
+                title=title,
+                source_info=source_info,
             )
 
             # 将全局标签页状态继承到新会话
@@ -659,6 +693,7 @@ class WebUIManager:
         try:
             browser_opener = get_browser_opener()
             browser_opener(url)
+            self._last_browser_open_at = time.time()
             debug_log(f"已开启浏览器：{url}")
         except Exception as e:
             debug_log(f"无法开启浏览器: {e}")
@@ -669,7 +704,11 @@ class WebUIManager:
         Returns:
             bool: True 表示检测到活跃标签页，False 表示开启了新视窗
         """
+        async with self._browser_open_lock:
+            return await self._smart_open_browser_locked(url)
 
+    async def _smart_open_browser_locked(self, url: str) -> bool:
+        """在锁内完成页面存活检测和打开决策，避免并发重复拉页。"""
         try:
             # 检查是否有活跃标签页
             has_active_tabs = await self._check_active_tabs()
@@ -686,8 +725,18 @@ class WebUIManager:
                 return True
 
             # 没有活跃标签页，开启新浏览器视窗
+            recently_opened = (
+                time.time() - self._last_browser_open_at
+                < self._browser_open_grace_seconds
+            )
+            if recently_opened:
+                debug_log("最近已尝试开启浏览器，跳过重复开启")
+                await self.notify_existing_tab_to_refresh()
+                return True
+
             debug_log("没有检测到活跃标签页，开启新浏览器视窗")
             self.open_browser(url)
+            self._last_browser_open_at = time.time()
             return False
 
         except Exception as e:
@@ -758,6 +807,10 @@ class WebUIManager:
     async def _check_active_tabs(self) -> bool:
         """检查是否有活跃标签页 - 使用分层检测机制"""
         try:
+            if time.time() - self._page_last_seen_at < self._page_presence_ttl_seconds:
+                debug_log("快速检测：页面 heartbeat 仍然活跃")
+                return True
+
             sessions_with_websocket = [
                 session for session in list(self.sessions.values()) if session.websocket
             ]
@@ -908,7 +961,7 @@ class WebUIManager:
         cleaned_count = 0
 
         for i in range(max_cleanup):
-            session_id, session, priority = sessions_to_clean[i]
+            session_id, session, _priority = sessions_to_clean[i]
             try:
                 # 使用增强清理方法
                 session._cleanup_sync_enhanced(CleanupReason.MEMORY_PRESSURE)
@@ -1065,6 +1118,18 @@ async def launch_web_feedback_ui(
     Returns:
         dict: 反馈结果，包含 logs、interactive_feedback 和 images。
     """
+    if is_shared_mode() and os.getenv("MCP_WEB_HUB", "").lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        from .hub_client import launch_shared_web_feedback_ui
+
+        return await launch_shared_web_feedback_ui(
+            project_directory, summary, timeout, title=title
+        )
+
     manager = get_web_ui_manager()
 
     session_id = manager.create_session(project_directory, summary, title=title)
@@ -1111,6 +1176,16 @@ async def launch_web_feedback_ui(
 
 async def continue_web_feedback_session(session_id: str, timeout: int = 600) -> dict:
     """继续等待既有 Web 反馈会话，用于 MCP 保活续等。"""
+    if is_shared_mode() and os.getenv("MCP_WEB_HUB", "").lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        from .hub_client import continue_shared_web_feedback_session
+
+        return await continue_shared_web_feedback_session(session_id, timeout)
+
     manager = get_web_ui_manager()
     session = manager.get_session(session_id)
     if not session:

@@ -76,11 +76,13 @@ class WebFeedbackSession:
         max_idle_time: int = 1800,
         *,
         title: str = "",
+        source_info: dict[str, Any] | None = None,
     ):
         self.session_id = session_id
         self.project_directory = project_directory
         self.summary = summary
         self.title = title or ""
+        self.source_info = source_info or {}
         self.websocket: WebSocket | None = None
         self.feedback_result: str | None = None
         self.images: list[dict] = []

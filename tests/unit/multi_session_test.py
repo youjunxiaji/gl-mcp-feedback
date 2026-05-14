@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """多会话 Web UI 行为测试。"""
 
+import asyncio
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
+import mcp_feedback_enhanced.web.utils.browser as browser_utils
+from mcp_feedback_enhanced.web.hub_client import validate_mcp_web_config
 from mcp_feedback_enhanced.web.models import SessionStatus
 
 
@@ -80,6 +85,31 @@ def test_session_detail_endpoint_returns_requested_session(web_ui_manager):
     assert second_detail.json()["title"] == "第二"
 
 
+def test_create_session_can_reuse_client_session_id_and_source(web_ui_manager):
+    """共享 Hub 注册时应能使用 client 生成的 session_id 和来源信息。"""
+    session_id = web_ui_manager.create_session(
+        "/tmp/shared-project",
+        "summary",
+        title="共享会话",
+        session_id="client-session-id",
+        source_info={
+            "project_name": "shared-project",
+            "project_directory": "/tmp/shared-project",
+            "pid": 123,
+        },
+    )
+
+    client = TestClient(web_ui_manager.app)
+    response = client.get(f"/api/session/{session_id}")
+
+    assert session_id == "client-session-id"
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"] == "client-session-id"
+    assert payload["source_project_name"] == "shared-project"
+    assert payload["source_project_directory"] == "/tmp/shared-project"
+
+
 def test_session_title_can_be_updated_from_web(web_ui_manager):
     """Web 应能修改会话标题，便于标签分辨。"""
     session_id = web_ui_manager.create_session(
@@ -95,6 +125,142 @@ def test_session_title_can_be_updated_from_web(web_ui_manager):
     assert response.status_code == 200
     assert response.json()["title"] == "新标题"
     assert web_ui_manager.get_session(session_id).title == "新标题"
+
+
+def test_hub_health_requires_token_when_configured(web_ui_manager):
+    """Managed Hub API 配置 token 后应拒绝未授权请求。"""
+    web_ui_manager.hub_token = "secret-token"  # noqa: S105
+    web_ui_manager.is_hub = True
+    client = TestClient(web_ui_manager.app)
+
+    unauthorized = client.get("/api/hub/health")
+    authorized = client.get(
+        "/api/hub/health", headers={"Authorization": "Bearer secret-token"}
+    )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert authorized.json()["hub"] is True
+
+
+def test_page_heartbeat_marks_browser_presence(web_ui_manager):
+    """等待页没有 WebSocket 时，也应能标记同一个页面仍存活。"""
+    client = TestClient(web_ui_manager.app)
+
+    response = client.post("/api/page-heartbeat")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["session_count"] == 0
+    assert web_ui_manager._page_last_seen_at > 0
+
+
+def test_hub_session_registration_includes_source(web_ui_manager):
+    """Hub session 注册接口应创建会话并返回来源项目字段。"""
+    web_ui_manager.hub_token = "secret-token"  # noqa: S105
+    client = TestClient(web_ui_manager.app)
+
+    response = client.post(
+        "/api/hub/sessions",
+        headers={"Authorization": "Bearer secret-token"},
+        json={
+            "session_id": "remote-session-id",
+            "project_directory": "/tmp/remote-project",
+            "summary": "remote summary",
+            "title": "远程会话",
+            "timeout": 600,
+            "source": {
+                "project_name": "remote-project",
+                "project_directory": "/tmp/remote-project",
+                "pid": 456,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"] == "remote-session-id"
+    assert payload["session_info"]["source_project_name"] == "remote-project"
+    assert web_ui_manager.get_session("remote-session-id") is not None
+
+
+@pytest.mark.asyncio
+async def test_hub_wait_returns_submitted_feedback(web_ui_manager):
+    """Hub long-poll wait 应返回已提交的反馈结果。"""
+    web_ui_manager.hub_token = "secret-token"  # noqa: S105
+    session_id = web_ui_manager.create_session(
+        "/tmp/remote", "summary", session_id="wait-session-id"
+    )
+    session = web_ui_manager.get_session(session_id)
+    assert session is not None
+    await session.submit_feedback("remote feedback", [], {})
+
+    client = TestClient(web_ui_manager.app)
+    response = client.post(
+        f"/api/hub/sessions/{session_id}/wait",
+        headers={"Authorization": "Bearer secret-token"},
+        json={"timeout": 600},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["interactive_feedback"] == "remote feedback"
+
+
+@pytest.mark.asyncio
+async def test_smart_open_browser_suppresses_immediate_duplicate(web_ui_manager):
+    """并发注册时，页面尚未建立 WebSocket 也不应重复打开浏览器。"""
+    opened_urls = []
+
+    async def no_active_tabs():
+        return False
+
+    async def refresh_existing_tabs():
+        return True
+
+    web_ui_manager._check_active_tabs = no_active_tabs
+    web_ui_manager.notify_existing_tab_to_refresh = refresh_existing_tabs
+    web_ui_manager.open_browser = opened_urls.append
+
+    first = await web_ui_manager.smart_open_browser("http://127.0.0.1:9790")
+    second = await web_ui_manager.smart_open_browser("http://127.0.0.1:9790")
+
+    assert first is False
+    assert second is True
+    assert opened_urls == ["http://127.0.0.1:9790"]
+
+
+@pytest.mark.asyncio
+async def test_smart_open_browser_serializes_concurrent_opens(web_ui_manager):
+    """并发注册同时请求打开页面时，也只能真正打开一次。"""
+    opened_urls = []
+
+    async def no_active_tabs():
+        return False
+
+    web_ui_manager._check_active_tabs = no_active_tabs
+    web_ui_manager.open_browser = opened_urls.append
+
+    results = await asyncio.gather(
+        web_ui_manager.smart_open_browser("http://127.0.0.1:9790"),
+        web_ui_manager.smart_open_browser("http://127.0.0.1:9790"),
+    )
+
+    assert sorted(results) == [False, True]
+    assert opened_urls == ["http://127.0.0.1:9790"]
+
+
+@pytest.mark.asyncio
+async def test_smart_open_browser_uses_page_heartbeat(web_ui_manager):
+    """已有等待页 heartbeat 时，注册新 session 不应再打开新页面。"""
+    opened_urls = []
+
+    web_ui_manager._page_last_seen_at = time.time()
+    web_ui_manager.open_browser = opened_urls.append
+
+    result = await web_ui_manager.smart_open_browser("http://127.0.0.1:9790")
+
+    assert result is True
+    assert opened_urls == []
 
 
 def test_session_websocket_submits_to_bound_session(web_ui_manager):
@@ -162,3 +328,36 @@ def test_websocket_extend_wait_adds_manual_token(web_ui_manager):
     assert response["session_id"] == session_id
     assert session.keepalive_manual_extend_tokens == 1
     assert session.keepalive_auto_extend_used == 0
+
+
+def test_shared_config_validation_warns_for_missing_port(monkeypatch):
+    """shared 模式配置不完整时应生成 AI 可读提示。"""
+    monkeypatch.setenv("MCP_WEB_SHARE_MODE", "shared")
+    monkeypatch.delenv("MCP_WEB_PORT", raising=False)
+    monkeypatch.setenv("MCP_WEB_PORT_AUTO_CLEANUP", "true")
+
+    warnings = validate_mcp_web_config()
+
+    assert any("MCP_WEB_PORT" in warning for warning in warnings)
+    assert any("MCP_WEB_PORT_AUTO_CLEANUP" in warning for warning in warnings)
+
+
+def test_wsl_browser_open_uses_single_successful_cmd_start(monkeypatch):
+    """cmd.exe start 成功时不应因输出解码或 fallback 再打开一次。"""
+    calls = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return Result()
+
+    monkeypatch.setattr(browser_utils.subprocess, "run", fake_run)
+
+    browser_utils.open_browser_in_wsl("http://127.0.0.1:9790")
+
+    assert len(calls) == 1
+    assert calls[0][0] == ["cmd.exe", "/c", "start", "", "http://127.0.0.1:9790"]
+    assert calls[0][1]["errors"] == "replace"

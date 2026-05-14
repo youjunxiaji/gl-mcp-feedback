@@ -129,6 +129,11 @@
     </div>
 
     <script>
+        function sendPageHeartbeat() {
+            fetch('/api/page-heartbeat', { method: 'POST', keepalive: true })
+                .catch(function() {});
+        }
+
         function checkSession() {
             fetch('/api/status')
                 .then(function(r) { return r.json(); })
@@ -140,6 +145,8 @@
                 .catch(function() {});
         }
 
+        sendPageHeartbeat();
+        setInterval(sendPageHeartbeat, 5000);
         setInterval(checkSession, 3000);
     </script>
 </body>

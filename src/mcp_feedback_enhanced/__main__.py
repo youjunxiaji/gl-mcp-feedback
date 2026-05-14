@@ -42,6 +42,13 @@ def main():
     # 服务器命令（默认）
     subparsers.add_parser("server", help="启动 MCP 服务器（默认）")
 
+    hub_parser = subparsers.add_parser("web-hub", help=argparse.SUPPRESS)
+    hub_parser.add_argument("--host", default="127.0.0.1")
+    hub_parser.add_argument("--port", type=int, default=8765)
+    hub_parser.add_argument("--token", required=True)
+    hub_parser.add_argument("--idle-timeout", type=int, default=1800)
+    hub_parser.add_argument("--state-file", default="")
+
     # 测试命令
     test_parser = subparsers.add_parser("test", help="执行测试")
     test_parser.add_argument(
@@ -58,6 +65,8 @@ def main():
 
     if args.command == "test":
         run_tests(args)
+    elif args.command == "web-hub":
+        run_web_hub(args)
     elif args.command == "version":
         show_version()
     elif args.command == "server" or args.command is None:
@@ -73,6 +82,63 @@ def run_server():
     from .server import main as server_main
 
     return server_main()
+
+
+def run_web_hub(args):
+    """启动由 MCP client 维护的共享 Web Hub。"""
+    import time
+    from pathlib import Path
+
+    from .web.hub_client import HubConnection, write_hub_state
+    from .web.main import WebUIManager
+    from .web.utils.port_manager import PortManager
+
+    os.environ["MCP_WEB_HUB"] = "true"
+    os.environ["MCP_WEB_HUB_TOKEN"] = args.token
+    os.environ["MCP_WEB_HOST"] = args.host
+    os.environ["MCP_WEB_PORT"] = str(args.port)
+    os.environ["MCP_WEB_PORT_AUTO_CLEANUP"] = "false"
+
+    if not PortManager.is_port_available(args.host, args.port):
+        print(
+            f"Web Hub 端口 {args.host}:{args.port} 已被占用，无法启动 shared Hub。",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    manager = WebUIManager(port=args.port)
+    manager.ensure_server_running()
+
+    connection = HubConnection(
+        url=f"http://{manager.host}:{manager.port}",
+        host=manager.host,
+        port=manager.port,
+        token=args.token,
+        pid=os.getpid(),
+    )
+    write_hub_state(connection)
+
+    state_path = Path(args.state_file) if args.state_file else None
+    idle_timeout = max(int(args.idle_timeout), 0)
+    idle_since = time.time()
+
+    try:
+        while True:
+            has_pending_session = any(
+                not session.feedback_completed.is_set() and not session.is_terminal()
+                for session in manager.sessions.values()
+            )
+            if has_pending_session:
+                idle_since = time.time()
+            elif idle_timeout > 0 and time.time() - idle_since >= idle_timeout:
+                break
+            time.sleep(5)
+    finally:
+        if state_path and state_path.exists():
+            try:
+                state_path.unlink()
+            except OSError:
+                pass
 
 
 def run_tests(args):

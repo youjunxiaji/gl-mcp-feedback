@@ -7,6 +7,7 @@
 """
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,11 +32,34 @@ if TYPE_CHECKING:
 def setup_routes(manager: "WebUIManager"):
     """设置路由"""
 
+    def require_hub_auth(request: Request):
+        """校验 managed Web Hub 的本地 API token。"""
+        if not getattr(manager, "hub_token", ""):
+            return None
+        expected = f"Bearer {manager.hub_token}"
+        if request.headers.get("authorization") != expected:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "message": "Invalid hub token"},
+            )
+        return None
+
     def build_session_info(session) -> dict:
         """构建前端/API 共用的会话信息。"""
+        source_info = getattr(session, "source_info", {}) or {}
+        source_project_directory = source_info.get(
+            "project_directory", session.project_directory
+        )
+        source_project_name = (
+            source_info.get("project_name")
+            or Path(source_project_directory or session.project_directory).name
+        )
         return {
             "session_id": session.session_id,
             "project_directory": session.project_directory,
+            "source_info": source_info,
+            "source_project_name": source_project_name,
+            "source_project_directory": source_project_directory,
             "summary": session.summary,
             "title": session.title,
             "status": session.status.value,
@@ -154,6 +178,108 @@ def setup_routes(manager: "WebUIManager"):
 
         debug_log(f"Web 翻译 API 返回 {len(translations)} 种语言的数据")
         return JSONResponse(content=translations)
+
+    @manager.app.get("/api/hub/health")
+    async def hub_health(request: Request):
+        """Managed Web Hub 健康检查。"""
+        auth_error = require_hub_auth(request)
+        if auth_error:
+            return auth_error
+        return JSONResponse(
+            content={
+                "app": "gl-mcp-feedback",
+                "hub": bool(getattr(manager, "is_hub", False)),
+                "version": __version__,
+                "pid": os.getpid(),
+                "host": manager.host,
+                "port": manager.port,
+                "active_sessions": len(manager.sessions),
+            }
+        )
+
+    @manager.app.post("/api/page-heartbeat")
+    async def page_heartbeat():
+        """记录浏览器页面存活，覆盖等待页尚未建立 WebSocket 的场景。"""
+        manager._page_last_seen_at = time.time()
+        current_session = manager.get_current_session()
+        return JSONResponse(
+            content={
+                "ok": True,
+                "session_count": len(manager.sessions),
+                "current_session_id": (
+                    current_session.session_id if current_session else None
+                ),
+            }
+        )
+
+    @manager.app.post("/api/hub/sessions")
+    async def hub_create_session(request: Request):
+        """跨进程注册反馈会话到 managed Web Hub。"""
+        auth_error = require_hub_auth(request)
+        if auth_error:
+            return auth_error
+
+        data = await request.json()
+        project_directory = data.get("project_directory") or "."
+        source = data.get("source") or {}
+        source.setdefault("project_directory", project_directory)
+        session_id = manager.create_session(
+            project_directory,
+            data.get("summary") or "",
+            title=data.get("title") or "",
+            session_id=data.get("session_id"),
+            source_info=source,
+        )
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=500,
+                content={"error": "session_create_failed"},
+            )
+
+        timeout = int(data.get("timeout") or 600)
+        session.start_feedback_wait_window(timeout)
+        await manager.notify_existing_tab_to_refresh()
+        if os.getenv("MCP_TEST_MODE", "").lower() != "true":
+            await manager.smart_open_browser(manager.get_server_url())
+        return JSONResponse(
+            content={
+                "session_id": session_id,
+                "web_url": manager.get_server_url(),
+                "session_info": build_session_info(session),
+            }
+        )
+
+    @manager.app.post("/api/hub/sessions/{session_id}/wait")
+    async def hub_wait_session(session_id: str, request: Request):
+        """Long-poll 等待 managed Hub 中的反馈结果。"""
+        auth_error = require_hub_auth(request)
+        if auth_error:
+            return auth_error
+
+        session = manager.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "session_not_found", "session_id": session_id},
+            )
+
+        data = await request.json()
+        timeout = int(data.get("timeout") or 600)
+        try:
+            result = await session.wait_for_feedback(timeout)
+            return JSONResponse(content=result)
+        except TimeoutError as exc:
+            return JSONResponse(
+                status_code=408,
+                content={"error": "timeout", "message": str(exc)},
+            )
+        except Exception as exc:
+            debug_log(f"Hub 等待会话 {session_id} 失败: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "wait_failed", "message": str(exc)},
+            )
 
     @manager.app.get("/api/session-status")
     async def get_session_status(request: Request):
@@ -764,10 +890,10 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
 
 async def _delayed_server_stop(manager: "WebUIManager"):
     """延迟停止服务器"""
-    import asyncio  # noqa: PLC0415
+    import asyncio
 
     await asyncio.sleep(5)  # 等待 5 秒让前端有时间关闭
-    from ..main import stop_web_ui  # noqa: PLC0415
+    from ..main import stop_web_ui
 
     stop_web_ui()
     debug_log("Web UI 服务器已因用户超时而停止")

@@ -733,6 +733,12 @@
             return allSessionsCache.find(function(s) { return s.session_id === currentSessionId; }) || null;
         }
 
+        function getSessionDisplayLabel(sessionInfo) {
+            var title = sessionInfo.title || getShortSessionId(sessionInfo.session_id);
+            var project = sessionInfo.source_project_name || '';
+            return project ? (project + ' · ' + title) : title;
+        }
+
         function getVisibleSessions(sessions) {
             return (sessions || []).filter(function(s) { return !hiddenSessionTabs[s.session_id]; });
         }
@@ -884,16 +890,17 @@
                 var active = s.session_id === currentSessionId;
                 var waiting = s.can_submit && !s.feedback_completed;
                 var unread = !!unreadSessions[s.session_id] && !active;
-                var label = escapeHtml(s.title || getShortSessionId(s.session_id));
+                var label = escapeHtml(getSessionDisplayLabel(s));
+                var editValue = escapeHtml(s.title || getShortSessionId(s.session_id));
                 var escapedSessionId = escapeHtml(s.session_id);
                 var statusCls = unread ? 'bg-red-400' : (waiting ? 'bg-amber-400' : (s.feedback_completed ? 'bg-emerald-400' : 'bg-slate-500'));
                 var cls = active
                     ? 'bg-surface-overlay text-slate-100 border-blue-500/40 shadow-sm'
                     : (unread ? 'bg-red-500/10 text-red-200 border-red-400/40 hover:bg-red-500/15' : 'bg-surface-raised text-slate-500 border-white/[0.06] hover:text-slate-200 hover:border-blue-500/30');
                 if (editingSessionId === s.session_id) {
-                    return '<div class="shrink-0 max-w-[260px] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
+                    return '<div class="shrink-0 w-[min(70vw,520px)] max-w-[calc(100vw-32px)] flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-1.5 transition ' + cls + '">' +
                         '<span class="w-1.5 h-1.5 rounded-full ' + statusCls + '"></span>' +
-                        '<input id="sessionTitleEditor" value="' + label + '" onkeydown="handleTitleEditKeydown(event, \'' + escapedSessionId + '\')" onblur="commitInlineTitleEdit(\'' + escapedSessionId + '\')" class="w-32 bg-transparent border-none outline-none p-0 text-xs font-medium text-inherit" />' +
+                        '<input id="sessionTitleEditor" value="' + editValue + '" onkeydown="handleTitleEditKeydown(event, \'' + escapedSessionId + '\')" onblur="commitInlineTitleEdit(\'' + escapedSessionId + '\')" class="min-w-0 flex-1 bg-transparent border-none outline-none p-0 text-xs font-medium text-inherit" />' +
                         '<span class="font-mono text-[10px] text-slate-500">' + getShortSessionId(s.session_id) + '</span>' +
                         '<button type="button" onclick="closeSessionTab(event, \'' + escapedSessionId + '\')" title="隐藏标签" class="w-4 h-4 flex items-center justify-center rounded-full text-slate-500 hover:text-red-300 hover:bg-red-400/10 transition">&times;</button>' +
                         '</div>';
@@ -1537,9 +1544,31 @@
             loadSessionTabs(currentSessionId);
         }
 
+        var lastHeartbeatSessionCount = null;
+
+        function sendPageHeartbeat() {
+            fetch('/api/page-heartbeat', { method: 'POST', keepalive: true })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (
+                        lastHeartbeatSessionCount !== null &&
+                        typeof data.session_count === 'number' &&
+                        data.session_count !== lastHeartbeatSessionCount
+                    ) {
+                        loadSessionTabs(currentSessionId);
+                    }
+                    if (typeof data.session_count === 'number') {
+                        lastHeartbeatSessionCount = data.session_count;
+                    }
+                })
+                .catch(function() {});
+        }
+
         // --- Init ---
         document.addEventListener('DOMContentLoaded', function() {
             registerPwaInstall();
+            sendPageHeartbeat();
+            setInterval(sendPageHeartbeat, 5000);
             applyThemeMode(localStorage.getItem('feedbackThemeMode') || 'auto');
             loadShortcutRules();
             setSwitchVisual('notificationToggle', notificationEnabled);
@@ -1671,6 +1700,7 @@
             var titleHtml = s.title
                 ? '<div class="text-[13px] font-semibold text-slate-200 mb-1.5 truncate" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + '</div>'
                 : '';
+            var projectLabel = s.source_project_directory || s.project_directory || '--';
             return '<div class="bg-surface-raised border ' + borderCls + ' rounded-2xl p-4 hover:shadow-lg transition">' +
                 '<div class="flex items-center justify-between mb-2">' +
                     '<span class="font-mono text-xs text-blue-400 bg-blue-500/[0.12] px-2.5 py-0.5 rounded-full">' + sid + '</span>' +
@@ -1679,7 +1709,7 @@
                 titleHtml +
                 '<div class="text-xs text-slate-500 space-y-0.5">' +
                     '<div>创建时间：' + formatTime(s.created_at) + '</div>' +
-                    '<div>项目：' + escapeHtml(s.project_directory || '--') + '</div>' +
+                    '<div>项目：' + escapeHtml(projectLabel) + '</div>' +
                 '</div>' +
                 '<div class="flex gap-2 mt-3">' +
                     '<button onclick="showSessionDetail(\'' + s.session_id + '\')" class="text-xs font-medium text-slate-400 border border-white/[0.06] rounded px-3 py-1.5 hover:text-slate-200 hover:border-blue-500 hover:bg-blue-500/10 transition">查看详情</button>' +
@@ -1700,6 +1730,7 @@
             var titleRow = s.title
                 ? '<div class="text-slate-500">标题</div><div class="text-slate-200 font-medium break-all">' + escapeHtml(s.title) + '</div>'
                 : '';
+            var projectLabel = s.source_project_directory || s.project_directory || '--';
 
             overlay.innerHTML = '<div class="bg-surface-raised border border-white/[0.06] rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden">' +
                 '<div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">' +
@@ -1713,7 +1744,7 @@
                         '<div class="text-slate-500">状态</div><div>' + statusLabel(s.status) + '</div>' +
                         '<div class="text-slate-500">创建时间</div><div class="text-slate-300">' + formatTime(s.created_at) + '</div>' +
                         '<div class="text-slate-500">最后活动</div><div class="text-slate-300">' + formatTime(s.last_activity) + '</div>' +
-                        '<div class="text-slate-500">项目</div><div class="text-slate-300 break-all">' + escapeHtml(s.project_directory || '--') + '</div>' +
+                        '<div class="text-slate-500">项目</div><div class="text-slate-300 break-all">' + escapeHtml(projectLabel) + '</div>' +
                     '</div>' +
                     '<div class="border-t border-white/[0.06] pt-4">' +
                         '<div class="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">AI 工作摘要</div>' +
