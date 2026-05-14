@@ -1,11 +1,5 @@
 # gl-mcp-feedback（交互反馈 MCP）
 
-[![PyPI](https://img.shields.io/pypi/v/gl-mcp-feedback)](https://pypi.org/project/gl-mcp-feedback/)
-[![GitHub](https://img.shields.io/github/stars/youjunxiaji/gl-mcp-feedback?style=social)](https://github.com/youjunxiaji/gl-mcp-feedback)
-
-**基于：** [Fábio Ferreira](https://x.com/fabiomlferreira) 的 [interactive-feedback-mcp](https://github.com/noopstudios/interactive-feedback-mcp) ⭐ 和 [Minidoracat](https://github.com/Minidoracat) 的 [mcp-feedback-enhanced](https://github.com/Minidoracat/mcp-feedback-enhanced)
-**UI 设计参考：** [sanshao85/mcp-feedback-collector](https://github.com/sanshao85/mcp-feedback-collector)
-
 ## 🎯 核心概念
 
 这是一个 [MCP 服务器](https://modelcontextprotocol.io/)，建立**反馈导向的开发工作流程**，提供 **Web UI** 界面，完美适配本地、**SSH 远程开发环境**与 **WSL (Windows Subsystem for Linux) 环境**。通过引导 AI 与用户确认而非进行推测性操作，可将多次工具调用合并为单次反馈导向请求，大幅节省平台成本并提升开发效率。
@@ -124,10 +118,23 @@ pip install uv
 
 AI 会自动调用 `interactive_feedback` 工具，打开 Web UI 并等待你的反馈。
 
-> **提示**：为获得最佳效果，建议在 AI 助手的规则中添加：
-> ```
-> 注意在任务完成前根据 gl-mcp-feedback 工具的要求进行工具调用
-> ```
+### 推荐的 AI 规则配置
+
+为了让 AI 助手更稳地走「先确认 → 再动手 → 最后回收反馈」的流程，建议把下面这条 **gl-mcp-feedback 交互规范** 放进你的 AI 助手规则（例如 Cursor 的 User Rules / Project Rules、Cline 的 Custom Instructions 等）：
+
+```
+gl-mcp-feedback 交互规范：
+
+1. 代码修改完成后，必须调用 interactive_feedback，在 summary 中说明已完成的修改，等待用户测试反馈。
+2. 用户提出新需求时，先调用 interactive_feedback 阐述理解和实现思路，等用户确认后再写代码。
+3. 工具调用被中断/取消时，立即调用 interactive_feedback 询问用户。
+4. MCP 调用超时时，立即重新调用等待反馈（timeout 建议 600 秒以上）。
+5. summary 参数使用 Markdown 格式，按需使用标题、列表、文件路径等结构化信息。
+6. summary 用 Markdown 时尽量保持简洁：减少代码块嵌套、长串双引号、复杂转义，能用纯文本叙述就用纯文本，能用列表就不要堆段落。代码块仅在贴具体代码/命令时使用。
+```
+
+> 第 1、2 条是核心：**改代码前先确认、改代码后回收反馈**，把多次试错合并成一次有效沟通。
+> 第 5、6 条是渲染相关：summary 会在 Web UI 里以 Markdown 形式展示，简洁的写法可读性最好。
 
 ## ⚙️ 高级设置
 
