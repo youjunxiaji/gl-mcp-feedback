@@ -349,66 +349,25 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
 
 
 # ===== MCP Prompt 定义 =====
-# 这份 prompt 是 gl-mcp-feedback 交互规范的唯一权威：何时调用、怎么写
-# `summary`、何时该问「能否结束」选择题，全部在这里。`interactive_feedback`
-# 工具的 docstring 只描述参数本身，不再重复这些规则。
+# Ultra-minimal activation prompt. The full interaction contract lives in
+# the user's project rules (gl-mcp-feedback 交互规范) and in
+# ``interactive_feedback``'s own docstring, so this prompt only fires the
+# activation signal for the current turn.
 _CHAT_PROMPT = """\
-# ACTIVATE: gl-mcp-feedback interaction mode
+# 激活：gl-mcp-feedback 互动模式
 
-`interactive_feedback` 是「问选择题」的控件，不是主沟通通道：
+请遵循本项目的 gl-mcp-feedback 用户规则。补充约束：
 
-- 实质内容（分析 / 思考 / 进度 / 代码改动说明 / 文件路径）写在你的
-  Cursor 聊天回复里，跟随用户语言。
-- `interactive_feedback` 的 `summary` 只装「请你选择」那一块，按下
-  面的模板写。
-
-## summary 模板
-
-```
-## 请你选择
-
-#### Q1. <题干>
-
-- **[A-推荐]** 选项 A
-- **[B]** 选项 B
-- **[C]** 其它（请补充描述）
-```
-
-## 何时调用
-
-- 需要用户做选择时调用。
-- 当你判断这一轮工作快要结束时，**必须先问一道「这一步怎么收尾？」
-  选择题**，得到用户的肯定回答（语义上等同于「可以了」）后再处理。
-  默认题：
-
-  ```
-  ## 请你选择
-
-  #### Q1. 这一步怎么收尾？
-
-  - **[A-推荐]** 可以了，输出 commit 命令
-  - **[B]** 继续调整 / 还有问题
-  - **[C]** 其它（请补充描述）
-  ```
-
-  注意：默认题不要直接放「结束对话」选项；想结束对话由用户自己说出
-  来（语义上等同于「你可以休息了 / 结束 / stop」即可）。
-
-- 跳过 / 超时时再调用一次问对方为什么，不要默认对话结束。
-- 用 Cursor 内置 `AskQuestion` 之前先想：选择题都该走
-  `interactive_feedback`。
-
-## 硬规则
-
-- 选项必须用 `**[X]**` / `**[X-推荐]**` 这种粗体方括号字母标号；
-  推荐项把「推荐」放进括号内（`**[A-推荐]**`），不要写成
-  `**[A]** ... 【推荐】`。
-- 始终保留一个 `**[?]** 其它（请补充描述）` 兜底项。
-- 选项末尾不加「请回复 1A 2B」之类的格式提示。
-- `summary` 中不要再写 `## 发现 / ## 思考 / ## 进度` 之类的上区
-  内容（那些写在 Cursor 聊天回复里）。
-- `summary` 不能为空，不能是占位套话（如「我已完成了您请求的任务」）。
-- `timeout >= 600`，跟随用户语言。\
+1. **立即调用 `interactive_feedback`**：把当前的理解/计划写入
+   `summary`（Markdown），然后等待用户反馈。
+2. **不要用纯文本结束对话**：所有给用户看的实质内容（分析、方案、
+   代码改动总结、需要确认的问题）都必须走 `summary`，因为 Web UI
+   对 Markdown 的渲染效果远好于 Cursor 聊天面板。
+3. **此工具可用时不要使用 `AskQuestion`**：所有要问用户的问题，
+   写成 `summary` 里的有序列表。
+4. **只在用户明确终止时停止**（`结束` / `不用了` / `stop` / `done`）。
+   `summary` 为空字符串、或填占位套话（如"我已完成了您请求的任务。"）
+   会被运行时校验拒绝，必须重新调用并写入真实内容。\
 """
 
 
@@ -431,13 +390,10 @@ async def interactive_feedback(
         str,
         Field(
             description=(
-                "Markdown for the choice block rendered in the Web UI. "
-                "Contains only the `## 请你选择` section with `#### Qn.` "
-                "questions and `**[X]**` / `**[X-推荐]**` options. Findings "
-                "and analysis stay in the Cursor chat reply. See the chat "
-                "prompt for the full template; empty strings and placeholder "
-                "phrases (e.g. \"我已完成了您请求的任务。\") are rejected at "
-                "runtime."
+                "Markdown summary of the AI's current work / plan / question, "
+                "rendered in the Web UI. MUST be filled in with substantive "
+                "content; empty strings and placeholder phrases (e.g. "
+                "\"我已完成了您请求的任务。\") are rejected at runtime."
             )
         ),
     ] = "",
@@ -445,9 +401,10 @@ async def interactive_feedback(
         str,
         Field(
             description=(
-                "Optional short headline (≤30 chars) shown in the Web UI "
-                "tab and at the top of the choice panel. Leave empty when "
-                "``summary`` is self-explanatory."
+                "Optional short headline (max ~30 chars) for this feedback "
+                "round, displayed in the browser tab and at the top of the "
+                "AI summary panel. Should be concise (e.g. \"需要你提供更多信息\", "
+                "\"修复完成，请验证\"). Leave empty when there's no good headline."
             )
         ),
     ] = "",
@@ -455,31 +412,52 @@ async def interactive_feedback(
         int, Field(description="Seconds to wait for user feedback. Keep >= 600.")
     ] = 600,
 ) -> ToolResult:
-    """Open a Web UI to collect a user choice via a Markdown question block.
+    """Open a Web UI to collect interactive feedback from the user.
 
-    Behavioral rules (when to call, how to write ``summary``, when to
-    ask the "可以收尾了吗" check-in question, when to stop) live in
-    ``_CHAT_PROMPT`` above. This docstring only describes the
-    parameters and return value.
+    This tool is the PRIMARY communication channel with the user. The full
+    list of "when to call" scenarios lives in the project's gl-mcp-feedback
+    user rules; this docstring only covers the runtime contract that the
+    tool itself enforces.
+
+    Strict prohibitions:
+        - While this tool is available, DO NOT invoke Cursor's built-in
+          ``AskQuestion``. Route every question through ``summary`` as a
+          numbered list.
+        - DO NOT end the turn with a plain-text reply when there is
+          substantive content for the user to read. Put it in ``summary``.
+        - When the user skips without feedback, re-call this tool to ask
+          why; only stop on explicit termination
+          (``结束`` / ``不用了`` / ``stop`` / ``done``).
+        - Allowed parameters: ``project_directory``, ``summary``,
+          ``title``, ``timeout``. Names like ``question`` / ``choices`` /
+          ``options`` belong to ``AskQuestion`` and will fail schema
+          validation here.
+
+    ``summary`` writing rules:
+        - Markdown: headings (##), lists, tables, code fences, bold for
+          key decisions. Include modified file paths and explicit
+          questions when applicable.
+        - NEVER pass an empty string or the placeholder phrase
+          ``我已完成了您请求的任务。`` — runtime validation rejects them
+          and you must re-call with a real summary.
+
+    ``title`` writing rules:
+        - Optional, ≤30 chars headline shown in the browser tab and
+          summary header. Leave empty when ``summary`` is
+          self-explanatory.
+        - Examples: ``需要你提供更多信息`` / ``修复完成，请验证`` /
+          ``实现方案确认``.
 
     Args:
-        project_directory: Absolute or relative project path. Defaults
-            to current working directory.
-        summary: Required. Markdown for the choice block — the
-            ``## 请你选择`` section with ``#### Qn.`` questions and
-            ``**[X]**`` / ``**[X-推荐]**`` options. See ``_CHAT_PROMPT``
-            for the full template. Empty strings and placeholder
-            phrases (e.g. ``我已完成了您请求的任务。``) are rejected at
-            runtime.
-        title: Optional short headline (≤30 chars) shown in the Web UI
-            tab and at the top of the choice panel. Leave empty when
-            ``summary`` is self-explanatory.
+        project_directory: Absolute or relative project path. Defaults to cwd.
+        summary: Required Markdown summary. No empty string, no placeholder.
+        title: Optional short headline for the Web UI tab and summary header.
         timeout: Seconds to wait for user feedback. Keep ``>= 600``.
 
     Returns:
         ToolResult: TextContent with the user's text feedback plus
             MCPImage objects for any uploaded images. An empty result
-            means the user skipped — call this tool again to ask why.
+            means the user skipped — re-call to ask why.
     """
     # summary 运行时校验：阻止 AI 使用空串或占位套话偷懒
     # 规范化：去首尾空白 + 去末尾中英文标点，让“我已完成了您请求的任务”“…。”“… .”都能命中
@@ -493,20 +471,10 @@ async def interactive_feedback(
             "[interactive_feedback REJECTED]\n"
             "The `summary` you passed is empty or a placeholder phrase; "
             "it will NOT be shown to the user.\n"
-            "You MUST call this tool AGAIN with a real Markdown summary "
-            "following the two-zone template:\n"
-            "  ## <upper-zone heading: 发现/思考/进度>\n"
-            "  <findings, analysis, file paths, trade-offs ...>\n"
-            "  ---\n"
-            "  ## 请你选择\n"
-            "  #### Q1. <question>\n"
-            "  - **[A]** option A【推荐】\n"
-            "  - **[B]** option B\n"
-            "  - **[C]** 其它（请补充描述）\n"
-            "After the last option, STOP — do NOT add a trailing "
-            "reply-format line.\n"
-            "When you have only findings and no question, omit the divider "
-            "and the lower zone.\n"
+            "You MUST call this tool AGAIN with a real Markdown summary containing:\n"
+            "  1) Your current understanding / progress / proposed plan.\n"
+            "  2) File paths touched and key trade-offs.\n"
+            "  3) Explicit question(s) the user needs to answer.\n"
             "Write the summary in the user's language (NOT English, unless "
             "the user is writing in English). Do NOT reply to the user "
             "with plain Cursor chat text in the meantime."
