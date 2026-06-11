@@ -100,10 +100,12 @@
 
     <script>
         function checkSession() {
-            fetch('/api/status')
+            fetch('/api/session-status')
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.has_session) {
+                        // 标记「由等待页检测到新会话」，reload 后由 feedback.html 补一次提醒
+                        try { sessionStorage.setItem('mcpPendingAlert', '1'); } catch (e) {}
                         location.reload();
                     }
                 })

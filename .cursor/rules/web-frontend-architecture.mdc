@@ -46,6 +46,7 @@ alwaysApply: true
 - **Tab 导航**：工作区、会话管理、设定、关于
 - **工作区**：左侧 AI 摘要（Markdown 渲染，标题旁可显示反馈 `title`）+ 右侧反馈输入
 - **反馈提交**：WebSocket 发送 `submit_feedback` 消息，支持 Ctrl+Enter 快捷键
+- **新反馈提醒**：收到 WebSocket `session_updated` 时调用 `notifyNewFeedback()`，用 Web Audio 合成「叮咚」提示音（`playAlertSound`）+ 桌面通知（`showDesktopNotification`，仅 `document.hidden` 时弹、点击聚焦窗口）。默认始终开启、无设置开关；首次用户手势由 `setupAlertOnFirstGesture()` 解锁音频播放并请求 `Notification` 授权
 - **图片上传**：支持文件选择和 Ctrl+V 粘贴，base64 编码随反馈一起发送
 - **会话管理**：从 `/api/all-sessions` 动态加载，会话卡片与详情弹窗均显示 `title`
 - **底部统计面板**：可折叠
@@ -58,8 +59,8 @@ alwaysApply: true
 
 ### index.html 功能
 - 等待页面，显示"等待 MCP 服务调用"提示
-- 每 3 秒轮询 `/api/status` 检测新会话
-- 会话到达后自动 `location.reload()` 跳转到 feedback.html
+- 每 3 秒轮询 `/api/session-status` 检测新会话
+- 会话到达后写入 `sessionStorage` 标记 `mcpPendingAlert` 再 `location.reload()` 跳转到 feedback.html；feedback.html 加载时读到该标记会补调一次 `notifyNewFeedback()`，用于「等待页 → 首个会话」场景的提醒
 
 ## 编码规范
 
@@ -79,7 +80,7 @@ alwaysApply: true
 
 ### 后端 API
 - `GET /` — 根据是否有活跃会话返回 index.html 或 feedback.html
-- `GET /api/status` — 返回当前会话状态
+- `GET /api/session-status` — 返回当前会话状态（含 `has_session`、`session_info`）
 - `GET /api/all-sessions` — 返回所有会话列表
-- `GET /api/session` — 返回当前会话详情
+- `GET /api/current-session` — 返回当前会话详情
 - `WebSocket /ws` — 实时通信（反馈提交、会话更新）

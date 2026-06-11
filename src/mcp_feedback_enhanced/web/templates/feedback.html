@@ -469,6 +469,94 @@
                 : 'Interactive Feedback - 反馈收集';
         }
 
+        // --- Alert / 提醒（声音 + 桌面通知） ---
+        // 新反馈请求到达时把在后台标签/最小化窗口的用户「叫」回来。默认始终开启，无开关。
+        var alertAudioCtx = null;
+
+        // 浏览器的自动播放与通知授权都要求用户手势，这里在首次交互时解锁
+        function setupAlertOnFirstGesture() {
+            function requestNotifyPermission() {
+                if (('Notification' in window) && Notification.permission === 'default') {
+                    try { Notification.requestPermission(); } catch (e) {}
+                }
+            }
+            var unlocked = false;
+            function unlock() {
+                if (unlocked) return;
+                unlocked = true;
+                try {
+                    var AC = window.AudioContext || window.webkitAudioContext;
+                    if (AC) {
+                        if (!alertAudioCtx) alertAudioCtx = new AC();
+                        if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume();
+                    }
+                } catch (e) {}
+                requestNotifyPermission();
+                document.removeEventListener('click', unlock);
+                document.removeEventListener('keydown', unlock);
+            }
+            document.addEventListener('click', unlock);
+            document.addEventListener('keydown', unlock);
+            // 部分浏览器允许非手势直接请求授权，先尝试一次
+            requestNotifyPermission();
+        }
+
+        // 用 Web Audio 合成「叮咚」两声提示音，无需音频文件
+        function playAlertSound() {
+            try {
+                var AC = window.AudioContext || window.webkitAudioContext;
+                if (!AC) return;
+                if (!alertAudioCtx) alertAudioCtx = new AC();
+                if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume();
+                var now = alertAudioCtx.currentTime;
+                [880, 1175].forEach(function(freq, i) {
+                    var osc = alertAudioCtx.createOscillator();
+                    var gain = alertAudioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.value = freq;
+                    var t = now + i * 0.18;
+                    gain.gain.setValueAtTime(0.0001, t);
+                    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.02);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+                    osc.connect(gain);
+                    gain.connect(alertAudioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.18);
+                });
+            } catch (e) {
+                console.warn('playAlertSound failed', e);
+            }
+        }
+
+        // 仅在页面不可见（后台标签/最小化）时弹系统通知，前台靠声音即可
+        function showDesktopNotification(title, body) {
+            try {
+                if (!('Notification' in window)) return;
+                if (Notification.permission !== 'granted') return;
+                if (!document.hidden) return;
+                var n = new Notification(title, {
+                    body: body || '',
+                    icon: '/static/icon-192.png',
+                    tag: 'mcp-feedback',
+                    renotify: true
+                });
+                n.onclick = function() {
+                    window.focus();
+                    n.close();
+                };
+            } catch (e) {
+                console.warn('showDesktopNotification failed', e);
+            }
+        }
+
+        function notifyNewFeedback(title) {
+            playAlertSound();
+            showDesktopNotification(
+                title ? title : '新的反馈请求',
+                '点击切回反馈页面进行回复'
+            );
+        }
+
         // --- WebSocket ---
         var ws = null;
         var wsReady = false;
@@ -519,6 +607,8 @@
                     updateFeedbackTitle(data.session_info.title || '');
                     var tag = document.getElementById('newTag');
                     if (tag) tag.style.display = '';
+
+                    notifyNewFeedback(data.session_info.title || '');
 
                     var btn = document.getElementById('submitBtn');
                     if (btn) {
@@ -653,6 +743,17 @@
 
             // Connect WebSocket
             connectWebSocket();
+
+            // 初始化提醒（首次手势解锁声音播放 + 请求桌面通知授权）
+            setupAlertOnFirstGesture();
+
+            // 若由等待页（index.html）检测到新会话跳转而来，补一次提醒
+            try {
+                if (sessionStorage.getItem('mcpPendingAlert')) {
+                    sessionStorage.removeItem('mcpPendingAlert');
+                    notifyNewFeedback('新的反馈请求');
+                }
+            } catch (e) {}
 
             // File input change handler
             var fileInput = document.getElementById('imageInput');
