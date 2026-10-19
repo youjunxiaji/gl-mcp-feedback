@@ -46,6 +46,34 @@ from .utils.resource_manager import create_temp_file
 
 
 # ===== 编码初始化 =====
+def _reconfigure_utf8(stream: object) -> None:
+    """将文本流重新配置为 UTF-8，流不支持 reconfigure 时不做处理
+
+    Args:
+        stream: 标准输入、输出或错误流
+    """
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
+
+
+def _get_binary_buffer(stream: object) -> Any:
+    """取得文本流底层的二进制缓冲区，没有 buffer 属性时分离出底层流
+
+    Args:
+        stream: 标准输入或输出流
+
+    Returns:
+        二进制缓冲区，取不到时为 None
+    """
+    buffer = getattr(stream, "buffer", None)
+    if buffer is None:
+        detach = getattr(stream, "detach", None)
+        if callable(detach):
+            buffer = detach()
+    return buffer
+
+
 def init_encoding():
     """初始化编码设置，确保正确处理中文字符"""
     try:
@@ -58,19 +86,14 @@ def init_encoding():
             msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
 
             # 重新包装为 UTF-8 文本流，并禁用缓冲
-            stdin_buffer = getattr(sys.stdin, "buffer", None)
-            if stdin_buffer is None and hasattr(sys.stdin, "detach"):
-                stdin_buffer = sys.stdin.detach()  # type: ignore[union-attr]
-
-            stdout_buffer = getattr(sys.stdout, "buffer", None)
-            if stdout_buffer is None and hasattr(sys.stdout, "detach"):
-                stdout_buffer = sys.stdout.detach()  # type: ignore[union-attr]
+            stdin_buffer = _get_binary_buffer(sys.stdin)
+            stdout_buffer = _get_binary_buffer(sys.stdout)
 
             sys.stdin = io.TextIOWrapper(
-                stdin_buffer, encoding="utf-8", errors="replace", newline=None  # type: ignore[arg-type]
+                stdin_buffer, encoding="utf-8", errors="replace", newline=None
             )
             sys.stdout = io.TextIOWrapper(
-                stdout_buffer,  # type: ignore[arg-type]
+                stdout_buffer,
                 encoding="utf-8",
                 errors="replace",
                 newline="",
@@ -78,25 +101,19 @@ def init_encoding():
             )
         else:
             # 非 Windows 系统的标准设置
-            if hasattr(sys.stdout, "reconfigure"):
-                sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-            if hasattr(sys.stdin, "reconfigure"):
-                sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+            _reconfigure_utf8(sys.stdout)
+            _reconfigure_utf8(sys.stdin)
 
         # 设置 stderr 编码（用于调试信息）
-        if hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        _reconfigure_utf8(sys.stderr)
 
         return True
     except Exception:
         # 如果编码设置失败，尝试基本设置
         try:
-            if hasattr(sys.stdout, "reconfigure"):
-                sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-            if hasattr(sys.stdin, "reconfigure"):
-                sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-            if hasattr(sys.stderr, "reconfigure"):
-                sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+            _reconfigure_utf8(sys.stdout)
+            _reconfigure_utf8(sys.stdin)
+            _reconfigure_utf8(sys.stderr)
         except:
             pass
         return False

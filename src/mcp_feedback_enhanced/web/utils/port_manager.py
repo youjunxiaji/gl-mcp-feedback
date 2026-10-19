@@ -33,7 +33,11 @@ class PortManager:
         """
         try:
             for conn in psutil.net_connections(kind="inet"):
-                if conn.laddr.port == port and conn.status == psutil.CONN_LISTEN:
+                if (
+                    conn.laddr
+                    and conn.laddr.port == port
+                    and conn.status == psutil.CONN_LISTEN
+                ):
                     try:
                         process = psutil.Process(conn.pid)
                         return {
@@ -132,7 +136,8 @@ class PortManager:
 
                 for conn in psutil.net_connections(kind="inet"):
                     if (
-                        conn.laddr.port == port
+                        conn.laddr
+                        and conn.laddr.port == port
                         and conn.laddr.ip in [host, "0.0.0.0", "::"]
                         and conn.status == psutil.CONN_LISTEN
                     ):
@@ -299,7 +304,8 @@ class PortManager:
         try:
             for conn in psutil.net_connections(kind="inet"):
                 if (
-                    conn.status == psutil.CONN_LISTEN
+                    conn.laddr
+                    and conn.status == psutil.CONN_LISTEN
                     and start_port <= conn.laddr.port <= end_port
                 ):
                     try:

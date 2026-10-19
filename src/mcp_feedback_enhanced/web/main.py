@@ -429,7 +429,7 @@ class WebUIManager:
         for sid, s in self.sessions.items():
             if sid == current_session_id:
                 continue
-            priority = 0
+            priority = 0.0
             if s.status in (
                 SessionStatus.COMPLETED,
                 SessionStatus.ERROR,
@@ -816,7 +816,7 @@ class WebUIManager:
                 if hasattr(websocket, "client_state"):
                     try:
                         # 尝试从 starlette 导入（FastAPI 基于 Starlette）
-                        import starlette.websockets  # type: ignore[import-not-found]
+                        import starlette.websockets
 
                         if hasattr(starlette.websockets, "WebSocketState"):
                             WebSocketState = starlette.websockets.WebSocketState
@@ -1201,8 +1201,6 @@ element.innerHTML = renderedContent;
 ---
 
 **测试状态**: ✅ 功能正常运作"""
-
-            from ..debug import debug_log
 
             debug_log("启动 Web UI 测试...")
             debug_log(f"专案目录: {project_dir}")

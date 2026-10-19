@@ -62,6 +62,7 @@ def web_ui_manager() -> Generator[WebUIManager, None, None]:
     # 使用動態端口範圍避免衝突
     os.environ["MCP_WEB_PORT"] = "0"  # 讓系統自動分配端口
 
+    manager: WebUIManager | None = None
     try:
         manager = WebUIManager()  # 使用環境變數控制主機和端口
         yield manager
@@ -83,7 +84,7 @@ def web_ui_manager() -> Generator[WebUIManager, None, None]:
             os.environ.pop("MCP_WEB_PORT", None)
 
         # 清理
-        if manager.server_thread and manager.server_thread.is_alive():
+        if manager and manager.server_thread and manager.server_thread.is_alive():
             # 這裡可以添加服務器停止邏輯
             pass
 
