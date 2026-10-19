@@ -113,7 +113,7 @@ class WebUIManager:
         # 重构：使用单一活跃会话而非会话字典
         self.current_session: WebFeedbackSession | None = None
         self.sessions: dict[str, WebFeedbackSession] = {}  # 保留用于向后兼容
-        self.max_sessions: int = 5  # 最大会话数量限制
+        self.max_sessions: int = 10  # 最大会话数量限制
 
         # 全局标签页状态管理 - 跨会话保持
         self.global_active_tabs: dict[str, dict] = {}
