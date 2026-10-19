@@ -12,9 +12,16 @@ MCP Interactive Feedback Enhanced - 主程序入口
 
 import argparse
 import asyncio
+import base64
 import os
 import sys
+import time
 import warnings
+from typing import TYPE_CHECKING, NamedTuple
+
+
+if TYPE_CHECKING:
+    from .web.main import WebUIManager
 
 
 # 抑制 Windows 上的 asyncio ResourceWarning
@@ -108,11 +115,113 @@ def run_tests(args):
         sys.exit(1)
 
 
+def _build_demo_image(label: str, start_color: str, end_color: str) -> dict:
+    """生成测试用的示例图片（SVG 渐变图），同时用作缩略图
+
+    Args:
+        label: 图片上显示的文字，同时作为文件名
+        start_color: 渐变起始颜色
+        end_color: 渐变结束颜色
+
+    Returns:
+        可直接传给 submit_feedback 的图片字典
+    """
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200">'
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        f'<stop offset="0" stop-color="{start_color}"/>'
+        f'<stop offset="1" stop-color="{end_color}"/>'
+        "</linearGradient></defs>"
+        '<rect width="320" height="200" fill="url(#g)"/>'
+        '<text x="160" y="108" font-size="28" fill="white" text-anchor="middle" '
+        f'font-family="sans-serif">{label}</text></svg>'
+    )
+    raw = svg.encode("utf-8")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return {
+        "name": f"{label}.svg",
+        "data": encoded,
+        "size": len(raw),
+        "thumbnail": f"data:image/svg+xml;base64,{encoded}",
+    }
+
+
+class _DemoRound(NamedTuple):
+    """测试用的一轮历史对话：AI 的提问加上用户的回复"""
+
+    title: str
+    summary: str
+    feedback: str
+    images: list[dict]
+    minutes_ago: int
+    reply_after_seconds: int
+
+
+def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
+    """往测试用的管理器里灌入两轮带用户回复的历史对话
+
+    这样页面一打开就能看到多轮消息、时间分隔和图片缩略图。
+
+    Args:
+        manager: Web UI 管理器
+        project_directory: 会话使用的项目目录
+    """
+    now = time.time()
+    demo_rounds = [
+        _DemoRound(
+            title="确认方案",
+            summary=(
+                "我打算把工作区改成**聊天对话**的样式：\n\n"
+                "- AI 的消息靠左，你的回复靠右\n"
+                "- 每条消息最宽占屏幕的三分之二\n"
+                "- 输入框固定在窗口底部\n\n"
+                "这样可以吗？"
+            ),
+            feedback="可以，就按这个方案来。",
+            images=[],
+            minutes_ago=42,
+            reply_after_seconds=90,
+        ),
+        _DemoRound(
+            title="样式预览",
+            summary=(
+                "第一版已经做好了，主要改动：\n\n"
+                "1. 工作区改成消息流 + 底部输入框\n"
+                "2. 历史对话保存在内存里，刷新页面不会丢\n\n"
+                "核心渲染逻辑大致如下：\n\n"
+                "```javascript\n"
+                "const row = createMessageRow(message);\n"
+                "chatList.append(row);\n"
+                "```\n\n"
+                "请看看效果，有哪里需要调整？"
+            ),
+            feedback="整体不错，气泡的圆角想再大一点。\n另外附了两张参考图，你对照看看。",
+            images=[
+                _build_demo_image("参考图 A", "#2563eb", "#7c3aed"),
+                _build_demo_image("参考图 B", "#059669", "#0ea5e9"),
+            ],
+            minutes_ago=12,
+            reply_after_seconds=180,
+        ),
+    ]
+
+    for demo in demo_rounds:
+        session_id = manager.create_session(
+            project_directory, demo.summary, title=demo.title
+        )
+        session = manager.get_session(session_id)
+        if session is None:
+            continue
+        session.created_at = now - demo.minutes_ago * 60
+        asyncio.run(session.submit_feedback(demo.feedback, demo.images, {}))
+        session.feedback_submitted_at = session.created_at + demo.reply_after_seconds
+        session.last_activity = session.feedback_submitted_at
+
+
 def test_web_ui_simple():
     """简单的 Web UI 测试"""
     try:
         import tempfile
-        import time
         import webbrowser
 
         from .web.main import WebUIManager
@@ -135,7 +244,7 @@ def test_web_ui_simple():
             markdown_test_content = """# Web UI 测试 - Markdown 渲染功能
 
 ## 🎯 测试目标
-验证 **combinedSummaryContent** 区域的 Markdown 语法显示功能
+验证 AI 消息气泡里的 Markdown 语法显示功能
 
 ### ✨ 支援的语法特性
 
@@ -197,7 +306,11 @@ def process_feedback(data):
 ### 📝 测试结果
 如果您能看到上述内容以正确的格式显示，表示 Markdown 渲染功能运作正常！"""
 
-            created_session_id = manager.create_session(temp_dir, markdown_test_content)
+            # 先灌入两轮历史对话，最后一轮才是等待回复的当前会话
+            _seed_demo_rounds(manager, temp_dir)
+            created_session_id = manager.create_session(
+                temp_dir, markdown_test_content, title="Markdown 渲染测试"
+            )
 
             if created_session_id:
                 print("✅ 会话创建成功")

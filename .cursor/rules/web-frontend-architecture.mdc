@@ -31,7 +31,7 @@ alwaysApply: true
 ### 设计原则
 - **自包含**：每个 HTML 模板包含自己的所有样式和脚本，不依赖外部 CSS/JS 模块文件
 - **Tailwind CSS**：使用本地 JIT 编译脚本，通过 `tailwind.config` 在 `<script>` 中配置
-- **内联 JS**：WebSocket 连接、表单提交、Tab 切换、图片上传等功能均写在模板内的 `<script>` 标签中
+- **内联 JS**：WebSocket 连接、对话流渲染、表单提交、Tab 切换、图片上传等功能均写在模板内的 `<script>` 标签中
 - **Markdown 渲染**：使用 `marked.min.js` 库，样式通过 `.md` CSS 类在 `<style>` 中定义
 - **外部字体**：Google Fonts CDN 加载 DM Sans 和 JetBrains Mono
 
@@ -44,18 +44,23 @@ alwaysApply: true
 ### feedback.html 功能
 - **顶栏**：Logo、项目路径、会话 ID、连接状态
 - **Tab 导航**：工作区、会话管理、设定、关于
-- **工作区**：左侧 AI 摘要（Markdown 渲染，标题旁可显示反馈 `title`）+ 右侧反馈输入
-- **反馈提交**：WebSocket 发送 `submit_feedback` 消息，支持 Ctrl+Enter 快捷键
-- **新反馈提醒**：收到 WebSocket `session_updated` 时调用 `notifyNewFeedback()`，用 Web Audio 合成「叮咚」提示音（`playAlertSound`）+ 桌面通知（`showDesktopNotification`，仅 `document.hidden` 时弹、点击聚焦窗口）。默认始终开启、无设置开关；首次用户手势由 `setupAlertOnFirstGesture()` 解锁音频播放并请求 `Notification` 授权
-- **图片上传**：支持文件选择和 Ctrl+V 粘贴，base64 编码随反馈一起发送
+- **工作区**：微信聊天式的对话流 + 底部固定输入框。AI 消息靠左、用户回复靠右，每条气泡最宽占 2/3（窄屏 90%），带头像、小尾巴，相邻消息间隔 ≥ 5 分钟时插入居中的时间分隔
+    - 对话记录由 `loadHistory()` 从 `/api/all-sessions` 拉取（每个会话 = 一条 AI 消息 + 一条用户回复，按创建时间升序），`renderChat()` 整体重绘，只给新出现的消息加入场动画（`prefers-reduced-motion` 下关闭）
+    - AI 气泡：Markdown 渲染（`.md` 样式 + 代码块复制按钮），`title` 显示在气泡首行；仍在等待回复的最新一条带 `NEW` 标记（`data-awaiting`）
+    - 用户气泡：纯文本（`textContent`）+ 图片缩略图；没有回复的历史轮次显示一行灰字说明（超时、过期、被新提问替代等）
+    - 滚动：首次加载与新一轮到达时，若最新 AI 消息一屏放不下就对齐到它的开头，否则停在底部；自己发送后滚到底部；切到其他标签页再切回会恢复滚动位置
+    - 输入框锁定（`getComposerLock()`）：已发送、会话已结束、连接被其他窗口接管时禁用输入并显示原因，新一轮到达后解锁
+- **反馈提交**：WebSocket 发送 `submit_feedback` 消息，支持 Ctrl/⌘+Enter 快捷键。提交后本地先显示用户气泡并锁定输入框，收到服务端确认（`notification`，`code` 为 `session.feedbackSubmitted`）后重新拉取记录校正
+- **新反馈提醒**：收到 WebSocket `session_updated` 时调用 `notifyNewFeedback()`，用 Web Audio 合成「叮咚」提示音（`playAlertSound`）+ 桌面通知（`showDesktopNotification`，仅 `document.hidden` 时弹、点击聚焦窗口），同时重新拉取对话记录并滚到新消息。默认始终开启、无设置开关；首次用户手势由 `setupAlertOnFirstGesture()` 解锁音频播放并请求 `Notification` 授权
+- **图片上传**：支持文件选择和 Ctrl+V 粘贴，base64 编码随反馈一起发送；客户端同时生成长边 ≤ 320px 的 JPEG 缩略图（`thumbnail`，data URL）随每张图片一起上传，服务端单独保存，仅用于对话记录展示
 - **会话管理**：从 `/api/all-sessions` 动态加载，会话卡片与详情弹窗均显示 `title`
 - **底部统计面板**：可折叠
 
 ### 反馈 title（headline）字段
-- 数据流：`interactive_feedback(title=...)` → `WebFeedbackSession.title` → 路由 `index()` 把 `feedback_title` 传给 Jinja 模板，并将浏览器 `<title>` 拼成 `feedback_title · MCP Feedback`
+- 数据流：`interactive_feedback(title=...)` → `WebFeedbackSession.title` → 路由 `index()` 把浏览器 `<title>`（`title · MCP Feedback`）作为 `title` 传给 Jinja 模板
 - API：`/api/session-status`、`/api/current-session`、`/api/all-sessions` 的 session_info 都包含 `title` 字段
-- WebSocket：`session_updated` 消息的 `session_info.title` 用于在不刷新页面的情况下更新摘要面板和 `document.title`
-- 前端渲染位置：`#feedbackTitle`（AI 工作摘要面板顶部，位于"AI 工作摘要"标签右侧）+ 浏览器 tab `<title>` + 会话卡片/详情弹窗
+- WebSocket：`session_updated` 触发重新拉取对话记录，前端按最新一轮的 `title` 更新 `document.title`，不用刷新页面
+- 前端渲染位置：AI 气泡首行 + 浏览器 tab `<title>` + 会话卡片/详情弹窗
 
 ### MCP 交互规则去哪儿了
 `interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本规则文件不重复这些内容，只描述前端架构本身。
@@ -78,12 +83,12 @@ alwaysApply: true
 3. WebSocket 连接、提交、图片处理等均在 `feedback.html` 内实现
 
 ### Jinja 变量
-- `feedback.html` 使用：`{{ title }}`、`{{ project_directory }}`、`{{ session_id }}`、`{{ summary }}`、`{{ version }}`
+- `feedback.html` 使用：`{{ title }}`、`{{ project_directory }}`、`{{ session_id }}`、`{{ version }}`（AI 摘要等对话内容不走 Jinja，由前端从 `/api/all-sessions` 渲染）
 - `index.html` 使用：`{{ title }}`、`{{ version }}`
 
 ### 后端 API
 - `GET /` — 根据是否有活跃会话返回 index.html 或 feedback.html
 - `GET /api/session-status` — 返回当前会话状态（含 `has_session`、`session_info`）
-- `GET /api/all-sessions` — 返回所有会话列表
+- `GET /api/all-sessions` — 返回内存里所有会话（最多 10 个）；每项含 AI 侧的 `summary`、`title`、`created_at`，以及用户回复的 `feedback`、`feedback_submitted_at`（毫秒时间戳，未回复为 `null`）、`feedback_images`（缩略图列表，每项含 `name` 和 `thumbnail`）。对话流和会话管理页共用
 - `GET /api/current-session` — 返回当前会话详情
 - `WebSocket /ws` — 实时通信（反馈提交、会话更新）

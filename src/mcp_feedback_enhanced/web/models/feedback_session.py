@@ -49,6 +49,7 @@ class CleanupReason(Enum):
 
 # 常数定义
 MAX_IMAGE_SIZE = 1 * 1024 * 1024  # 1MB 图片大小限制
+MAX_THUMBNAIL_LENGTH = 300 * 1024  # 对话记录里缩略图 data URL 的最大字符数
 SUPPORTED_IMAGE_TYPES = {
     "image/png",
     "image/jpeg",
@@ -82,6 +83,9 @@ class WebFeedbackSession:
         self.title = title or ""
         self.websocket: WebSocket | None = None
         self.feedback_result: str | None = None
+        self.feedback_submitted_at: float | None = None  # 用户提交反馈的时间
+        # 对话记录里展示的图片缩略图，每项含 name 和 thumbnail（data URL）
+        self.feedback_images: list[dict[str, str]] = []
         self.images: list[dict] = []
         self.settings: dict[str, Any] = {}  # 图片设定
         self.feedback_completed = threading.Event()
@@ -477,9 +481,11 @@ class WebFeedbackSession:
             settings: 图片设定（可选）
         """
         self.feedback_result = feedback
+        self.feedback_submitted_at = time.time()
         # 先设置设定，再处理图片（因为处理图片时需要用到设定）
         self.settings = settings or {}
         self.images = self._process_images(images)
+        self.feedback_images = self._detach_thumbnails(self.images)
 
         # 进入下一步：等待中 → 已提交反馈
         self.next_step("已送出反馈，等待下次 MCP 调用")
@@ -562,13 +568,22 @@ class WebFeedbackSession:
                     debug_log(f"图片 {img['name']} 数据为空，跳过")
                     continue
 
-                processed_images.append(
-                    {
-                        "name": img["name"],
-                        "data": image_bytes,  # 保存原始 bytes 数据
-                        "size": len(image_bytes),
-                    }
-                )
+                processed_image: dict[str, Any] = {
+                    "name": img["name"],
+                    "data": image_bytes,  # 保存原始 bytes 数据
+                    "size": len(image_bytes),
+                }
+
+                # 前端随图片一起上传的缩略图，仅保留格式合法且大小合理的
+                thumbnail = img.get("thumbnail")
+                if (
+                    isinstance(thumbnail, str)
+                    and thumbnail.startswith("data:image/")
+                    and len(thumbnail) <= MAX_THUMBNAIL_LENGTH
+                ):
+                    processed_image["thumbnail"] = thumbnail
+
+                processed_images.append(processed_image)
 
                 debug_log(
                     f"图片 {img['name']} 处理成功，大小: {len(image_bytes)} bytes"
@@ -579,6 +594,25 @@ class WebFeedbackSession:
                 continue
 
         return processed_images
+
+    @staticmethod
+    def _detach_thumbnails(images: list[dict]) -> list[dict[str, str]]:
+        """从已处理的图片里取出缩略图，供对话记录展示
+
+        缩略图单独保存：清理图片原始数据时不会被带走，也不会出现在返回给 AI 的结果里。
+
+        Args:
+            images: _process_images 处理后的图片列表，其中的 thumbnail 字段会被移除
+
+        Returns:
+            缩略图列表，每项含 name 和 thumbnail（data URL）
+        """
+        thumbnails: list[dict[str, str]] = []
+        for img in images:
+            thumbnail = img.pop("thumbnail", None)
+            if thumbnail:
+                thumbnails.append({"name": img["name"], "thumbnail": thumbnail})
+        return thumbnails
 
     async def _cleanup_resources_on_timeout(self):
         """超时时清理所有资源（保持向后兼容）"""

@@ -61,9 +61,7 @@ def setup_routes(manager: "WebUIManager"):
             "feedback.html",
             {
                 "project_directory": current_session.project_directory,
-                "summary": current_session.summary,
                 "session_id": current_session.session_id,
-                "feedback_title": feedback_title,
                 "title": page_title,
                 "version": __version__,
                 "has_session": True,
@@ -178,6 +176,13 @@ def setup_routes(manager: "WebUIManager"):
                     "created_at": int(session.created_at * 1000),
                     "last_activity": int(session.last_activity * 1000),
                     "feedback_completed": session.feedback_completed.is_set(),
+                    "feedback": session.feedback_result,
+                    "feedback_submitted_at": (
+                        int(session.feedback_submitted_at * 1000)
+                        if session.feedback_submitted_at
+                        else None
+                    ),
+                    "feedback_images": session.feedback_images,
                     "has_websocket": session.websocket is not None,
                     "is_current": session == manager.current_session,
                     "user_messages": session.user_messages,

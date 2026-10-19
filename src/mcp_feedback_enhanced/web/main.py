@@ -334,7 +334,7 @@ class WebUIManager:
         Args:
             project_directory: 专案目录路径。
             summary: AI 工作摘要（Markdown）。
-            title: 可选的反馈标题，显示在 Web UI 顶部。
+            title: 可选的反馈标题，显示在浏览器标签和 AI 消息气泡顶部。
 
         Returns:
             新会话的 session_id。
@@ -1103,7 +1103,7 @@ async def launch_web_feedback_ui(
         project_directory: 专案目录路径。
         summary: AI 工作摘要（Markdown）。
         timeout: 超时时间（秒）。
-        title: 可选的反馈标题，显示在 Web UI 顶部。
+        title: 可选的反馈标题，显示在浏览器标签和 AI 消息气泡顶部。
 
     Returns:
         dict: 反馈结果，包含 logs、interactive_feedback 和 images。

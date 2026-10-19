@@ -89,6 +89,34 @@
             50% { opacity: 0.1; transform: scale(1.5); }
         }
 
+        /* Chat bubbles: AI on the left, user on the right, each with a small tail */
+        .bubble-ai, .bubble-user { position: relative; border-radius: 16px; }
+        .bubble-ai { background: #111620; border: 1px solid rgba(255,255,255,0.06); border-top-left-radius: 4px; }
+        .bubble-user { background: linear-gradient(90deg, #2563eb, #7c3aed); border-top-right-radius: 4px; }
+        .bubble-ai::before, .bubble-user::before {
+            content: '';
+            position: absolute;
+            top: 14px;
+            width: 9px; height: 9px;
+            transform: rotate(45deg);
+        }
+        .bubble-ai::before {
+            left: -5px;
+            background: #111620;
+            border-left: 1px solid rgba(255,255,255,0.06);
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .bubble-user::before { right: -4px; background: #7c3aed; }
+
+        @keyframes msg-in {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .msg-in { animation: msg-in 0.22s ease-out both; }
+        @media (prefers-reduced-motion: reduce) {
+            .msg-in { animation: none; }
+        }
+
         /* Markdown styles */
         .md h1 { font-size: 1.7em; font-weight: 700; color: #e2e8f0; margin: 0.4em 0 0.3em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 6px; }
         .md h2 { font-size: 1.4em; font-weight: 600; color: #e2e8f0; margin: 0.5em 0 0.25em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 4px; }
@@ -141,6 +169,7 @@
         .md td { padding: 6px 12px; border: 1px solid rgba(255,255,255,0.06); color: #8494a7; }
         .md tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
         .md > *:first-child { margin-top: 0; }
+        .md > *:last-child { margin-bottom: 0; }
     </style>
 </head>
 <body class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col overflow-hidden antialiased">
@@ -182,44 +211,34 @@
     <!-- ===== CONTENT AREA: flex-1, min-h-0 so children can fill ===== -->
     <div class="flex-1 min-h-0 flex flex-col">
 
-        <!-- WORKSPACE: fixed left-right layout, always occupying the full area when visible -->
-        <div id="page-workspace" class="page flex-1 min-h-0 flex flex-row p-4 sm:p-5 gap-4 overflow-hidden">
-            <!-- AI Summary (left) -->
-            <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
-                <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
-                    <div class="flex items-baseline gap-2.5 min-w-0">
-                        <span class="text-[14px] font-semibold text-slate-300 shrink-0">AI 工作摘要</span>
-                        <span id="feedbackTitle" class="text-[13px] font-medium text-blue-300/90 truncate {% if not feedback_title %}hidden{% endif %}">{{ feedback_title }}</span>
-                    </div>
-                    <span id="newTag" class="text-[11px] font-bold uppercase tracking-wide text-white bg-gradient-to-r from-blue-500 to-violet-500 px-2.5 py-0.5 rounded-full shadow-[0_2px_8px_rgba(59,130,246,0.4)]">NEW</span>
-                </div>
-                <div id="summaryContent" class="flex-1 overflow-y-auto px-5 py-4 text-[15px] leading-relaxed md">{{ summary }}</div>
+        <!-- WORKSPACE: chat stream (AI left, user right) + composer docked at the bottom -->
+        <div id="page-workspace" class="page flex-1 min-h-0 flex flex-col overflow-hidden">
+            <!-- Message stream -->
+            <div id="chatScroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-5" role="region" aria-label="对话记录" tabindex="0">
+                <div id="chatList" class="flex flex-col gap-4"></div>
             </div>
+            <div id="chatAnnouncer" class="sr-only" aria-live="polite"></div>
 
-            <!-- Feedback (right) -->
-            <div class="flex-1 min-w-0 flex flex-col bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
-                <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
-                    <span class="text-[14px] font-semibold text-slate-300">提供反馈</span>
-                </div>
-                <div class="flex-1 min-h-0 p-3 flex flex-col gap-2">
-                    <textarea id="feedbackText" class="flex-1 min-h-0 w-full bg-surface-base border border-white/[0.06] rounded-xl px-4 py-3 text-[15px] leading-relaxed text-slate-200 resize-none transition-all outline-none focus:border-blue-500/40 focus:shadow-[0_0_20px_rgba(59,130,246,0.12),inset_0_0_0_1px_rgba(59,130,246,0.4)] placeholder:text-slate-600"
-                        placeholder="在这里输入你的反馈...&#10;&#10;按 Ctrl+Enter 快速提交&#10;按 Ctrl+V 粘贴剪贴板图片"></textarea>
-                    <div id="imagePreview" class="hidden flex-wrap gap-2"></div>
-                </div>
-                <input type="file" id="imageInput" accept="image/*" multiple class="hidden">
-                <div class="flex items-center justify-between shrink-0 px-4 pb-3">
-                    <div class="flex items-center gap-2.5">
-                        <button id="attachBtn" onclick="document.getElementById('imageInput').click()" class="flex items-center gap-1.5 text-xs font-medium text-slate-500 bg-surface-overlay border border-dashed border-white/[0.06] rounded-lg px-3.5 py-2 hover:text-blue-400 hover:border-blue-500/40 hover:bg-blue-500/[0.08] transition">
-                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                            附件图片
+            <!-- Composer -->
+            <div class="shrink-0 border-t border-white/[0.06] bg-surface-raised px-4 sm:px-6 py-3">
+                <div class="bg-surface-base border border-white/[0.06] rounded-2xl transition-all focus-within:border-blue-500/40 focus-within:shadow-[0_0_20px_rgba(59,130,246,0.12),inset_0_0_0_1px_rgba(59,130,246,0.4)]">
+                    <div id="imagePreview" class="hidden flex-wrap gap-2 px-3 pt-3"></div>
+                    <textarea id="feedbackText" rows="3" aria-label="反馈内容" placeholder="输入你的反馈..."
+                        class="block w-full max-h-[40vh] overflow-y-auto bg-transparent px-4 py-3 text-[15px] leading-relaxed text-slate-200 resize-none outline-none placeholder:text-slate-500 disabled:opacity-60 disabled:cursor-not-allowed"></textarea>
+                    <input type="file" id="imageInput" accept="image/*" multiple class="hidden">
+                    <div class="flex items-center justify-between gap-3 px-3 pb-3">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <button id="attachBtn" type="button" onclick="document.getElementById('imageInput').click()" class="shrink-0 flex items-center gap-1.5 text-xs font-medium text-slate-400 bg-surface-overlay border border-dashed border-white/[0.06] rounded-lg px-3.5 py-2 hover:text-blue-400 hover:border-blue-500/40 hover:bg-blue-500/[0.08] transition disabled:pointer-events-none disabled:opacity-50">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                                附件图片
+                            </button>
+                            <span id="imageCount" class="hidden shrink-0 text-xs text-blue-400"></span>
+                            <span id="composerHint" class="truncate text-xs text-slate-400"></span>
+                        </div>
+                        <button id="submitBtn" type="button" onclick="submitFeedback()" class="shrink-0 text-[14px] font-semibold text-white bg-gradient-to-br from-blue-600 to-violet-600 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all disabled:pointer-events-none disabled:bg-none disabled:bg-surface-muted disabled:text-slate-400 disabled:shadow-none">
+                            <span id="submitLabel">发送</span>
                         </button>
-                        <span id="imageCount" class="hidden text-xs text-blue-400"></span>
-                        <span class="text-xs text-slate-600"><kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">⌘</kbd> + <kbd class="font-mono text-[11px] bg-surface-overlay px-1.5 py-0.5 rounded border border-white/[0.06]">Enter</kbd> 提交</span>
                     </div>
-                    <button id="submitBtn" onclick="submitFeedback()" class="text-[14px] font-semibold text-white bg-gradient-to-br from-blue-500 to-violet-500 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all relative overflow-hidden group">
-                        <span class="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></span>
-                        <span class="relative">提交反馈</span>
-                    </button>
                 </div>
             </div>
         </div>
@@ -453,21 +472,11 @@
             text.textContent = info.label;
         }
 
-        function updateFeedbackTitle(title) {
-            var el = document.getElementById('feedbackTitle');
-            if (el) {
-                if (title) {
-                    el.textContent = title;
-                    el.classList.remove('hidden');
-                } else {
-                    el.textContent = '';
-                    el.classList.add('hidden');
-                }
-            }
+        const updateDocumentTitle = (title) => {
             document.title = title
                 ? title + ' · MCP Feedback'
                 : 'Interactive Feedback - 反馈收集';
-        }
+        };
 
         // --- Alert / 提醒（声音 + 桌面通知） ---
         // 新反馈请求到达时把在后台标签/最小化窗口的用户「叫」回来。默认始终开启，无开关。
@@ -558,18 +567,18 @@
         }
 
         // --- WebSocket ---
-        var ws = null;
-        var wsReady = false;
-        var wsReplaced = false;
-        var wsRetried = false;
+        let ws = null;
+        let wsReady = false;
+        let wsReplaced = false;
+        let wsRetried = false;
 
-        function connectWebSocket() {
+        const connectWebSocket = () => {
             if (wsReplaced) return;
             setConnStatus('connecting');
-            var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(protocol + '//' + location.host + '/ws');
 
-            ws.onopen = function() {
+            ws.onopen = () => {
                 wsReady = true;
                 wsReplaced = false;
                 wsRetried = false;
@@ -577,50 +586,33 @@
                 console.log('WebSocket connected');
             };
 
-            ws.onmessage = function(event) {
-                var data = JSON.parse(event.data);
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
                 if (data.type === 'connection_replaced') {
                     wsReplaced = true;
                     wsReady = false;
                     setConnStatus('disconnected');
                     console.log('Connection replaced by another tab/window, attempting to close tab');
-
-                    var btn = document.getElementById('submitBtn');
-                    if (btn) {
-                        btn.querySelector('.relative').textContent = '连接已转移';
-                        btn.classList.remove('from-blue-500', 'to-violet-500');
-                        btn.classList.add('from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
-                        btn.disabled = true;
-                    }
+                    applyComposerLock();
                     window.close();
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
-                    var el = document.getElementById('summaryContent');
-                    if (el && typeof marked !== 'undefined') {
-                        el.innerHTML = marked.parse(data.session_info.summary || '');
-                        enhanceCodeBlocks(el);
-                        if (el.scrollTop > 0) {
-                            el.scrollTo({ top: 0, behavior: 'smooth' });
-                        }
-                    }
-                    updateFeedbackTitle(data.session_info.title || '');
-                    var tag = document.getElementById('newTag');
-                    if (tag) tag.style.display = '';
-
-                    notifyNewFeedback(data.session_info.title || '');
-
-                    var btn = document.getElementById('submitBtn');
-                    if (btn) {
-                        btn.querySelector('.relative').textContent = '提交反馈';
-                        btn.classList.remove('from-emerald-500', 'to-emerald-600', 'from-amber-500', 'to-amber-600', 'opacity-70', 'cursor-not-allowed');
-                        btn.classList.add('from-blue-500', 'to-violet-500');
-                        btn.disabled = false;
-                    }
+                    // 新一轮提问到达：解除输入框的「已发送」锁定，重新拉取对话记录并滚到新消息
+                    submittedLocally = false;
+                    const newTitle = data.session_info.title || '';
+                    announceToScreenReader('收到新的反馈请求' + (newTitle ? '：' + newTitle : ''));
+                    notifyNewFeedback(newTitle);
+                    loadHistory('auto');
+                    return;
+                }
+                if (data.type === 'notification' && data.code === 'session.feedbackSubmitted') {
+                    // 服务端确认已收到反馈，用服务端记录校正本地先行显示的回复气泡
+                    loadHistory('keep');
                 }
             };
 
-            ws.onclose = function() {
+            ws.onclose = () => {
                 wsReady = false;
                 if (wsReplaced) {
                     setConnStatus('disconnected');
@@ -638,37 +630,392 @@
                 setTimeout(connectWebSocket, 3000);
             };
 
-            ws.onerror = function() {
+            ws.onerror = () => {
                 wsReady = false;
                 setConnStatus('disconnected');
             };
-        }
+        };
+
+        // --- Chat stream ---
+        // 对话记录来自 /api/all-sessions：每个会话 = 一条 AI 消息 + 一条用户回复，按创建时间从旧到新排列。
+        const SEPARATOR_GAP_MS = 5 * 60 * 1000;
+        const CLOSED_STATUSES = ['timeout', 'expired', 'error', 'completed'];
+        const UNANSWERED_NOTES = {
+            timeout: '该轮对话已超时，未收到回复',
+            expired: '该轮对话已过期，未收到回复',
+            error: '该轮对话出错，未收到回复'
+        };
+        const UNANSWERED_NOTE_DEFAULT = '该轮对话已被新的提问替代，未收到回复';
+        const COMPOSER_LOCKS = {
+            submitted: { label: '已发送', hint: '已发送，等待 AI 的下一次提问...' },
+            closed: { label: '已结束', hint: '该会话已结束，等待 AI 重新发起提问...' },
+            replaced: { label: '连接已转移', hint: '连接已转移到其他窗口，请在新窗口继续' }
+        };
+        const MOD_KEY = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl';
+        const COMPOSER_HINT = MOD_KEY + ' + Enter 发送，' + MOD_KEY + ' + V 粘贴图片';
+
+        let rounds = [];
+        let loadSeq = 0;
+        let scrollSeq = 0;
+        let hasRendered = false;
+        let renderedKeys = new Set();
+        let submittedLocally = false;
+        let deferredScroll = null;
+        let savedChatScrollTop = 0;
+
+        const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        const isWorkspaceVisible = () => !document.getElementById('page-workspace').classList.contains('hidden');
+
+        const announceToScreenReader = (text) => {
+            const el = document.getElementById('chatAnnouncer');
+            if (el) el.textContent = text;
+        };
+
+        const pad2 = (n) => String(n).padStart(2, '0');
+
+        // 当天只显示时分，昨天加「昨天」，更早显示月日，跨年再加年份
+        const formatChatTime = (ms) => {
+            const d = new Date(ms);
+            const now = new Date();
+            const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+            const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+            const dayDiff = Math.round((dayStart(now) - dayStart(d)) / 86400000);
+            if (dayDiff === 0) return hm;
+            if (dayDiff === 1) return '昨天 ' + hm;
+            const monthDay = (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+            return d.getFullYear() === now.getFullYear() ? monthDay : d.getFullYear() + '年' + monthDay;
+        };
+
+        // 仍在等用户回复的会话：是当前会话、尚无回复、且没有结束
+        const isRoundOpen = (round) =>
+            round.is_current && !round.feedback_submitted_at && !CLOSED_STATUSES.includes(round.status);
+
+        // 返回输入框的锁定原因，空字符串表示可以输入
+        const getComposerLock = () => {
+            if (wsReplaced) return 'replaced';
+            if (submittedLocally) return 'submitted';
+            const latest = rounds[rounds.length - 1];
+            if (!latest) return '';
+            if (latest.feedback_submitted_at) return 'submitted';
+            return isRoundOpen(latest) ? '' : 'closed';
+        };
+
+        const applyComposerLock = () => {
+            const reason = getComposerLock();
+            const locked = reason !== '';
+            const view = COMPOSER_LOCKS[reason];
+            const textarea = document.getElementById('feedbackText');
+            const attachBtn = document.getElementById('attachBtn');
+            const submitBtn = document.getElementById('submitBtn');
+            const label = document.getElementById('submitLabel');
+            const hint = document.getElementById('composerHint');
+            if (textarea) textarea.disabled = locked;
+            if (attachBtn) attachBtn.disabled = locked;
+            if (submitBtn) submitBtn.disabled = locked;
+            if (label) label.textContent = locked ? view.label : '发送';
+            if (hint) hint.textContent = locked ? view.hint : COMPOSER_HINT;
+        };
+
+        const buildMessages = (list) => {
+            const messages = [];
+            list.forEach((round) => {
+                messages.push({ key: 'ai:' + round.session_id, role: 'ai', at: round.created_at, round });
+                if (round.feedback_submitted_at) {
+                    messages.push({ key: 'user:' + round.session_id, role: 'user', at: round.feedback_submitted_at, round });
+                } else if (!isRoundOpen(round)) {
+                    messages.push({
+                        key: 'note:' + round.session_id,
+                        role: 'note',
+                        text: UNANSWERED_NOTES[round.status] || UNANSWERED_NOTE_DEFAULT,
+                        round
+                    });
+                }
+            });
+            return messages;
+        };
+
+        const createTimeSeparator = (ms) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'flex justify-center';
+            const label = document.createElement('span');
+            label.className = 'text-[11px] text-slate-400 bg-white/[0.04] px-2.5 py-0.5 rounded-full';
+            label.textContent = formatChatTime(ms);
+            wrap.append(label);
+            return wrap;
+        };
+
+        const createNote = (text) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'flex justify-center';
+            const label = document.createElement('span');
+            label.className = 'text-[12px] text-slate-400 px-3';
+            label.textContent = text;
+            wrap.append(label);
+            return wrap;
+        };
+
+        const createAvatar = (role) => {
+            const avatar = document.createElement('div');
+            avatar.setAttribute('aria-hidden', 'true');
+            if (role === 'ai') {
+                avatar.className = 'w-9 h-9 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-sm font-bold text-white select-none';
+                avatar.textContent = 'M';
+            } else {
+                avatar.className = 'w-9 h-9 shrink-0 rounded-lg bg-surface-muted ring-1 ring-white/[0.08] flex items-center justify-center text-[13px] font-semibold text-slate-300 select-none';
+                avatar.textContent = '我';
+            }
+            return avatar;
+        };
+
+        const createAiBubble = (round, awaiting) => {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble-ai min-w-0 px-4 py-3 text-[15px] leading-relaxed break-words';
+            if (round.title || awaiting) {
+                const header = document.createElement('div');
+                header.className = 'flex items-center gap-2 mb-1.5';
+                if (round.title) {
+                    const title = document.createElement('span');
+                    title.className = 'text-[14px] font-semibold text-blue-300 break-all';
+                    title.textContent = round.title;
+                    header.append(title);
+                }
+                if (awaiting) {
+                    const tag = document.createElement('span');
+                    tag.className = 'shrink-0 text-[11px] font-bold uppercase tracking-wide text-white bg-gradient-to-r from-blue-600 to-violet-600 px-2.5 py-0.5 rounded-full';
+                    tag.textContent = 'NEW';
+                    header.append(tag);
+                }
+                bubble.append(header);
+            }
+            const body = document.createElement('div');
+            body.className = 'md';
+            if (typeof marked !== 'undefined') {
+                body.innerHTML = marked.parse(round.summary || '');
+                enhanceCodeBlocks(body);
+            } else {
+                body.classList.add('whitespace-pre-wrap');
+                body.textContent = round.summary || '';
+            }
+            bubble.append(body);
+            return bubble;
+        };
+
+        const createUserBubble = (round) => {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble-user min-w-0 px-4 py-3 text-[15px] leading-relaxed text-white break-words';
+            const text = round.feedback || '';
+            const images = (round.feedback_images || []).filter(
+                (item) => typeof item.thumbnail === 'string' && item.thumbnail.startsWith('data:image/')
+            );
+            if (text) {
+                const content = document.createElement('div');
+                content.className = 'whitespace-pre-wrap';
+                content.textContent = text;
+                bubble.append(content);
+            }
+            if (images.length > 0) {
+                const gallery = document.createElement('div');
+                gallery.className = 'flex flex-wrap gap-2' + (text ? ' mt-2' : '');
+                images.forEach((item) => {
+                    const img = document.createElement('img');
+                    img.src = item.thumbnail;
+                    img.alt = item.name || '图片';
+                    img.title = item.name || '';
+                    img.className = 'block rounded-lg max-w-[240px] max-h-[200px] object-contain bg-black/20';
+                    gallery.append(img);
+                });
+                bubble.append(gallery);
+            }
+            if (!text && images.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'italic text-white/80';
+                empty.textContent = '（无文字内容）';
+                bubble.append(empty);
+            }
+            return bubble;
+        };
+
+        const createMessageRow = (message, awaiting) => {
+            const isUser = message.role === 'user';
+            const row = document.createElement('div');
+            row.className = 'flex items-start gap-3 ' + (isUser ? 'justify-end' : 'justify-start');
+            if (awaiting) row.dataset.awaiting = '1';
+            const wrap = document.createElement('div');
+            wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%]';
+            wrap.title = new Date(message.at).toLocaleString('zh-CN', { hour12: false });
+            wrap.append(isUser ? createUserBubble(message.round) : createAiBubble(message.round, awaiting));
+            if (isUser) {
+                row.append(wrap, createAvatar('user'));
+            } else {
+                row.append(createAvatar('ai'), wrap);
+            }
+            return row;
+        };
+
+        // 等图片解码完成再算滚动位置，避免图片撑开后偏离
+        const settleImages = (root) => Promise.all(
+            Array.from(root.querySelectorAll('img')).map((img) => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()))
+        );
+
+        const applyScroll = (mode, instant) => {
+            const scroller = document.getElementById('chatScroll');
+            const list = document.getElementById('chatList');
+            if (!scroller || !list) return;
+            let top = scroller.scrollHeight;
+            if (mode === 'auto') {
+                // 最新的 AI 消息还在等回复、且一屏放不下时，从它的开头读起；否则停在底部
+                const row = list.querySelector('[data-awaiting]');
+                if (row && row.offsetHeight + 40 > scroller.clientHeight) {
+                    const offset = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+                    top = Math.max(0, scroller.scrollTop + offset - 16);
+                }
+            }
+            scroller.scrollTo({ top, behavior: instant || prefersReducedMotion() ? 'auto' : 'smooth' });
+        };
+
+        // mode: 'keep' 不动；'auto' 新一轮提问到达或首次加载；'bottom' 自己发送之后
+        const scrollChat = (mode, instant) => {
+            if (mode === 'keep') return;
+            if (!isWorkspaceVisible()) {
+                deferredScroll = mode;
+                return;
+            }
+            const seq = ++scrollSeq;
+            settleImages(document.getElementById('chatList')).then(() => {
+                if (seq === scrollSeq) applyScroll(mode, instant);
+            });
+        };
+
+        const renderChat = (scrollMode = 'keep') => {
+            const scroller = document.getElementById('chatScroll');
+            const list = document.getElementById('chatList');
+            if (!scroller || !list) return;
+
+            const previousTop = scroller.scrollTop;
+            const previousKeys = renderedKeys;
+            const firstRender = !hasRendered;
+            renderedKeys = new Set();
+            hasRendered = true;
+
+            const fragment = document.createDocumentFragment();
+            let previousAt = 0;
+            buildMessages(rounds).forEach((message) => {
+                if (message.role === 'note') {
+                    fragment.append(createNote(message.text));
+                    return;
+                }
+                if (!previousAt || message.at - previousAt >= SEPARATOR_GAP_MS) {
+                    fragment.append(createTimeSeparator(message.at));
+                }
+                previousAt = message.at;
+                const row = createMessageRow(message, message.role === 'ai' && isRoundOpen(message.round));
+                // 只有新出现的消息才有入场动画，整页重绘时旧消息保持不动
+                if (!firstRender && !previousKeys.has(message.key)) row.classList.add('msg-in');
+                renderedKeys.add(message.key);
+                fragment.append(row);
+            });
+            if (rounds.length === 0) fragment.append(createNote('暂无对话记录'));
+            list.replaceChildren(fragment);
+            scroller.scrollTop = previousTop;
+
+            applyComposerLock();
+            const latest = rounds[rounds.length - 1];
+            updateDocumentTitle(latest ? latest.title : '');
+            scrollChat(scrollMode, firstRender);
+        };
+
+        const renderChatError = () => {
+            const list = document.getElementById('chatList');
+            if (!list) return;
+            const wrap = document.createElement('div');
+            wrap.className = 'flex flex-col items-center gap-2 py-10 text-[13px] text-slate-400';
+            const message = document.createElement('span');
+            message.textContent = '对话记录加载失败';
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.className = 'text-xs font-medium text-slate-300 border border-white/10 rounded px-3 py-1.5 hover:text-blue-400 hover:border-blue-500/40 transition';
+            retry.textContent = '重试';
+            retry.addEventListener('click', () => loadHistory('auto'));
+            wrap.append(message, retry);
+            list.replaceChildren(wrap);
+        };
+
+        const loadHistory = async (scrollMode = 'keep') => {
+            const seq = ++loadSeq;
+            try {
+                const response = await fetch('/api/all-sessions');
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                if (seq !== loadSeq) return;
+                rounds = (data.sessions || []).slice().sort((a, b) => a.created_at - b.created_at);
+                renderChat(scrollMode);
+            } catch (err) {
+                console.warn('loadHistory failed', err);
+                if (seq === loadSeq && rounds.length === 0) renderChatError();
+            }
+        };
+
+        const autoGrowTextarea = (textarea) => {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, Math.round(window.innerHeight * 0.4)) + 'px';
+        };
 
         // --- Images ---
-        var pendingImages = [];
+        let pendingImages = [];
+        const THUMBNAIL_MAX_SIDE = 320;
 
-        function addImageFromFile(file) {
+        // 生成对话记录里展示用的缩略图（JPEG data URL），失败时返回 null
+        const createThumbnail = (dataUrl) => new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    if (!img.naturalWidth || !img.naturalHeight) {
+                        resolve(null);
+                        return;
+                    }
+                    const scale = Math.min(1, THUMBNAIL_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+                    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#111620';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', 0.78));
+                } catch (err) {
+                    resolve(null);
+                }
+            };
+            img.onerror = () => resolve(null);
+            img.src = dataUrl;
+        });
+
+        const addImageFromFile = (file) => {
             if (!file || !file.type.startsWith('image/')) return;
-            var reader = new FileReader();
-            reader.onload = function(e) {
-                var name = file.name || ('paste-' + Date.now() + '.png');
-                pendingImages.push({ data: e.target.result, name: name });
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const name = file.name || ('paste-' + Date.now() + '.png');
+                const data = e.target.result;
+                const thumb = await createThumbnail(data);
+                pendingImages.push({ data, name, thumb });
                 renderImagePreviews();
             };
             reader.readAsDataURL(file);
-        }
+        };
 
-        function removeImage(idx) {
+        const removeImage = (idx) => {
             pendingImages.splice(idx, 1);
             renderImagePreviews();
-        }
+        };
 
-        function renderImagePreviews() {
-            var container = document.getElementById('imagePreview');
-            var counter = document.getElementById('imageCount');
+        const renderImagePreviews = () => {
+            const container = document.getElementById('imagePreview');
+            const counter = document.getElementById('imageCount');
             if (!container) return;
 
             if (pendingImages.length === 0) {
+                container.classList.remove('flex');
                 container.classList.add('hidden');
                 container.innerHTML = '';
                 if (counter) counter.classList.add('hidden');
@@ -676,36 +1023,37 @@
             }
 
             container.classList.remove('hidden');
-            container.style.display = 'flex';
+            container.classList.add('flex');
             if (counter) {
                 counter.textContent = pendingImages.length + ' 张图片';
                 counter.classList.remove('hidden');
             }
 
-            container.innerHTML = pendingImages.map(function(img, i) {
-                return '<div class="relative group">' +
-                    '<img src="' + img.data + '" class="w-16 h-16 object-cover rounded-lg border border-white/[0.06]">' +
-                    '<button onclick="removeImage(' + i + ')" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition">&times;</button>' +
-                    '</div>';
-            }).join('');
-        }
+            container.innerHTML = pendingImages.map((img, i) => (
+                '<div class="relative group">' +
+                    '<img src="' + (img.thumb || img.data) + '" alt="' + escapeHtml(img.name) + '" class="w-16 h-16 object-cover rounded-lg border border-white/[0.06]">' +
+                    '<button type="button" aria-label="移除图片" onclick="removeImage(' + i + ')" class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[11px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition">&times;</button>' +
+                '</div>'
+            )).join('');
+        };
 
         // --- Submit ---
-        function submitFeedback() {
-            var textarea = document.getElementById('feedbackText');
-            var feedback = textarea ? textarea.value.trim() : '';
+        const submitFeedback = () => {
+            const textarea = document.getElementById('feedbackText');
+            const feedback = textarea ? textarea.value.trim() : '';
             if (!feedback && pendingImages.length === 0) return;
+            if (getComposerLock()) return;
 
             if (!wsReady || !ws) {
                 alert('WebSocket 未连接，请稍后重试');
                 return;
             }
 
-            var imagesPayload = pendingImages.map(function(img) {
-                var raw = img.data;
-                var base64Only = raw.indexOf(',') !== -1 ? raw.split(',')[1] : raw;
-                var byteLen = Math.floor(base64Only.length * 3 / 4);
-                return { name: img.name, data: base64Only, size: byteLen };
+            const sentImages = pendingImages;
+            const imagesPayload = sentImages.map((img) => {
+                const base64Only = img.data.includes(',') ? img.data.split(',')[1] : img.data;
+                const byteLen = Math.floor(base64Only.length * 3 / 4);
+                return { name: img.name, data: base64Only, size: byteLen, thumbnail: img.thumb || undefined };
             });
 
             ws.send(JSON.stringify({
@@ -716,30 +1064,28 @@
             }));
 
             textarea.value = '';
+            autoGrowTextarea(textarea);
             pendingImages = [];
             renderImagePreviews();
 
-            var tag = document.getElementById('newTag');
-            if (tag) tag.style.display = 'none';
-
-            var btn = document.getElementById('submitBtn');
-            if (btn) {
-                btn.querySelector('.relative').textContent = '已提交';
-                btn.classList.remove('from-blue-500', 'to-violet-500');
-                btn.classList.add('from-emerald-500', 'to-emerald-600');
-                btn.disabled = true;
-                btn.classList.add('opacity-70', 'cursor-not-allowed');
+            // 先在本地显示自己的回复气泡，服务端确认后会用服务端记录再校正一次
+            submittedLocally = true;
+            const latest = rounds[rounds.length - 1];
+            if (latest) {
+                latest.feedback = feedback;
+                latest.feedback_submitted_at = Date.now();
+                latest.feedback_images = sentImages
+                    .filter((img) => img.thumb)
+                    .map((img) => ({ name: img.name, thumbnail: img.thumb }));
             }
-        }
+            renderChat('bottom');
+        };
 
         // --- Init ---
-        document.addEventListener('DOMContentLoaded', function() {
-            // Render Markdown summary
-            var el = document.getElementById('summaryContent');
-            if (el && el.textContent.trim() && typeof marked !== 'undefined') {
-                el.innerHTML = marked.parse(el.textContent);
-                enhanceCodeBlocks(el);
-            }
+        document.addEventListener('DOMContentLoaded', () => {
+            // 加载对话记录（首次进入页面直接定位，不做滚动动画）
+            applyComposerLock();
+            loadHistory('auto');
 
             // Connect WebSocket
             connectWebSocket();
@@ -756,27 +1102,27 @@
             } catch (e) {}
 
             // File input change handler
-            var fileInput = document.getElementById('imageInput');
+            const fileInput = document.getElementById('imageInput');
             if (fileInput) {
-                fileInput.addEventListener('change', function(e) {
+                fileInput.addEventListener('change', (e) => {
                     Array.from(e.target.files).forEach(addImageFromFile);
                     e.target.value = '';
                 });
             }
 
-            // Keyboard shortcuts + paste
-            var textarea = document.getElementById('feedbackText');
+            // Keyboard shortcuts + paste + auto-grow
+            const textarea = document.getElementById('feedbackText');
             if (textarea) {
-                textarea.addEventListener('keydown', function(e) {
+                textarea.addEventListener('keydown', (e) => {
                     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                         e.preventDefault();
                         submitFeedback();
                     }
                 });
 
-                textarea.addEventListener('paste', function(e) {
-                    var items = (e.clipboardData || e.originalEvent.clipboardData).items;
-                    for (var i = 0; i < items.length; i++) {
+                textarea.addEventListener('paste', (e) => {
+                    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                    for (let i = 0; i < items.length; i++) {
                         if (items[i].type.indexOf('image') !== -1) {
                             e.preventDefault();
                             addImageFromFile(items[i].getAsFile());
@@ -784,6 +1130,8 @@
                         }
                     }
                 });
+
+                textarea.addEventListener('input', () => autoGrowTextarea(textarea));
             }
         });
 
@@ -937,19 +1285,32 @@
         }
 
         // --- Tab switching ---
-        document.getElementById('tabNav').addEventListener('click', function(e) {
-            var btn = e.target.closest('.tab-btn');
+        document.getElementById('tabNav').addEventListener('click', (e) => {
+            const btn = e.target.closest('.tab-btn');
             if (!btn) return;
-            var name = btn.dataset.tab;
+            const name = btn.dataset.tab;
 
-            document.querySelectorAll('.page').forEach(function(p) { p.classList.add('hidden'); });
-            document.querySelectorAll('.tab-btn').forEach(function(b) {
+            // 隐藏后对话区会丢失滚动位置，切走前先记下
+            const scroller = document.getElementById('chatScroll');
+            if (isWorkspaceVisible()) savedChatScrollTop = scroller.scrollTop;
+
+            document.querySelectorAll('.page').forEach((p) => p.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach((b) => {
                 b.className = 'tab-btn px-4 py-2 text-[14px] font-medium rounded-full text-slate-500 hover:text-slate-400 hover:bg-surface-overlay transition-all';
             });
 
             document.getElementById('page-' + name).classList.remove('hidden');
             btn.className = 'tab-btn tab-active-dot relative px-4 py-2 text-[14px] font-medium rounded-full text-slate-200 bg-surface-overlay shadow-sm ring-1 ring-white/[0.06] transition-all';
 
+            if (name === 'workspace') {
+                // 切回时：隐藏期间有新消息就滚到新消息，否则恢复原来的位置
+                if (deferredScroll) {
+                    scrollChat(deferredScroll, true);
+                    deferredScroll = null;
+                } else {
+                    scroller.scrollTop = savedChatScrollTop;
+                }
+            }
             if (name === 'sessions') loadSessions();
         });
 

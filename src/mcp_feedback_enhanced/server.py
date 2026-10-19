@@ -420,7 +420,7 @@ async def interactive_feedback(
             description=(
                 "Optional short headline (max ~30 chars) for this feedback "
                 "round, displayed in the browser tab and at the top of the "
-                "AI summary panel. Should be concise (e.g. \"需要你提供更多信息\", "
+                "AI message bubble. Should be concise (e.g. \"需要你提供更多信息\", "
                 "\"修复完成，请验证\"). Leave empty when there's no good headline."
             )
         ),
@@ -459,16 +459,16 @@ async def interactive_feedback(
           and you must re-call with a real summary.
 
     ``title`` writing rules:
-        - Optional, ≤30 chars headline shown in the browser tab and
-          summary header. Leave empty when ``summary`` is
-          self-explanatory.
+        - Optional, ≤30 chars headline shown in the browser tab and at
+          the top of the AI message bubble. Leave empty when ``summary``
+          is self-explanatory.
         - Examples: ``需要你提供更多信息`` / ``修复完成，请验证`` /
           ``实现方案确认``.
 
     Args:
         project_directory: Absolute or relative project path. Defaults to cwd.
         summary: Required Markdown summary. No empty string, no placeholder.
-        title: Optional short headline for the Web UI tab and summary header.
+        title: Optional short headline for the Web UI tab and AI message bubble.
         timeout: Seconds to wait for user feedback. Keep ``>= 600``.
 
     Returns:
@@ -572,7 +572,7 @@ async def launch_web_feedback_ui(
         project_dir: 项目目录路径。
         summary: AI 工作摘要（Markdown）。
         timeout: 超时时间（秒）。
-        title: 可选的反馈标题，显示在浏览器标签和摘要面板顶部。
+        title: 可选的反馈标题，显示在浏览器标签和 AI 消息气泡顶部。
 
     Returns:
         dict: 收集到的反馈数据。
