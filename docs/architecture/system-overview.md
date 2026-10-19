@@ -15,7 +15,7 @@ MCP Feedback Enhanced 採用**單一活躍會話 + 持久化 Web UI**的創新�
 ### 技術棧概覽
 
 **後端技術**：
-- Python 3.11+ (核心語言)
+- Python 3.12+ (核心語言)
 - FastMCP 2.0+ (MCP 協議實現)
 - FastAPI 0.115+ (Web 框架)
 - uvicorn 0.30+ (ASGI 服務器)
@@ -32,7 +32,7 @@ MCP Feedback Enhanced 採用**單一活躍會話 + 持久化 Web UI**的創新�
 
 **開發工具**：
 - pytest + pytest-asyncio (測試框架)
-- Ruff + mypy (代碼品質)
+- Ruff + pyright (代碼品質)
 - pre-commit (提交檢查)
 - uv (依賴管理)
 
@@ -550,7 +550,7 @@ graph LR
 ### 環境需求
 
 **最低系統需求**：
-- Python 3.11 或更高版本
+- Python 3.12 或更高版本
 - 512MB 可用記憶體
 - 現代瀏覽器 (Chrome 90+, Firefox 88+, Safari 14+)
 - 網路連接 (本地環境可離線運行)

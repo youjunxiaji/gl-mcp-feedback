@@ -32,7 +32,7 @@ MCP Feedback Enhanced 採用**單一活躍會話 + 持久化 Web UI**的創新�
 - **多語言支援**: 繁體中文、簡體中文、英文動態切換
 
 #### 技術棧
-- **後端**: Python 3.11+, FastAPI, FastMCP
+- **後端**: Python 3.12+, FastAPI, FastMCP
 - **前端**: HTML5, JavaScript ES6+, WebSocket, Web Audio API（v2.4.3）
 - **通信**: WebSocket, HTTP REST API
 - **存儲**: localStorage（會話歷史、音效文件、設定記憶）

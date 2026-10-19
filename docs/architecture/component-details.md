@@ -54,7 +54,6 @@ graph TB
         BROWSER[utils/browser.py<br/>瀏覽器控制<br/>智能開啟]
         PORT[utils/port_manager.py<br/>埠管理<br/>動態分配]
         COMPRESS[utils/compression_*.py<br/>壓縮工具<br/>數據優化]
-        CLEANUP[utils/session_cleanup_manager.py<br/>清理管理<br/>自動回收]
     end
 
     %% 主要數據流
@@ -87,7 +86,6 @@ graph TB
     BROWSER -->|開啟瀏覽器| MANAGER
     PORT -->|埠分配| MAIN
     COMPRESS -->|數據壓縮| ROUTES
-    CLEANUP -->|清理會話| SESSION
 
     %% 樣式定義
     classDef layer1 fill:#e3f2fd
@@ -100,7 +98,7 @@ graph TB
     class MANAGER,SESSION,MODELS layer2
     class MAIN,ROUTES,WS layer3
     class HTML,JS,CSS,LOCALES,PROMPT_MODULES,SESSION_MODULES layer4
-    class ERROR,MEMORY,RESOURCE,BROWSER,PORT,COMPRESS,CLEANUP tools
+    class ERROR,MEMORY,RESOURCE,BROWSER,PORT,COMPRESS tools
 ```
 
 ## 🔧 第一層：MCP 服務層
@@ -1242,37 +1240,6 @@ class PortManager:
         self.allocated_ports.discard(port)
 ```
 
-### utils/session_cleanup_manager.py - 會話清理
-
-**自動清理機制**：
-```mermaid
-graph TD
-    START[啟動清理管理器] --> TIMER[設置定時器]
-    TIMER --> CHECK[檢查會話狀態]
-    CHECK --> ACTIVE{會話活躍?}
-    ACTIVE -->|是| TIMEOUT{超時檢查}
-    ACTIVE -->|否| SKIP[跳過清理]
-    TIMEOUT -->|超時| CLEANUP[執行清理]
-    TIMEOUT -->|未超時| WAIT[等待下次檢查]
-    CLEANUP --> WEBSOCKET[關閉 WebSocket]
-    WEBSOCKET --> RESOURCES[清理資源]
-    RESOURCES --> MEMORY[釋放記憶體]
-    MEMORY --> NOTIFY[通知清理完成]
-    NOTIFY --> WAIT
-    SKIP --> WAIT
-    WAIT --> TIMER
-
-    style CLEANUP fill:#ffcdd2
-    style NOTIFY fill:#c8e6c9
-```
-
-**清理策略**：
-- **定時檢查**: 每 30 秒檢查一次會話狀態
-- **超時清理**: 會話超時自動觸發清理
-- **資源回收**: WebSocket 連接、進程、記憶體
-- **優雅關閉**: 確保資源正確釋放
-- **錯誤恢復**: 清理失敗時的備用方案
-
 ### utils/compression_*.py - 壓縮工具
 
 **數據壓縮優化**：
@@ -1297,8 +1264,7 @@ tests/
 │   ├── test_web_integration.py
 │   └── test_i18n_integration.py
 ├── helpers/                 # 測試輔助工具
-│   ├── mcp_client.py
-│   └── test_utils.py
+│   └── manual_tooltip_test.html
 ├── fixtures/                # 測試數據
 │   └── test_data.py
 └── conftest.py             # pytest 配置
@@ -1334,10 +1300,10 @@ tests/
 - 導入排序和優化
 - 複雜度控制
 
-**mypy (類型檢查)**：
-- 靜態類型檢查
-- 漸進式類型註解
-- 第三方庫類型支援
+**pyright (類型檢查)**：
+- 靜態類型檢查（standard 模式，Python 3.12）
+- 檢查範圍：`src`、`tests`
+- 以 `uv run pyright` 或 `make type-check` 執行
 - 錯誤預防
 
 **pre-commit (提交檢查)**：
@@ -1370,4 +1336,4 @@ tests/
 **維護者**: Minidoracat
 **架構類型**: Web-Only 四層架構
 **v2.4.3 新功能**: 音效通知系統、會話管理重構、智能記憶功能
-**技術棧**: Python 3.11+, FastAPI, FastMCP, WebSocket, Web Audio API
+**技術棧**: Python 3.12+, FastAPI, FastMCP, WebSocket, Web Audio API
