@@ -669,7 +669,7 @@
 
         // --- Chat stream ---
         // 对话记录来自 /api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
-        // 按发生时间从旧到新排成一条时间线。
+        // 排成一条时间线：已送达的排队消息跟在送达它们的那条 AI 消息之后，其余按发生时间从旧到新。
         const SEPARATOR_GAP_MS = 5 * 60 * 1000;
         const UNANSWERED_NOTES = {
             timeout: '该轮对话已超时，未收到回复',
@@ -835,23 +835,30 @@
             lastSubmission = null;
         };
 
-        // 把 AI 的消息、用户的回复、用户排队发送的消息按时间排成一条时间线。
+        // 把 AI 的消息、用户的回复、用户排队发送的消息排成一条时间线。
+        // 已送达的排队消息是那次 AI 调用带回来的结果：按发送顺序紧跟在送达它们的 AI 消息（及其说明）之后，
+        // 位置按那条 AI 消息的时间算，悬停提示（sentAt）仍是真实发送时间；排队中的消息按发送时间排在最后。
         // 没收到回复的 AI 消息带一条说明（note），显示在它下方。
         const buildTimeline = () => {
-            const deliveredCounts = {};
+            const roundIds = new Set(rounds.map((round) => round.session_id));
+            const deliveredByRound = {};
+            const loose = [];
             queued.forEach((message) => {
-                if (message.delivered_session_id) {
-                    deliveredCounts[message.delivered_session_id] = (deliveredCounts[message.delivered_session_id] || 0) + 1;
+                const roundId = message.delivered_session_id;
+                if (roundId && roundIds.has(roundId)) {
+                    deliveredByRound[roundId] = (deliveredByRound[roundId] || []).concat(message);
+                } else {
+                    loose.push(message);
                 }
             });
             const items = [];
             rounds.forEach((round) => {
                 const open = isRoundOpen(round);
+                const delivered = deliveredByRound[round.session_id] || [];
                 let note = '';
                 if (!round.feedback_submitted_at && !open) {
-                    const delivered = deliveredCounts[round.session_id] || 0;
-                    if (delivered > 0) {
-                        note = '已随这次调用送达你排队的 ' + delivered + ' 条消息';
+                    if (delivered.length > 0) {
+                        note = '已随这次调用送达你排队的 ' + delivered.length + ' 条消息';
                     } else {
                         note = UNANSWERED_NOTES[round.status]
                             || (round.is_current ? UNANSWERED_NOTE_CURRENT : UNANSWERED_NOTE_DEFAULT);
@@ -861,9 +868,13 @@
                 if (round.feedback_submitted_at) {
                     items.push({ key: 'user:' + round.session_id, role: 'user', at: round.feedback_submitted_at, order: 1, round });
                 }
+                delivered.forEach((message) => {
+                    items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at: round.created_at, sentAt: message.submitted_at, order: 1, message });
+                });
             });
-            queued.forEach((message) => {
-                items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at: message.submitted_at, order: 1, message });
+            // 排队中的消息；送达它的会话不在记录里时（刚被淘汰），按送达时间兜底显示
+            loose.forEach((message) => {
+                items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at: message.delivered_at || message.submitted_at, sentAt: message.submitted_at, order: 1, message });
             });
             return items.sort((a, b) => a.at - b.at || a.order - b.order);
         };
@@ -986,7 +997,7 @@
             const label = document.createElement('span');
             if (message.delivered_at) {
                 label.className = 'text-slate-400';
-                label.textContent = '✓ 已送达 AI';
+                label.textContent = '✓ 已送达 AI · ' + formatChatTime(message.submitted_at) + ' 发送';
                 line.append(label);
                 return line;
             }
@@ -1058,7 +1069,7 @@
             wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%]'
                 + (isQueued ? ' flex flex-col items-end' : '')
                 + (editing ? ' w-full' : '');
-            if (!editing) wrap.title = new Date(item.at).toLocaleString('zh-CN', { hour12: false });
+            if (!editing) wrap.title = new Date(item.sentAt || item.at).toLocaleString('zh-CN', { hour12: false });
             if (isAi) {
                 wrap.append(createAiBubble(item.round, item.open));
             } else if (editing) {
