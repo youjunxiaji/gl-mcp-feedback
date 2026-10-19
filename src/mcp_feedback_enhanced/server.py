@@ -646,7 +646,10 @@ def main():
         debug_log("调用 mcp.run()...")
 
     try:
-        mcp.run()
+        # 关闭 FastMCP 3.x 的启动横幅：横幅会同步请求 PyPI 检查新版本，
+        # 在 SOCKS 代理环境下（httpx 缺 socksio）会抛 ImportError 导致服务器启动失败；
+        # 且 stdio 传输下横幅只是 stderr 噪音。
+        mcp.run(show_banner=False)
     except KeyboardInterrupt:
         if debug_enabled:
             debug_log("收到中断信号，正常退出")
