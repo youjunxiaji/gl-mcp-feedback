@@ -813,9 +813,11 @@
             var map = {
                 waiting: { text: '等待中', cls: 'text-amber-400 bg-amber-400/10 border-amber-400/20' },
                 active: { text: '活跃', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
+                feedback_submitted: { text: '已提交', cls: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20' },
                 completed: { text: '已完成', cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
                 timeout: { text: '超时', cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
-                error: { text: '错误', cls: 'text-red-400 bg-red-400/10 border-red-400/20' }
+                error: { text: '错误', cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
+                expired: { text: '已过期', cls: 'text-slate-400 bg-slate-400/10 border-slate-400/20' }
             };
             var info = map[status] || map.waiting;
             return '<span class="text-[11px] font-semibold uppercase tracking-wide ' + info.cls + ' border px-2.5 py-0.5 rounded-full">' + info.text + '</span>';
