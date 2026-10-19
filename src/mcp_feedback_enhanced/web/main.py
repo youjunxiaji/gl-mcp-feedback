@@ -25,7 +25,15 @@ from fastapi.templating import Jinja2Templates
 from ..debug import web_debug_log as debug_log
 from ..utils.error_handler import ErrorHandler, ErrorType
 from ..utils.memory_monitor import get_memory_monitor
-from .models import CleanupReason, SessionStatus, WebFeedbackSession
+from .constants import get_message_code
+from .models import (
+    CleanupReason,
+    MessageQueue,
+    QueueFullError,
+    SessionStatus,
+    WebFeedbackSession,
+)
+from .models.feedback_session import MAX_IMAGE_SIZE
 from .routes import setup_routes
 from .utils import get_browser_opener
 from .utils.compression_config import get_compression_manager
@@ -114,6 +122,9 @@ class WebUIManager:
         self.current_session: WebFeedbackSession | None = None
         self.sessions: dict[str, WebFeedbackSession] = {}  # 保留用于向后兼容
         self.max_sessions: int = 10  # 最大会话数量限制
+
+        # 用户在 AI 没有等回复时发来的消息，等 AI 下次提问时一次性取走
+        self.message_queue = MessageQueue()
 
         # 全局标签页状态管理 - 跨会话保持
         self.global_active_tabs: dict[str, dict] = {}
@@ -466,6 +477,80 @@ class WebUIManager:
         """获取当前活跃会话"""
         return self.current_session
 
+    async def enqueue_user_message(
+        self,
+        session: WebFeedbackSession,
+        feedback: str,
+        images: list[dict[str, Any]],
+        settings: dict[str, Any] | None = None,
+    ) -> None:
+        """AI 没有在等回复时，把用户的消息放进队列，并通知前端结果。
+
+        每条消息都会收到一条通知：已排队（QUEUE_MESSAGE_QUEUED，带 message_id）、
+        队列已满（QUEUE_FULL）或没有可排队的内容（QUEUE_MESSAGE_EMPTY，没有文字且图片都被过滤掉了）。
+
+        Args:
+            session: 收到消息的当前会话，用它的 WebSocket 回复通知。
+            feedback: 消息文字。
+            images: 前端上传的图片列表。
+            settings: 图片设定（可选）。
+        """
+        size_limit = (settings or {}).get("image_size_limit", MAX_IMAGE_SIZE)
+        processed = WebFeedbackSession.process_images(images, size_limit)
+        thumbnails = WebFeedbackSession.detach_thumbnails(processed)
+        text = feedback.strip()
+
+        notification: dict[str, Any]
+        if not text and not processed:
+            debug_log("没有任何内容的排队消息，不入队")
+            notification = {
+                "type": "notification",
+                "code": get_message_code("QUEUE_MESSAGE_EMPTY"),
+                "severity": "warning",
+            }
+        else:
+            try:
+                message = self.message_queue.enqueue(text, processed, thumbnails)
+                notification = {
+                    "type": "notification",
+                    "code": get_message_code("QUEUE_MESSAGE_QUEUED"),
+                    "severity": "success",
+                    "message_id": message.message_id,
+                }
+            except QueueFullError:
+                notification = {
+                    "type": "notification",
+                    "code": get_message_code("QUEUE_FULL"),
+                    "severity": "warning",
+                }
+
+        if session.websocket:
+            try:
+                await session.websocket.send_json(notification)
+            except Exception as e:
+                debug_log(f"发送排队结果通知失败: {e}")
+
+    async def deliver_queued_messages(
+        self, session: WebFeedbackSession
+    ) -> dict[str, Any] | None:
+        """AI 发起新一轮提问时，取走用户排队的消息。
+
+        Args:
+            session: AI 刚创建的新会话，排队的消息会标记为随它送达。
+
+        Returns:
+            interactive_feedback 的返回结构；没有排队消息时返回 None，调用方照常等用户回复。
+        """
+        messages = self.message_queue.deliver(session.session_id)
+        if not messages:
+            return None
+
+        # 这一轮不需要用户回复，已打开的页面静默刷新，没有页面时也不用再提醒
+        session.close_with_queued_messages(len(messages))
+        self._pending_session_update = False
+        await self.notify_existing_tab_to_refresh(silent=True)
+        return MessageQueue.build_result(messages)
+
     def remove_session(self, session_id: str):
         """移除反馈会话"""
         if session_id in self.sessions:
@@ -751,8 +836,11 @@ class WebUIManager:
         except Exception as e:
             debug_log(f"检查 WebSocket 连接状态时发生错误: {e}")
 
-    async def notify_existing_tab_to_refresh(self) -> bool:
+    async def notify_existing_tab_to_refresh(self, *, silent: bool = False) -> bool:
         """通知现有标签页刷新显示新会话内容
+
+        Args:
+            silent: 为 True 时页面只刷新对话记录，不响提示音、不弹桌面通知
 
         Returns:
             bool: True 表示成功发送，False 表示失败
@@ -766,6 +854,7 @@ class WebUIManager:
                 "type": "session_updated",
                 "action": "new_session_created",
                 "messageCode": "session.created",
+                "silent": silent,
                 "session_info": {
                     "session_id": self.current_session.session_id,
                     "project_directory": self.current_session.project_directory,
@@ -1099,6 +1188,8 @@ async def launch_web_feedback_ui(
 ) -> dict:
     """启动 Web 反馈界面并等待用户反馈 - 重构为使用根路径。
 
+    用户在 AI 工作期间排队了消息时，直接返回这些消息，不再等待新的回复。
+
     Args:
         project_directory: 专案目录路径。
         summary: AI 工作摘要（Markdown）。
@@ -1115,6 +1206,12 @@ async def launch_web_feedback_ui(
 
     if not session:
         raise RuntimeError("无法创建反馈会话")
+
+    # 用户在 AI 工作期间排队的消息：直接取走返回，不打开浏览器，也不等用户回复
+    queued_result = await manager.deliver_queued_messages(session)
+    if queued_result is not None:
+        debug_log("已取走用户排队的消息，直接返回")
+        return queued_result
 
     # 启动服务器（如果尚未启动）
     if manager.server_thread is None or not manager.server_thread.is_alive():

@@ -8,6 +8,21 @@ Web UI 数据模型模组
 
 from .feedback_result import FeedbackResult
 from .feedback_session import CleanupReason, SessionStatus, WebFeedbackSession
+from .message_queue import (
+    MessageNotPendingError,
+    MessageQueue,
+    QueuedMessage,
+    QueueFullError,
+)
 
 
-__all__ = ["CleanupReason", "FeedbackResult", "SessionStatus", "WebFeedbackSession"]
+__all__ = [
+    "CleanupReason",
+    "FeedbackResult",
+    "MessageNotPendingError",
+    "MessageQueue",
+    "QueueFullError",
+    "QueuedMessage",
+    "SessionStatus",
+    "WebFeedbackSession",
+]

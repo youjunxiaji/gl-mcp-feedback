@@ -249,6 +249,25 @@ class WebFeedbackSession:
             "session_id": self.session_id,
         }
 
+    def is_awaiting_feedback(self) -> bool:
+        """AI 的调用是否还在等这个会话的回复
+
+        用户此刻发来的消息：在等就是对当前提问的回复，没在等就进入消息队列。
+        """
+        return (
+            self.status == SessionStatus.WAITING
+            and not self.feedback_completed.is_set()
+        )
+
+    def close_with_queued_messages(self, count: int) -> None:
+        """排队的用户消息已随这次调用送达，之后没有人再等这个会话的回复
+
+        Args:
+            count: 送达的消息数量
+        """
+        self.next_step(f"已送达 {count} 条排队消息，等待下次 MCP 调用")
+        self.feedback_completed.set()
+
     def is_active(self) -> bool:
         """检查会话是否活跃"""
         return self.status in [
@@ -460,6 +479,14 @@ class WebFeedbackSession:
                 f"等待用户反馈超时（{actual_timeout}秒），界面已自动关闭"
             )
 
+        except asyncio.CancelledError:
+            # AI 取消了这次调用，没有人再等回复：标记为已结束，之后用户发的消息改走队列
+            debug_log(f"会话 {self.session_id} 的等待被取消")
+            self.status = SessionStatus.COMPLETED
+            self.status_message = "AI 已取消这次调用"
+            self.feedback_completed.set()
+            raise
+
         except Exception as e:
             # 任何异常都要确保清理资源
             debug_log(f"会话 {self.session_id} 发生异常: {e}")
@@ -484,8 +511,10 @@ class WebFeedbackSession:
         self.feedback_submitted_at = time.time()
         # 先设置设定，再处理图片（因为处理图片时需要用到设定）
         self.settings = settings or {}
-        self.images = self._process_images(images)
-        self.feedback_images = self._detach_thumbnails(self.images)
+        self.images = self.process_images(
+            images, self.settings.get("image_size_limit", MAX_IMAGE_SIZE)
+        )
+        self.feedback_images = self.detach_thumbnails(self.images)
 
         # 进入下一步：等待中 → 已提交反馈
         self.next_step("已送出反馈，等待下次 MCP 调用")
@@ -527,20 +556,21 @@ class WebFeedbackSession:
             f"会话 {self.session_id} 添加用户消息，总数: {len(self.user_messages)}"
         )
 
-    def _process_images(self, images: list[dict]) -> list[dict]:
+    @staticmethod
+    def process_images(
+        images: list[dict], size_limit: int = MAX_IMAGE_SIZE
+    ) -> list[dict]:
         """
         处理图片数据，转换为统一格式
 
         Args:
             images: 原始图片数据列表
+            size_limit: 单张图片的大小上限（字节），0 或负数表示不限制
 
         Returns:
             List[dict]: 处理后的图片数据
         """
         processed_images = []
-
-        # 从设定中获取图片大小限制，如果没有设定则使用默认值
-        size_limit = self.settings.get("image_size_limit", MAX_IMAGE_SIZE)
 
         for img in images:
             try:
@@ -596,13 +626,13 @@ class WebFeedbackSession:
         return processed_images
 
     @staticmethod
-    def _detach_thumbnails(images: list[dict]) -> list[dict[str, str]]:
+    def detach_thumbnails(images: list[dict]) -> list[dict[str, str]]:
         """从已处理的图片里取出缩略图，供对话记录展示
 
         缩略图单独保存：清理图片原始数据时不会被带走，也不会出现在返回给 AI 的结果里。
 
         Args:
-            images: _process_images 处理后的图片列表，其中的 thumbnail 字段会被移除
+            images: process_images 处理后的图片列表，其中的 thumbnail 字段会被移除
 
         Returns:
             缩略图列表，每项含 name 和 thumbnail（data URL）

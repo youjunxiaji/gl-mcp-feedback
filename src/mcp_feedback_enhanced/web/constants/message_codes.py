@@ -46,6 +46,14 @@ class MessageCodes:
     SESSION_MANUAL_CLEANUP = "session.manualCleanup"
     SESSION_ERROR_CLEANUP = "session.errorCleanup"
 
+    # ========== 消息队列相关 ==========
+    QUEUE_MESSAGE_QUEUED = "queue.messageQueued"
+    QUEUE_FULL = "queue.full"
+    QUEUE_MESSAGE_UPDATED = "queue.messageUpdated"
+    QUEUE_MESSAGE_CANCELLED = "queue.messageCancelled"
+    QUEUE_MESSAGE_NOT_PENDING = "queue.messageNotPending"
+    QUEUE_MESSAGE_EMPTY = "queue.messageEmpty"
+
     # ========== 设定相关 ==========
     SETTINGS_SAVED = "settingsAPI.saved"
     SETTINGS_LOADED = "settingsAPI.loaded"

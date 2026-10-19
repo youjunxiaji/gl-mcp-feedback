@@ -15,6 +15,7 @@ import asyncio
 import base64
 import os
 import sys
+import threading
 import time
 import warnings
 from typing import TYPE_CHECKING, NamedTuple
@@ -218,6 +219,56 @@ def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
         session.last_activity = session.feedback_submitted_at
 
 
+def _simulate_ai_followups(
+    manager: "WebUIManager",
+    project_directory: str,
+    work_seconds: int,
+    max_rounds: int,
+) -> None:
+    """模拟 AI 的后续调用，用来在测试服务器里体验消息队列
+
+    测试服务器里没有真正的 AI：当前这一轮被回复之后，「AI」先干活 work_seconds 秒，
+    再用和真实调用相同的逻辑发起下一次提问。这期间排队的消息会被取走并打印出来，
+    队列是空的就等用户回复，如此循环 max_rounds 次。
+
+    Args:
+        manager: Web UI 管理器
+        project_directory: 会话使用的项目目录
+        work_seconds: 每次「干活」的秒数
+        max_rounds: 最多模拟几次后续提问
+    """
+    for round_number in range(1, max_rounds + 1):
+        session = manager.get_current_session()
+        if session is None:
+            return
+        while not session.feedback_completed.wait(0.5):
+            pass
+
+        print(
+            f"🤖 模拟 AI：开始干活，{work_seconds} 秒后再次提问，这期间发送的消息会进入队列"
+        )
+        time.sleep(work_seconds)
+
+        title = f"模拟 AI 的第 {round_number} 次提问"
+        summary = (
+            f"这是**{title}**。\n\n"
+            "- 你在「AI 干活」期间排队的消息，会随这次调用一并送达\n"
+            "- 队列是空的话，这一轮就等你回复"
+        )
+        new_session = manager.get_session(
+            manager.create_session(project_directory, summary, title=title)
+        )
+        if new_session is None:
+            return
+
+        result = asyncio.run(manager.deliver_queued_messages(new_session))
+        if result is None:
+            print("🤖 模拟 AI：队列是空的，等你回复这一轮")
+        else:
+            print("🤖 模拟 AI：取走了排队的消息，AI 会收到：")
+            print(result["interactive_feedback"])
+
+
 def test_web_ui_simple():
     """简单的 Web UI 测试"""
     try:
@@ -342,8 +393,19 @@ def process_feedback(data):
                         print(f"⚠️  无法自动开启浏览器: {e}")
                         print(f"💡 请手动开启浏览器并访问: {url}")
 
+                    # 模拟 AI 的后续调用，用来体验「AI 干活期间发送的消息会排队」
+                    threading.Thread(
+                        target=_simulate_ai_followups,
+                        args=(manager, temp_dir, 20, 4),
+                        daemon=True,
+                    ).start()
+
                     print("📝 Web UI 测试完成，进入持续模式...")
                     print("💡 提示：服务器将持续运行，可在浏览器中测试互动功能")
+                    print(
+                        "💡 回复当前的提问后，模拟 AI 会干活 20 秒再次提问；"
+                        "这期间发送的消息会排队，被取走时会在这里打印"
+                    )
                     print("💡 按 Ctrl+C 停止服务器")
 
                     try:

@@ -579,11 +579,17 @@
             ws = new WebSocket(protocol + '//' + location.host + '/ws');
 
             ws.onopen = () => {
+                const reconnected = wsRetried;
                 wsReady = true;
                 wsReplaced = false;
                 wsRetried = false;
                 setConnStatus('connected');
                 console.log('WebSocket connected');
+                // 断线期间可能错过了更新，也可能有消息没收到回应，重连后以服务端记录为准
+                if (reconnected) {
+                    dropUnconfirmedSends();
+                    loadHistory('keep');
+                }
             };
 
             ws.onmessage = (event) => {
@@ -593,21 +599,46 @@
                     wsReady = false;
                     setConnStatus('disconnected');
                     console.log('Connection replaced by another tab/window, attempting to close tab');
-                    applyComposerLock();
+                    applyComposerState();
                     window.close();
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
-                    // 新一轮提问到达：解除输入框的「已发送」锁定，重新拉取对话记录并滚到新消息
-                    submittedLocally = false;
+                    // 新一轮提问到达：重新拉取对话记录并滚到新消息。
+                    // 静默更新表示 AI 直接取走了排队的消息、不需要用户回复，所以不响提示音
                     const newTitle = data.session_info.title || '';
-                    announceToScreenReader('收到新的反馈请求' + (newTitle ? '：' + newTitle : ''));
-                    notifyNewFeedback(newTitle);
+                    if (data.silent) {
+                        announceToScreenReader('AI 已读取你排队的消息，正在处理');
+                    } else {
+                        announceToScreenReader('收到新的反馈请求' + (newTitle ? '：' + newTitle : ''));
+                        notifyNewFeedback(newTitle);
+                    }
                     loadHistory('auto');
                     return;
                 }
-                if (data.type === 'notification' && data.code === 'session.feedbackSubmitted') {
-                    // 服务端确认已收到反馈，用服务端记录校正本地先行显示的回复气泡
+                if (data.type !== 'notification') return;
+                if (data.code === 'session.feedbackSubmitted') {
+                    // 服务端确认已收到回复，用服务端记录校正本地先行显示的回复气泡
+                    settleSend('');
+                    lastSubmission = null;
+                    loadHistory('keep');
+                } else if (data.code === 'queue.messageQueued') {
+                    // 服务端确认消息已排队：沿用本地先行显示的气泡的 key，避免重复播放入场动画
+                    settleSend(data.message_id);
+                    lastSubmission = null;
+                    announceToScreenReader('消息已加入队列，AI 下次提问时送达');
+                    loadHistory('keep');
+                } else if (data.code === 'queue.full') {
+                    // 队列已满，消息没有被接收：把内容放回输入框
+                    settleSend('');
+                    restoreLastSubmission();
+                    setComposerNotice(queueFullText());
+                    loadHistory('keep');
+                } else if (data.code === 'queue.messageEmpty') {
+                    // 没有文字，图片也都被服务端过滤掉了（例如过大）：把内容放回输入框
+                    settleSend('');
+                    restoreLastSubmission();
+                    setComposerNotice(EMPTY_MESSAGE_TEXT);
                     loadHistory('keep');
                 }
             };
@@ -637,31 +668,46 @@
         };
 
         // --- Chat stream ---
-        // 对话记录来自 /api/all-sessions：每个会话 = 一条 AI 消息 + 一条用户回复，按创建时间从旧到新排列。
+        // 对话记录来自 /api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
+        // 按发生时间从旧到新排成一条时间线。
         const SEPARATOR_GAP_MS = 5 * 60 * 1000;
-        const CLOSED_STATUSES = ['timeout', 'expired', 'error', 'completed'];
         const UNANSWERED_NOTES = {
             timeout: '该轮对话已超时，未收到回复',
             expired: '该轮对话已过期，未收到回复',
             error: '该轮对话出错，未收到回复'
         };
         const UNANSWERED_NOTE_DEFAULT = '该轮对话已被新的提问替代，未收到回复';
-        const COMPOSER_LOCKS = {
-            submitted: { label: '已发送', hint: '已发送，等待 AI 的下一次提问...' },
-            closed: { label: '已结束', hint: '该会话已结束，等待 AI 重新发起提问...' },
-            replaced: { label: '连接已转移', hint: '连接已转移到其他窗口，请在新窗口继续' }
-        };
+        const UNANSWERED_NOTE_CURRENT = '这次提问已结束，未收到回复';
+        const COMPOSER_REPLACED = { label: '连接已转移', hint: '连接已转移到其他窗口，请在新窗口继续' };
+        const COMPOSER_NOTICE_MS = 6000;
+        const EMPTY_MESSAGE_TEXT = '这条消息没有可发送的内容（图片过大会被忽略），请检查后重发';
         const MOD_KEY = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl';
         const COMPOSER_HINT = MOD_KEY + ' + Enter 发送，' + MOD_KEY + ' + V 粘贴图片';
 
         let rounds = [];
+        let queued = [];
+        let queueLimit = 3;
+        let historyLoaded = false;
         let loadSeq = 0;
         let scrollSeq = 0;
         let hasRendered = false;
         let renderedKeys = new Set();
-        let submittedLocally = false;
         let deferredScroll = null;
         let savedChatScrollTop = 0;
+        // 正在编辑的排队消息：id、编辑框里的内容、编辑框元素
+        let editingQueueId = '';
+        let editingDraft = '';
+        let editorTextarea = null;
+        // 最近一次发送的内容，被服务端拒绝（队列已满、没有可发送的内容）时放回输入框
+        let lastSubmission = null;
+        // 已经发出、还没收到服务端回应的消息，按发送顺序；每条消息服务端都会回应一次。
+        // 作为回复发出的记 ''，作为排队消息发出的记本地先行显示的气泡的 key
+        let inflightSends = [];
+        let localQueueSeq = 0;
+        // 服务端消息 id → 本地先行显示时用过的 key，让确认前后是同一个 key，不重复播放入场动画
+        const queuedKeyAlias = {};
+        let composerNotice = '';
+        let composerNoticeTimer = 0;
 
         const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -687,24 +733,50 @@
             return d.getFullYear() === now.getFullYear() ? monthDay : d.getFullYear() + '年' + monthDay;
         };
 
-        // 仍在等用户回复的会话：是当前会话、尚无回复、且没有结束
-        const isRoundOpen = (round) =>
-            round.is_current && !round.feedback_submitted_at && !CLOSED_STATUSES.includes(round.status);
+        // 仍在等用户回复的会话：是当前会话，并且服务端确认 AI 的调用还在等它
+        const isRoundOpen = (round) => round.is_current && round.awaiting_feedback === true;
 
-        // 返回输入框的锁定原因，空字符串表示可以输入
-        const getComposerLock = () => {
-            if (wsReplaced) return 'replaced';
-            if (submittedLocally) return 'submitted';
-            const latest = rounds[rounds.length - 1];
-            if (!latest) return '';
-            if (latest.feedback_submitted_at) return 'submitted';
-            return isRoundOpen(latest) ? '' : 'closed';
+        const getLatestRound = () => rounds[rounds.length - 1] || null;
+
+        // AI 是否正在等用户回复：在等，发出的消息是对提问的回复；没在等，消息进入队列
+        const isAwaitingReply = () => {
+            const latest = getLatestRound();
+            return !historyLoaded || (latest !== null && isRoundOpen(latest));
         };
 
-        const applyComposerLock = () => {
-            const reason = getComposerLock();
-            const locked = reason !== '';
-            const view = COMPOSER_LOCKS[reason];
+        const getPendingQueued = () => queued.filter((message) => !message.delivered_at);
+
+        const isQueueFull = () => !isAwaitingReply() && getPendingQueued().length >= queueLimit;
+
+        const queueFullText = () =>
+            '队列已满（最多 ' + queueLimit + ' 条），请等 AI 读取，或编辑、撤回已排队的消息';
+
+        // 返回输入框的锁定原因，空字符串表示可以输入
+        const getComposerLock = () => (wsReplaced ? 'replaced' : '');
+
+        const clearComposerNotice = () => {
+            composerNotice = '';
+            clearTimeout(composerNoticeTimer);
+        };
+
+        // 输入框下方的临时提示（例如队列已满、消息已被取走），几秒后恢复成常规提示
+        const setComposerNotice = (text) => {
+            clearComposerNotice();
+            composerNotice = text;
+            if (text) {
+                composerNoticeTimer = setTimeout(() => {
+                    composerNotice = '';
+                    applyComposerState();
+                }, COMPOSER_NOTICE_MS);
+                announceToScreenReader(text);
+            }
+            applyComposerState();
+        };
+
+        const applyComposerState = () => {
+            const locked = getComposerLock() !== '';
+            const awaiting = isAwaitingReply();
+            const full = isQueueFull();
             const textarea = document.getElementById('feedbackText');
             const attachBtn = document.getElementById('attachBtn');
             const submitBtn = document.getElementById('submitBtn');
@@ -712,27 +784,88 @@
             const hint = document.getElementById('composerHint');
             if (textarea) textarea.disabled = locked;
             if (attachBtn) attachBtn.disabled = locked;
-            if (submitBtn) submitBtn.disabled = locked;
-            if (label) label.textContent = locked ? view.label : '发送';
-            if (hint) hint.textContent = locked ? view.hint : COMPOSER_HINT;
+            if (submitBtn) submitBtn.disabled = locked || full;
+            if (label) {
+                if (locked) label.textContent = COMPOSER_REPLACED.label;
+                else if (full) label.textContent = '队列已满';
+                else label.textContent = awaiting ? '发送' : '排队发送';
+            }
+            if (hint) {
+                let text = COMPOSER_HINT;
+                if (locked) text = COMPOSER_REPLACED.hint;
+                else if (full) text = queueFullText();
+                else if (!awaiting) {
+                    text = 'AI 正在处理，消息会排队（' + getPendingQueued().length + '/' + queueLimit + '），AI 下次提问时一并读取';
+                }
+                hint.textContent = composerNotice || text;
+                hint.title = composerNotice || text;
+                hint.classList.toggle('text-amber-300', composerNotice !== '');
+                hint.classList.toggle('text-slate-400', composerNotice === '');
+            }
         };
 
-        const buildMessages = (list) => {
-            const messages = [];
-            list.forEach((round) => {
-                messages.push({ key: 'ai:' + round.session_id, role: 'ai', at: round.created_at, round });
-                if (round.feedback_submitted_at) {
-                    messages.push({ key: 'user:' + round.session_id, role: 'user', at: round.feedback_submitted_at, round });
-                } else if (!isRoundOpen(round)) {
-                    messages.push({
-                        key: 'note:' + round.session_id,
-                        role: 'note',
-                        text: UNANSWERED_NOTES[round.status] || UNANSWERED_NOTE_DEFAULT,
-                        round
-                    });
+        const queuedKeyOf = (message) => queuedKeyAlias[message.id] || message.id;
+
+        // 服务端回应了最早发出的那条消息。如果它是本地先行显示的排队消息：
+        // 记下 key 对应的服务端 id（已排队时），并去掉本地副本，之后由服务端记录接替
+        const settleSend = (serverId) => {
+            const key = inflightSends.shift();
+            if (!key) return;
+            if (serverId) queuedKeyAlias[serverId] = key;
+            queued = queued.filter((message) => message.id !== key);
+        };
+
+        // 连接断开重连后，之前发出而没收到回应的消息不知道服务端有没有收到：
+        // 撤掉本地先行显示的气泡，以重新拉取的服务端记录为准
+        const dropUnconfirmedSends = () => {
+            inflightSends = [];
+            queued = queued.filter((message) => !message.local);
+        };
+
+        // 被服务端拒绝的发送内容放回输入框，不丢
+        const restoreLastSubmission = () => {
+            if (!lastSubmission) return;
+            const textarea = document.getElementById('feedbackText');
+            if (textarea && lastSubmission.feedback) {
+                textarea.value = textarea.value ? lastSubmission.feedback + '\n' + textarea.value : lastSubmission.feedback;
+                autoGrowTextarea(textarea);
+            }
+            pendingImages = lastSubmission.images.concat(pendingImages);
+            renderImagePreviews();
+            lastSubmission = null;
+        };
+
+        // 把 AI 的消息、用户的回复、用户排队发送的消息按时间排成一条时间线。
+        // 没收到回复的 AI 消息带一条说明（note），显示在它下方。
+        const buildTimeline = () => {
+            const deliveredCounts = {};
+            queued.forEach((message) => {
+                if (message.delivered_session_id) {
+                    deliveredCounts[message.delivered_session_id] = (deliveredCounts[message.delivered_session_id] || 0) + 1;
                 }
             });
-            return messages;
+            const items = [];
+            rounds.forEach((round) => {
+                const open = isRoundOpen(round);
+                let note = '';
+                if (!round.feedback_submitted_at && !open) {
+                    const delivered = deliveredCounts[round.session_id] || 0;
+                    if (delivered > 0) {
+                        note = '已随这次调用送达你排队的 ' + delivered + ' 条消息';
+                    } else {
+                        note = UNANSWERED_NOTES[round.status]
+                            || (round.is_current ? UNANSWERED_NOTE_CURRENT : UNANSWERED_NOTE_DEFAULT);
+                    }
+                }
+                items.push({ key: 'ai:' + round.session_id, role: 'ai', at: round.created_at, order: 0, round, open, note });
+                if (round.feedback_submitted_at) {
+                    items.push({ key: 'user:' + round.session_id, role: 'user', at: round.feedback_submitted_at, order: 1, round });
+                }
+            });
+            queued.forEach((message) => {
+                items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at: message.submitted_at, order: 1, message });
+            });
+            return items.sort((a, b) => a.at - b.at || a.order - b.order);
         };
 
         const createTimeSeparator = (ms) => {
@@ -801,11 +934,12 @@
             return bubble;
         };
 
-        const createUserBubble = (round) => {
+        // source 是会话（对提问的回复）或排队消息，两者都带 feedback 和 feedback_images
+        const createUserBubble = (source) => {
             const bubble = document.createElement('div');
             bubble.className = 'bubble-user min-w-0 px-4 py-3 text-[15px] leading-relaxed text-white break-words';
-            const text = round.feedback || '';
-            const images = (round.feedback_images || []).filter(
+            const text = source.feedback || '';
+            const images = (source.feedback_images || []).filter(
                 (item) => typeof item.thumbnail === 'string' && item.thumbnail.startsWith('data:image/')
             );
             if (text) {
@@ -836,19 +970,108 @@
             return bubble;
         };
 
-        const createMessageRow = (message, awaiting) => {
-            const isUser = message.role === 'user';
+        const createQueueAction = (text, handler) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'text-slate-300 hover:text-blue-300 hover:underline underline-offset-2 transition';
+            btn.textContent = text;
+            btn.addEventListener('click', handler);
+            return btn;
+        };
+
+        // 排队消息气泡下方的状态行：排队中（可编辑、撤回）或已送达
+        const createQueuedStatus = (message) => {
+            const line = document.createElement('div');
+            line.className = 'mt-1.5 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[12px]';
+            const label = document.createElement('span');
+            if (message.delivered_at) {
+                label.className = 'text-slate-400';
+                label.textContent = '✓ 已送达 AI';
+                line.append(label);
+                return line;
+            }
+            label.className = 'text-amber-300';
+            label.textContent = '排队中 · AI 下次提问时送达';
+            line.append(label);
+            // 本地先行显示、还没得到服务端确认的消息，以及正在编辑别的消息时，不提供操作
+            if (!message.local && !editingQueueId) {
+                line.append(
+                    createQueueAction('编辑', () => startQueuedEdit(message.id)),
+                    createQueueAction('撤回', () => cancelQueuedMessage(message.id))
+                );
+            }
+            return line;
+        };
+
+        const createEditorButton = (text, primary, handler) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = primary
+                ? 'text-[13px] font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-3.5 py-1.5 transition'
+                : 'text-[13px] font-medium text-slate-300 border border-white/10 hover:text-slate-100 hover:border-white/20 rounded-lg px-3.5 py-1.5 transition';
+            btn.textContent = text;
+            btn.addEventListener('click', handler);
+            return btn;
+        };
+
+        // 排队消息的就地编辑框：Ctrl/⌘ + Enter 保存，Esc 取消
+        const createQueuedEditor = () => {
+            const box = document.createElement('div');
+            box.className = 'w-full rounded-2xl rounded-tr-sm border border-violet-400/50 bg-surface-base p-2.5';
+            const textarea = document.createElement('textarea');
+            textarea.rows = 3;
+            textarea.value = editingDraft;
+            textarea.setAttribute('aria-label', '编辑排队中的消息');
+            textarea.className = 'block w-full min-h-[4.5rem] max-h-[40vh] resize-none bg-transparent px-2 py-1.5 text-[15px] leading-relaxed text-slate-100 outline-none';
+            textarea.addEventListener('input', () => {
+                editingDraft = textarea.value;
+                autoGrowTextarea(textarea);
+            });
+            textarea.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    saveQueuedEdit();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelQueuedEdit();
+                }
+            });
+            editorTextarea = textarea;
+            const actions = document.createElement('div');
+            actions.className = 'mt-1.5 flex justify-end gap-2';
+            actions.append(
+                createEditorButton('取消', false, cancelQueuedEdit),
+                createEditorButton('保存', true, saveQueuedEdit)
+            );
+            box.append(textarea, actions);
+            return box;
+        };
+
+        const createMessageRow = (item) => {
+            const isAi = item.role === 'ai';
+            const isQueued = item.role === 'queued';
+            const editing = isQueued && item.message.id === editingQueueId;
             const row = document.createElement('div');
-            row.className = 'flex items-start gap-3 ' + (isUser ? 'justify-end' : 'justify-start');
-            if (awaiting) row.dataset.awaiting = '1';
+            row.className = 'flex items-start gap-3 ' + (isAi ? 'justify-start' : 'justify-end');
+            if (isAi && item.open) row.dataset.awaiting = '1';
             const wrap = document.createElement('div');
-            wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%]';
-            wrap.title = new Date(message.at).toLocaleString('zh-CN', { hour12: false });
-            wrap.append(isUser ? createUserBubble(message.round) : createAiBubble(message.round, awaiting));
-            if (isUser) {
-                row.append(wrap, createAvatar('user'));
+            wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%]'
+                + (isQueued ? ' flex flex-col items-end' : '')
+                + (editing ? ' w-full' : '');
+            if (!editing) wrap.title = new Date(item.at).toLocaleString('zh-CN', { hour12: false });
+            if (isAi) {
+                wrap.append(createAiBubble(item.round, item.open));
+            } else if (editing) {
+                wrap.append(createQueuedEditor());
+            } else if (isQueued) {
+                wrap.append(createUserBubble(item.message), createQueuedStatus(item.message));
             } else {
+                wrap.append(createUserBubble(item.round));
+            }
+            if (isAi) {
                 row.append(createAvatar('ai'), wrap);
+            } else {
+                row.append(wrap, createAvatar('user'));
             }
             return row;
         };
@@ -893,36 +1116,134 @@
             if (!scroller || !list) return;
 
             const previousTop = scroller.scrollTop;
+            // 正在编辑排队消息时，重绘后要把光标放回原处
+            const caret = editorTextarea && document.activeElement === editorTextarea
+                ? [editorTextarea.selectionStart, editorTextarea.selectionEnd]
+                : null;
             const previousKeys = renderedKeys;
             const firstRender = !hasRendered;
             renderedKeys = new Set();
             hasRendered = true;
+            editorTextarea = null;
 
+            const timeline = buildTimeline();
             const fragment = document.createDocumentFragment();
             let previousAt = 0;
-            buildMessages(rounds).forEach((message) => {
-                if (message.role === 'note') {
-                    fragment.append(createNote(message.text));
-                    return;
+            timeline.forEach((item) => {
+                if (!previousAt || item.at - previousAt >= SEPARATOR_GAP_MS) {
+                    fragment.append(createTimeSeparator(item.at));
                 }
-                if (!previousAt || message.at - previousAt >= SEPARATOR_GAP_MS) {
-                    fragment.append(createTimeSeparator(message.at));
-                }
-                previousAt = message.at;
-                const row = createMessageRow(message, message.role === 'ai' && isRoundOpen(message.round));
+                previousAt = item.at;
+                const row = createMessageRow(item);
                 // 只有新出现的消息才有入场动画，整页重绘时旧消息保持不动
-                if (!firstRender && !previousKeys.has(message.key)) row.classList.add('msg-in');
-                renderedKeys.add(message.key);
+                if (!firstRender && !previousKeys.has(item.key)) row.classList.add('msg-in');
+                renderedKeys.add(item.key);
                 fragment.append(row);
+                if (item.note) fragment.append(createNote(item.note));
             });
-            if (rounds.length === 0) fragment.append(createNote('暂无对话记录'));
+            if (timeline.length === 0) fragment.append(createNote('暂无对话记录'));
             list.replaceChildren(fragment);
             scroller.scrollTop = previousTop;
 
-            applyComposerLock();
-            const latest = rounds[rounds.length - 1];
+            if (editorTextarea) {
+                autoGrowTextarea(editorTextarea);
+                if (caret) {
+                    editorTextarea.focus();
+                    editorTextarea.setSelectionRange(caret[0], caret[1]);
+                }
+            }
+            applyComposerState();
+            const latest = getLatestRound();
             updateDocumentTitle(latest ? latest.title : '');
             scrollChat(scrollMode, firstRender);
+        };
+
+        // --- 排队消息的编辑与撤回 ---
+        const stopEditing = () => {
+            editingQueueId = '';
+            editingDraft = '';
+            editorTextarea = null;
+        };
+
+        // 编辑中的内容放回主输入框，避免丢失
+        const moveDraftToComposer = (text) => {
+            const textarea = document.getElementById('feedbackText');
+            if (!textarea || !text) return;
+            textarea.value = textarea.value ? textarea.value + '\n' + text : text;
+            autoGrowTextarea(textarea);
+        };
+
+        const startQueuedEdit = (id) => {
+            const message = queued.find((item) => item.id === id && !item.delivered_at);
+            if (!message) return;
+            editingQueueId = id;
+            editingDraft = message.feedback || '';
+            renderChat('keep');
+            if (editorTextarea) {
+                const end = editorTextarea.value.length;
+                editorTextarea.focus();
+                editorTextarea.setSelectionRange(end, end);
+            }
+        };
+
+        const cancelQueuedEdit = () => {
+            stopEditing();
+            renderChat('keep');
+        };
+
+        const saveQueuedEdit = async () => {
+            const id = editingQueueId;
+            if (!id) return;
+            const text = editingDraft.trim();
+            const message = queued.find((item) => item.id === id);
+            const hasImages = !!message && (message.feedback_images || []).length > 0;
+            if (!text && !hasImages) {
+                setComposerNotice('消息内容不能为空；不需要的话请点「撤回」');
+                return;
+            }
+            try {
+                const response = await fetch('/api/queue/' + encodeURIComponent(id), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feedback: text })
+                });
+                if (response.ok) {
+                    stopEditing();
+                    await loadHistory('keep');
+                } else if (response.status === 409) {
+                    stopEditing();
+                    moveDraftToComposer(text);
+                    setComposerNotice('这条消息已送达 AI，修改的内容已放回输入框');
+                    await loadHistory('keep');
+                } else {
+                    setComposerNotice('保存失败，请重试');
+                }
+            } catch (err) {
+                console.warn('saveQueuedEdit failed', err);
+                setComposerNotice('保存失败，请重试');
+            }
+        };
+
+        const cancelQueuedMessage = async (id) => {
+            try {
+                const response = await fetch('/api/queue/' + encodeURIComponent(id), { method: 'DELETE' });
+                if (response.ok) announceToScreenReader('已撤回排队的消息');
+                else if (response.status === 409) setComposerNotice('这条消息已被 AI 读取，无法撤回');
+                else setComposerNotice('撤回失败，请重试');
+            } catch (err) {
+                console.warn('cancelQueuedMessage failed', err);
+                setComposerNotice('撤回失败，请重试');
+            }
+            await loadHistory('keep');
+        };
+
+        // 正在编辑的消息被 AI 取走（或在别处撤回）了：退出编辑，把编辑中的内容放回输入框
+        const releaseDeliveredEditor = () => {
+            if (!editingQueueId) return;
+            if (queued.some((message) => message.id === editingQueueId && !message.delivered_at)) return;
+            moveDraftToComposer(editingDraft.trim());
+            stopEditing();
+            setComposerNotice('这条消息已送达 AI，修改中的内容已放回输入框');
         };
 
         const renderChatError = () => {
@@ -949,6 +1270,17 @@
                 const data = await response.json();
                 if (seq !== loadSeq) return;
                 rounds = (data.sessions || []).slice().sort((a, b) => a.created_at - b.created_at);
+                // 本地先行显示、服务端还没确认的排队消息继续保留，免得确认前被刷新掉
+                const unconfirmed = queued.filter((message) => message.local);
+                queued = (data.queued_messages || [])
+                    .slice()
+                    .sort((a, b) => a.submitted_at - b.submitted_at)
+                    .concat(unconfirmed);
+                queueLimit = data.queue_limit || queueLimit;
+                historyLoaded = true;
+                // 「队列已满」的提示只在队列确实还是满的时候保留，撤回、被取走之后不该再提示
+                if (composerNotice === queueFullText() && !isQueueFull()) clearComposerNotice();
+                releaseDeliveredEditor();
                 renderChat(scrollMode);
             } catch (err) {
                 console.warn('loadHistory failed', err);
@@ -1043,12 +1375,18 @@
             const feedback = textarea ? textarea.value.trim() : '';
             if (!feedback && pendingImages.length === 0) return;
             if (getComposerLock()) return;
+            if (isQueueFull()) {
+                setComposerNotice(queueFullText());
+                return;
+            }
 
             if (!wsReady || !ws) {
                 alert('WebSocket 未连接，请稍后重试');
                 return;
             }
 
+            // AI 在等回复：这条消息是回复；没在等：进入队列，AI 下次提问时一并取走
+            const awaiting = isAwaitingReply();
             const sentImages = pendingImages;
             const imagesPayload = sentImages.map((img) => {
                 const base64Only = img.data.includes(',') ? img.data.split(',')[1] : img.data;
@@ -1063,20 +1401,35 @@
                 settings: {}
             }));
 
+            lastSubmission = { feedback, images: sentImages };
             textarea.value = '';
             autoGrowTextarea(textarea);
             pendingImages = [];
             renderImagePreviews();
 
-            // 先在本地显示自己的回复气泡，服务端确认后会用服务端记录再校正一次
-            submittedLocally = true;
-            const latest = rounds[rounds.length - 1];
-            if (latest) {
+            // 先在本地显示自己的气泡，服务端确认后会用服务端记录再校正一次
+            const thumbnails = sentImages
+                .filter((img) => img.thumb)
+                .map((img) => ({ name: img.name, thumbnail: img.thumb }));
+            const latest = getLatestRound();
+            if (awaiting && latest) {
+                inflightSends.push('');
                 latest.feedback = feedback;
                 latest.feedback_submitted_at = Date.now();
-                latest.feedback_images = sentImages
-                    .filter((img) => img.thumb)
-                    .map((img) => ({ name: img.name, thumbnail: img.thumb }));
+                latest.feedback_images = thumbnails;
+                latest.awaiting_feedback = false;
+            } else {
+                const key = 'local-' + (++localQueueSeq);
+                inflightSends.push(key);
+                queued.push({
+                    id: key,
+                    feedback,
+                    feedback_images: thumbnails,
+                    submitted_at: Date.now(),
+                    delivered_at: null,
+                    delivered_session_id: null,
+                    local: true
+                });
             }
             renderChat('bottom');
         };
@@ -1084,7 +1437,7 @@
         // --- Init ---
         document.addEventListener('DOMContentLoaded', () => {
             // 加载对话记录（首次进入页面直接定位，不做滚动动画）
-            applyComposerLock();
+            applyComposerState();
             loadHistory('auto');
 
             // Connect WebSocket

@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from ... import __version__
 from ...debug import web_debug_log as debug_log
 from ..constants import get_message_code as get_msg_code
+from ..models import MessageNotPendingError
 
 
 if TYPE_CHECKING:
@@ -176,6 +177,7 @@ def setup_routes(manager: "WebUIManager"):
                     "created_at": int(session.created_at * 1000),
                     "last_activity": int(session.last_activity * 1000),
                     "feedback_completed": session.feedback_completed.is_set(),
+                    "awaiting_feedback": session.is_awaiting_feedback(),
                     "feedback": session.feedback_result,
                     "feedback_submitted_at": (
                         int(session.feedback_submitted_at * 1000)
@@ -192,8 +194,33 @@ def setup_routes(manager: "WebUIManager"):
             # 按创建时间排序（最新的在前）
             sessions_data.sort(key=lambda x: x["created_at"], reverse=True)
 
+            # 用户在 AI 没有等回复时排队发送的消息（排队中的，以及随记录里的会话送达过的）
+            queued_data = [
+                {
+                    "id": message.message_id,
+                    "feedback": message.text,
+                    "feedback_images": message.thumbnails,
+                    "submitted_at": int(message.submitted_at * 1000),
+                    "delivered_at": (
+                        int(message.delivered_at * 1000)
+                        if message.delivered_at
+                        else None
+                    ),
+                    "delivered_session_id": message.delivered_session_id,
+                }
+                for message in manager.message_queue.visible_messages(
+                    set(manager.sessions)
+                )
+            ]
+
             debug_log(f"返回 {len(sessions_data)} 个会话的实时状态")
-            return JSONResponse(content={"sessions": sessions_data})
+            return JSONResponse(
+                content={
+                    "sessions": sessions_data,
+                    "queued_messages": queued_data,
+                    "queue_limit": manager.message_queue.max_pending,
+                }
+            )
 
         except Exception as e:
             debug_log(f"获取所有会话状态失败: {e}")
@@ -204,6 +231,60 @@ def setup_routes(manager: "WebUIManager"):
                     "messageCode": get_msg_code("get_sessions_failed"),
                 },
             )
+
+    @manager.app.put("/api/queue/{message_id}")
+    async def update_queued_message(message_id: str, request: Request):
+        """修改一条还在排队的消息的文字"""
+        try:
+            data = await request.json()
+        except ValueError:
+            data = {}
+        text = str(data.get("feedback", "")) if isinstance(data, dict) else ""
+
+        try:
+            manager.message_queue.update_text(message_id, text)
+        except MessageNotPendingError:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "error",
+                    "messageCode": get_msg_code("QUEUE_MESSAGE_NOT_PENDING"),
+                },
+            )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "messageCode": get_msg_code("QUEUE_MESSAGE_EMPTY"),
+                },
+            )
+        return JSONResponse(
+            content={
+                "status": "success",
+                "messageCode": get_msg_code("QUEUE_MESSAGE_UPDATED"),
+            }
+        )
+
+    @manager.app.delete("/api/queue/{message_id}")
+    async def cancel_queued_message(message_id: str):
+        """撤回一条还在排队的消息"""
+        try:
+            manager.message_queue.cancel(message_id)
+        except MessageNotPendingError:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "error",
+                    "messageCode": get_msg_code("QUEUE_MESSAGE_NOT_PENDING"),
+                },
+            )
+        return JSONResponse(
+            content={
+                "status": "success",
+                "messageCode": get_msg_code("QUEUE_MESSAGE_CANCELLED"),
+            }
+        )
 
     @manager.app.post("/api/add-user-message")
     async def add_user_message(request: Request):
@@ -618,11 +699,15 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
     message_type = data.get("type")
 
     if message_type == "submit_feedback":
-        # 提交反馈
         feedback = data.get("feedback", "")
         images = data.get("images", [])
         settings = data.get("settings", {})
-        await session.submit_feedback(feedback, images, settings)
+        if session.is_awaiting_feedback():
+            # AI 正在等回复：作为对当前提问的回复
+            await session.submit_feedback(feedback, images, settings)
+        else:
+            # AI 没有在等：进入队列，AI 下次提问时一并取走
+            await manager.enqueue_user_message(session, feedback, images, settings)
 
     elif message_type == "get_status":
         # 获取会话状态
