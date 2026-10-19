@@ -3,7 +3,7 @@ name = "gl-mcp-feedback"
 version = "2.2.3"
 description = "Enhanced MCP server for interactive user feedback in AI-assisted development, featuring Web UI with intelligent environment detection and cross-platform compatibility."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     { name = "鼬君夏纪" }
 ]
@@ -13,7 +13,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: User Interfaces",
@@ -64,15 +63,15 @@ dev = [
     "pytest-timeout>=2.1.0",
     "twine>=6.1.0",
     "ruff>=0.11.0",
-    "mypy>=1.16.0",
     "pre-commit>=4.0.0",
     "pillow>=11.2.1",
+    "pyright>=1.1.414",
 ]
 
 # ===== Ruff 配置 =====
 [tool.ruff]
 # 目標 Python 版本
-target-version = "py311"
+target-version = "py312"
 
 # 程式碼行長度
 line-length = 88
@@ -88,7 +87,6 @@ exclude = [
     ".git",
     ".git-rewrite",
     ".hg",
-    ".mypy_cache",
     ".nox",
     ".pants.d",
     ".pytype",
@@ -236,69 +234,11 @@ known-first-party = ["mcp_feedback_enhanced"]
 force-single-line = false
 lines-after-imports = 2
 
-# ===== mypy 配置 =====
-[tool.mypy]
-# Python 版本
-python_version = "3.11"
-
-# 基本設定 - 2024-12-19 更新：經過三階段改善，74% 錯誤已修復
-warn_return_any = true
-warn_unused_configs = true
-# 漸進式啟用：核心模組已達到類型安全標準，剩餘26個錯誤主要為第三方庫問題
-disallow_untyped_defs = false  # 目標：下個版本啟用
-disallow_incomplete_defs = false  # 目標：下個版本啟用
-check_untyped_defs = true
-disallow_untyped_decorators = false  # 漸進式啟用
-
-# 嚴格模式（漸進式啟用）
-strict_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-
-# 錯誤格式
-show_error_codes = true
-show_column_numbers = true
-pretty = true
-
-# 包含和排除 - 使用最佳實踐配置
-files = ["src", "tests"]
-exclude = [
-    "build/",
-    "dist/",
-    ".venv/",
-    "venv/",
-    ".trunk/",
-
-    ".mypy_cache/",
-]
-
-# 最佳實踐：明確指定包基礎路徑
-explicit_package_bases = true
-# 設置 mypy 路徑，確保正確的模組解析
-mypy_path = ["src"]
-# 忽略已安裝的包，只檢查源代碼
-no_site_packages = true
-
-# 第三方庫配置
-[[tool.mypy.overrides]]
-module = [
-    "fastmcp.*",
-    "mcp.*",
-    "psutil.*",
-    "uvicorn.*",
-    "websockets.*",
-    "aiohttp.*",
-    "fastapi.*",
-    "pydantic.*",
-    "pytest.*",
-]
-ignore_missing_imports = true
-
-# 測試檔案的寬鬆配置
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_decorators = false
+# ===== Pyright 配置 =====
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", ".venv"]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"

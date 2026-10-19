@@ -7,7 +7,6 @@ wheels/
 *.egg-info
 
 # Development tool caches
-.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 .coverage

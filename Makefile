@@ -17,7 +17,7 @@ help: ## Show this help message
 	@echo "  lint-fix             Run linting with auto-fix"
 	@echo "  format               Format code with Ruff"
 	@echo "  format-check         Check code formatting"
-	@echo "  type-check           Run type checking with mypy"
+	@echo "  type-check           Run type checking with pyright"
 	@echo "  check                Run all code quality checks"
 	@echo "  check-fix            Run all checks with auto-fix"
 	@echo "  pre-commit-run       Run pre-commit on staged files"
@@ -63,8 +63,8 @@ format: ## Format code with Ruff
 format-check: ## Check code formatting
 	uv run ruff format . --check
 
-type-check: ## Run type checking with mypy
-	uv run mypy
+type-check: ## Run type checking with pyright
+	uv run pyright
 
 # 組合品質檢查命令
 check: lint format-check type-check ## Run all code quality checks
@@ -101,7 +101,6 @@ test-web: ## Run Web UI tests (continuous)
 # 維護相關命令
 clean: ## Clean up cache and temporary files
 	@echo "Cleaning up..."
-	@if exist ".mypy_cache" rmdir /s /q ".mypy_cache" 2>nul || true
 	@if exist ".ruff_cache" rmdir /s /q ".ruff_cache" 2>nul || true
 	@if exist ".pytest_cache" rmdir /s /q ".pytest_cache" 2>nul || true
 	@if exist "htmlcov" rmdir /s /q "htmlcov" 2>nul || true
@@ -150,7 +149,7 @@ quick-check: lint-fix format type-check ## Quick check with auto-fix (recommende
 
 # Windows PowerShell 專用命令
 ps-clean: ## PowerShell version of clean (Windows)
-	powershell -Command "Get-ChildItem -Path . -Recurse -Name '__pycache__' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; Get-ChildItem -Path . -Recurse -Name '*.pyc' | Remove-Item -Force -ErrorAction SilentlyContinue; @('.mypy_cache', '.ruff_cache', '.pytest_cache', 'htmlcov', 'dist', 'build') | ForEach-Object { if (Test-Path $$_) { Remove-Item $$_ -Recurse -Force } }"
+	powershell -Command "Get-ChildItem -Path . -Recurse -Name '__pycache__' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; Get-ChildItem -Path . -Recurse -Name '*.pyc' | Remove-Item -Force -ErrorAction SilentlyContinue; @('.ruff_cache', '.pytest_cache', 'htmlcov', 'dist', 'build') | ForEach-Object { if (Test-Path $$_) { Remove-Item $$_ -Recurse -Force } }"
 
 # 完整構建流程
 build-all: clean build ## Build complete package
