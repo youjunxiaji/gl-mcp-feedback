@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>gl-mcp-feedback</title>
+    <title>{{ page_title }}</title>
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
@@ -175,7 +175,7 @@
         .md > *:last-child { margin-bottom: 0; }
     </style>
 </head>
-<body class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col overflow-hidden antialiased">
+<body data-room-base="{{ room_base }}" class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col overflow-hidden antialiased">
 
     <!-- ===== TOP BAR ===== -->
     <header class="glow-line relative flex items-center justify-between px-5 h-11 bg-surface-raised border-b border-white/[0.06] shrink-0 z-50">
@@ -274,6 +274,9 @@
     <!-- ===== SCRIPTS ===== -->
     <script src="/static/js/vendor/marked.min.js"></script>
     <script>
+        // 这个页面所属对话的房间前缀（/c/<对话ID>），接口和 WebSocket 都挂在它下面；服务端写在 body 的 data-room-base 上
+        const ROOM_BASE = document.body.dataset.roomBase;
+
         // --- Code-block copy buttons ---
         var COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
         var CHECK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -472,7 +475,7 @@
             if (wsReplaced) return;
             setConnStatus('connecting');
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(protocol + '//' + location.host + '/ws');
+            ws = new WebSocket(protocol + '//' + location.host + ROOM_BASE + '/ws');
 
             ws.onopen = () => {
                 const reconnected = wsRetried;
@@ -563,7 +566,7 @@
         };
 
         // --- Chat stream ---
-        // 对话记录来自 /api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
+        // 对话记录来自 <房间前缀>/api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
         // 排成一条时间线：已送达的排队消息跟在送达它们的那条 AI 消息之后，其余按发生时间从旧到新。
         const SEPARATOR_GAP_MS = 5 * 60 * 1000;
         const UNANSWERED_NOTES = {
@@ -1099,7 +1102,7 @@
                 return;
             }
             try {
-                const response = await fetch('/api/queue/' + encodeURIComponent(id), {
+                const response = await fetch(ROOM_BASE + '/api/queue/' + encodeURIComponent(id), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ feedback: text })
@@ -1123,7 +1126,7 @@
 
         const cancelQueuedMessage = async (id) => {
             try {
-                const response = await fetch('/api/queue/' + encodeURIComponent(id), { method: 'DELETE' });
+                const response = await fetch(ROOM_BASE + '/api/queue/' + encodeURIComponent(id), { method: 'DELETE' });
                 if (response.ok) announceToScreenReader('已撤回排队的消息');
                 else if (response.status === 409) setComposerNotice('这条消息已被 AI 读取，无法撤回');
                 else setComposerNotice('撤回失败，请重试');
@@ -1162,7 +1165,7 @@
         const loadHistory = async (scrollMode = 'keep') => {
             const seq = ++loadSeq;
             try {
-                const response = await fetch('/api/all-sessions');
+                const response = await fetch(ROOM_BASE + '/api/all-sessions');
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const data = await response.json();
                 if (seq !== loadSeq) return;
@@ -1349,14 +1352,6 @@
 
             // 初始化提醒（首次手势解锁声音播放 + 请求桌面通知授权）
             setupAlertOnFirstGesture();
-
-            // 若由等待页（index.html）检测到新会话跳转而来，补一次提醒
-            try {
-                if (sessionStorage.getItem('mcpPendingAlert')) {
-                    sessionStorage.removeItem('mcpPendingAlert');
-                    notifyNewFeedback();
-                }
-            } catch (e) {}
 
             // File input change handler
             const fileInput = document.getElementById('imageInput');

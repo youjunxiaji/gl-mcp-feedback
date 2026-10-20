@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from .web.main import WebUIManager
+    from .web.models import Room
 
 
 # 抑制 Windows 上的 asyncio ResourceWarning
@@ -204,10 +205,7 @@ def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
     ]
 
     for demo in demo_rounds:
-        session_id = manager.create_session(project_directory, demo.summary)
-        session = manager.get_session(session_id)
-        if session is None:
-            continue
+        session = manager.create_session(project_directory, demo.summary)
         session.created_at = now - demo.minutes_ago * 60
         asyncio.run(session.submit_feedback(demo.feedback, demo.images, {}))
         session.feedback_submitted_at = session.created_at + demo.reply_after_seconds
@@ -215,7 +213,7 @@ def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
 
 
 def _simulate_ai_followups(
-    manager: "WebUIManager",
+    room: "Room",
     project_directory: str,
     work_seconds: int,
     max_rounds: int,
@@ -227,13 +225,13 @@ def _simulate_ai_followups(
     队列是空的就等用户回复，如此循环 max_rounds 次。
 
     Args:
-        manager: Web UI 管理器
+        room: 演示用的房间
         project_directory: 会话使用的项目目录
         work_seconds: 每次「干活」的秒数
         max_rounds: 最多模拟几次后续提问
     """
     for round_number in range(1, max_rounds + 1):
-        session = manager.get_current_session()
+        session = room.current_session
         if session is None:
             return
         while not session.feedback_completed.wait(0.5):
@@ -249,13 +247,9 @@ def _simulate_ai_followups(
             "- 你在「AI 干活」期间排队的消息，会随这次调用一并送达\n"
             "- 队列是空的话，这一轮就等你回复"
         )
-        new_session = manager.get_session(
-            manager.create_session(project_directory, summary)
-        )
-        if new_session is None:
-            return
+        new_session = room.create_session(project_directory, summary)
 
-        result = asyncio.run(manager.deliver_queued_messages(new_session))
+        result = asyncio.run(room.deliver_queued_messages(new_session))
         if result is None:
             print("🤖 模拟 AI：队列是空的，等你回复这一轮")
         else:
@@ -353,9 +347,10 @@ def process_feedback(data):
 
             # 先灌入两轮历史对话，最后一轮才是等待回复的当前会话
             _seed_demo_rounds(manager, temp_dir)
-            created_session_id = manager.create_session(temp_dir, markdown_test_content)
+            demo_session = manager.create_session(temp_dir, markdown_test_content)
+            demo_room = manager.get_or_create_room()
 
-            if created_session_id:
+            if demo_session:
                 print("✅ 会话创建成功")
 
                 print("🚀 启动 Web 服务器...")
@@ -367,7 +362,7 @@ def process_feedback(data):
                     and manager.server_thread.is_alive()
                 ):
                     print("✅ Web 服务器启动成功")
-                    url = f"http://{manager.host}:{manager.port}"
+                    url = manager.get_room_url(demo_room)
                     print(f"🌐 服务器运行在: {url}")
 
                     # 如果端口有变更，额外提醒
@@ -388,7 +383,7 @@ def process_feedback(data):
                     # 模拟 AI 的后续调用，用来体验「AI 干活期间发送的消息会排队」
                     threading.Thread(
                         target=_simulate_ai_followups,
-                        args=(manager, temp_dir, 20, 4),
+                        args=(demo_room, temp_dir, 20, 4),
                         daemon=True,
                     ).start()
 

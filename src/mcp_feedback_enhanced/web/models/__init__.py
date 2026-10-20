@@ -14,15 +14,18 @@ from .message_queue import (
     QueuedMessage,
     QueueFullError,
 )
+from .room import DEFAULT_ROOM_ID, Room
 
 
 __all__ = [
+    "DEFAULT_ROOM_ID",
     "CleanupReason",
     "FeedbackResult",
     "MessageNotPendingError",
     "MessageQueue",
     "QueueFullError",
     "QueuedMessage",
+    "Room",
     "SessionStatus",
     "WebFeedbackSession",
 ]

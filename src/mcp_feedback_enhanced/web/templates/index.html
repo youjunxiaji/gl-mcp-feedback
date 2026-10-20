@@ -69,9 +69,9 @@
         }
     </style>
 </head>
-<body class="bg-surface-base text-slate-200 font-sans h-screen flex flex-col items-center justify-center overflow-hidden antialiased">
+<body class="bg-surface-base text-slate-200 font-sans min-h-screen flex flex-col items-center justify-center antialiased">
 
-    <div class="flex flex-col items-center gap-6 text-center px-6">
+    <main class="flex flex-col items-center gap-6 text-center px-6 py-10 w-full max-w-xl">
         <!-- Logo -->
         <div class="w-16 h-16 rounded-[18px] bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-[28px] text-white font-extrabold shadow-[0_8px_30px_rgba(59,130,246,0.3)] animate-[float_3s_ease-in-out_infinite]">
             M
@@ -84,35 +84,92 @@
             <span class="inline-block mt-2 font-mono text-xs text-blue-400 bg-blue-500/[0.12] px-2.5 py-0.5 rounded-full">v{{ version }}</span>
         </div>
 
-        <!-- Status -->
-        <div class="flex items-center gap-2.5 mt-4">
-            <div class="relative w-[9px] h-[9px]">
-                <div class="absolute inset-0 rounded-full bg-amber-400"></div>
-                <div class="absolute -inset-[4px] rounded-full bg-amber-400 animate-[pulse-ring_2s_ease-in-out_infinite]"></div>
-            </div>
-            <span id="statusText" class="text-[14px] font-medium text-amber-400">等待 MCP 服务调用...</span>
-        </div>
+        <!-- 对话列表：每个对话一个入口 -->
+        <ul id="roomList" class="hidden w-full flex flex-col gap-2.5 text-left" aria-label="对话列表"></ul>
 
-        <p class="text-xs text-slate-500 max-w-sm leading-relaxed mt-2">
-            当 AI 代理调用 <code class="font-mono text-xs text-blue-400 bg-surface-overlay px-1.5 py-0.5 rounded">interactive_feedback</code> 工具时，页面将自动跳转到反馈界面。
-        </p>
-    </div>
+        <!-- 没有对话时的等待提示 -->
+        <div id="emptyState" class="flex flex-col items-center">
+            <div class="flex items-center gap-2.5 mt-4">
+                <div class="relative w-[9px] h-[9px]">
+                    <div class="absolute inset-0 rounded-full bg-amber-400"></div>
+                    <div class="absolute -inset-[4px] rounded-full bg-amber-400 animate-[pulse-ring_2s_ease-in-out_infinite]"></div>
+                </div>
+                <span id="statusText" class="text-[14px] font-medium text-amber-400">等待 MCP 服务调用...</span>
+            </div>
+
+            <p class="text-xs text-slate-500 max-w-sm leading-relaxed mt-4">
+                当 AI 代理调用 <code class="font-mono text-xs text-blue-400 bg-surface-overlay px-1.5 py-0.5 rounded">interactive_feedback</code> 工具时，对应的对话会出现在这里，每个对话有自己的反馈页面。
+            </p>
+        </div>
+    </main>
 
     <script>
-        function checkSession() {
-            fetch('/api/session-status')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.has_session) {
-                        // 标记「由等待页检测到新会话」，reload 后由 feedback.html 补一次提醒
-                        try { sessionStorage.setItem('mcpPendingAlert', '1'); } catch (e) {}
-                        location.reload();
-                    }
-                })
-                .catch(function() {});
-        }
+        const POLL_INTERVAL_MS = 3000;
 
-        setInterval(checkSession, 3000);
+        const formatTime = (timestamp) => {
+            const date = new Date(timestamp);
+            const pad = (value) => String(value).padStart(2, '0');
+            return pad(date.getHours()) + ':' + pad(date.getMinutes());
+        };
+
+        const createChip = (text, className) => {
+            const chip = document.createElement('span');
+            chip.className = className;
+            chip.textContent = text;
+            return chip;
+        };
+
+        // 项目目录来自 AI 的调用参数，一律按纯文本显示
+        const createRoomItem = (room) => {
+            const item = document.createElement('li');
+            const link = document.createElement('a');
+            link.href = '/c/' + encodeURIComponent(room.room_id) + '/';
+            link.className = 'block bg-surface-raised border border-white/[0.06] rounded-xl px-4 py-3 hover:border-blue-500/40 hover:bg-surface-overlay transition';
+
+            const top = document.createElement('div');
+            top.className = 'flex items-center justify-between gap-3';
+            const title = createChip(room.title, 'text-[15px] font-semibold text-slate-100 truncate');
+            const state = room.awaiting_feedback
+                ? createChip('等你回复', 'shrink-0 text-xs font-medium text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full')
+                : createChip('AI 处理中', 'shrink-0 text-xs font-medium text-slate-400 bg-surface-overlay px-2 py-0.5 rounded-full');
+            top.append(title, state);
+
+            const meta = document.createElement('div');
+            meta.className = 'mt-1.5 flex items-center gap-3 text-xs text-slate-500';
+            const directory = createChip(room.project_directory, 'min-w-0 flex-1 font-mono truncate');
+            directory.title = room.project_directory;
+            meta.append(directory);
+            if (room.pending_count > 0) {
+                meta.append(createChip('排队 ' + room.pending_count + ' 条', 'shrink-0 text-amber-400'));
+            }
+            meta.append(createChip('最近 ' + formatTime(room.last_activity), 'shrink-0'));
+
+            link.append(top, meta);
+            item.append(link);
+            return item;
+        };
+
+        const renderRooms = (rooms) => {
+            const list = document.getElementById('roomList');
+            const empty = document.getElementById('emptyState');
+            list.replaceChildren(...rooms.map(createRoomItem));
+            list.classList.toggle('hidden', rooms.length === 0);
+            empty.classList.toggle('hidden', rooms.length !== 0);
+        };
+
+        const refreshRooms = async () => {
+            try {
+                const response = await fetch('/api/rooms');
+                if (!response.ok) return;
+                const data = await response.json();
+                renderRooms(data.rooms || []);
+            } catch (err) {
+                console.warn('refreshRooms failed', err);
+            }
+        };
+
+        refreshRooms();
+        setInterval(refreshRooms, POLL_INTERVAL_MS);
     </script>
 </body>
 </html>

@@ -3,65 +3,87 @@
 主要路由处理
 ============
 
-设置 Web UI 的主要路由和处理逻辑。
+设置 Web UI 的主要路由和处理逻辑：
+
+- ``/`` 是房间列表页，``/api/rooms`` 是它用的接口
+- ``/c/{room_id}/`` 是一个对话的页面，页面用到的接口和 WebSocket 都在这个前缀下
 """
 
 import json
 from typing import TYPE_CHECKING
 
-from fastapi import Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ... import __version__
 from ...debug import web_debug_log as debug_log
 from ..constants import get_message_code as get_msg_code
-from ..models import MessageNotPendingError
+from ..models import MessageNotPendingError, Room, WebFeedbackSession
 
 
 if TYPE_CHECKING:
     from ..main import WebUIManager
 
 
-# 使用统一的消息代码系统
-# 从 ..constants 导入的 get_msg_code 函数会处理所有消息代码
-# 旧的 key 会自动映射到新的常量
-
-
 def setup_routes(manager: "WebUIManager"):
     """设置路由"""
 
+    def room_not_found() -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Room not found",
+                "messageCode": get_msg_code("ROOM_NOT_FOUND"),
+            },
+        )
+
     @manager.app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        """统一反馈页面 - 重构后的主页面"""
-        # 获取当前活跃会话
-        current_session = manager.get_current_session()
+        """房间列表页：每个对话一个入口，没有房间时显示等待提示"""
+        return manager.templates.TemplateResponse(
+            request,
+            "index.html",
+            {"version": __version__},
+        )
 
-        if not current_session:
-            # 没有活跃会话时显示等待页面
-            return manager.templates.TemplateResponse(
-                request,
-                "index.html",
-                {
-                    "has_session": False,
-                    "version": __version__,
-                },
-            )
+    @manager.app.get("/api/rooms")
+    async def list_rooms():
+        """所有房间，最近有动静的在前"""
+        items = [room.to_list_item() for room in list(manager.rooms.values())]
+        items.sort(key=lambda item: item["last_activity"], reverse=True)
+        return JSONResponse(content={"rooms": items})
+
+    router = APIRouter(prefix="/c/{room_id}")
+
+    @router.get("/", response_class=HTMLResponse)
+    async def room_page(request: Request, room_id: str):
+        """一个对话的反馈页面"""
+        room = manager.get_room(room_id)
+        session = room.current_session if room else None
+
+        if room is None or session is None:
+            # 房间不存在、或房间里已经没有会话：回房间列表
+            return RedirectResponse("/")
 
         return manager.templates.TemplateResponse(
             request,
             "feedback.html",
             {
-                "project_directory": current_session.project_directory,
+                "project_directory": session.project_directory,
                 "version": __version__,
-                "has_session": True,
+                "room_base": f"/c/{room.room_id}",
+                "page_title": room.page_title(),
             },
         )
 
-    @manager.app.get("/api/session-status")
-    async def get_session_status():
-        """获取当前会话状态"""
-        current_session = manager.get_current_session()
+    @router.get("/api/session-status")
+    async def get_session_status(room_id: str):
+        """获取房间当前会话状态"""
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
 
+        current_session = room.current_session
         if not current_session:
             return JSONResponse(
                 content={
@@ -84,11 +106,14 @@ def setup_routes(manager: "WebUIManager"):
             }
         )
 
-    @manager.app.get("/api/current-session")
-    async def get_current_session(request: Request):
-        """获取当前会话详细信息"""
-        current_session = manager.get_current_session()
+    @router.get("/api/current-session")
+    async def get_current_session(room_id: str):
+        """获取房间当前会话详细信息"""
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
 
+        current_session = room.current_session
         if not current_session:
             return JSONResponse(
                 status_code=404,
@@ -109,14 +134,17 @@ def setup_routes(manager: "WebUIManager"):
             }
         )
 
-    @manager.app.get("/api/all-sessions")
-    async def get_all_sessions(request: Request):
-        """获取所有会话的实时状态"""
+    @router.get("/api/all-sessions")
+    async def get_all_sessions(room_id: str):
+        """获取房间里所有会话的实时状态"""
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
 
         try:
             sessions_data = []
 
-            for session_id, session in manager.sessions.items():
+            for session in list(room.sessions.values()):
                 session_info = {
                     "session_id": session.session_id,
                     "project_directory": session.project_directory,
@@ -136,7 +164,7 @@ def setup_routes(manager: "WebUIManager"):
                     ),
                     "feedback_images": session.feedback_images,
                     "has_websocket": session.websocket is not None,
-                    "is_current": session == manager.current_session,
+                    "is_current": session == room.current_session,
                 }
                 sessions_data.append(session_info)
 
@@ -157,17 +185,15 @@ def setup_routes(manager: "WebUIManager"):
                     ),
                     "delivered_session_id": message.delivered_session_id,
                 }
-                for message in manager.message_queue.visible_messages(
-                    set(manager.sessions)
-                )
+                for message in room.message_queue.visible_messages(set(room.sessions))
             ]
 
-            debug_log(f"返回 {len(sessions_data)} 个会话的实时状态")
+            debug_log(f"房间 {room.room_id} 返回 {len(sessions_data)} 个会话的实时状态")
             return JSONResponse(
                 content={
                     "sessions": sessions_data,
                     "queued_messages": queued_data,
-                    "queue_limit": manager.message_queue.max_pending,
+                    "queue_limit": room.message_queue.max_pending,
                 }
             )
 
@@ -181,9 +207,13 @@ def setup_routes(manager: "WebUIManager"):
                 },
             )
 
-    @manager.app.put("/api/queue/{message_id}")
-    async def update_queued_message(message_id: str, request: Request):
+    @router.put("/api/queue/{message_id}")
+    async def update_queued_message(room_id: str, message_id: str, request: Request):
         """修改一条还在排队的消息的文字"""
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
+
         try:
             data = await request.json()
         except ValueError:
@@ -191,7 +221,7 @@ def setup_routes(manager: "WebUIManager"):
         text = str(data.get("feedback", "")) if isinstance(data, dict) else ""
 
         try:
-            manager.message_queue.update_text(message_id, text)
+            room.message_queue.update_text(message_id, text)
         except MessageNotPendingError:
             return JSONResponse(
                 status_code=409,
@@ -215,11 +245,15 @@ def setup_routes(manager: "WebUIManager"):
             }
         )
 
-    @manager.app.delete("/api/queue/{message_id}")
-    async def cancel_queued_message(message_id: str):
+    @router.delete("/api/queue/{message_id}")
+    async def cancel_queued_message(room_id: str, message_id: str):
         """撤回一条还在排队的消息"""
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
+
         try:
-            manager.message_queue.cancel(message_id)
+            room.message_queue.cancel(message_id)
         except MessageNotPendingError:
             return JSONResponse(
                 status_code=409,
@@ -235,12 +269,12 @@ def setup_routes(manager: "WebUIManager"):
             }
         )
 
-    @manager.app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        """WebSocket 端点"""
-        # 获取当前活跃会话
-        session = manager.get_current_session()
-        if not session:
+    @router.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket, room_id: str):
+        """房间页面的 WebSocket 端点"""
+        room = manager.get_room(room_id)
+        session = room.current_session if room else None
+        if room is None or session is None:
             await websocket.close(code=4004, reason="No active session")
             return
 
@@ -250,16 +284,22 @@ def setup_routes(manager: "WebUIManager"):
         if old_websocket and old_websocket != websocket:
             debug_log("会话已有 WebSocket 连接，通知旧连接让位后替换")
             try:
-                await old_websocket.send_json({
-                    "type": "connection_replaced",
-                    "messageCode": get_msg_code("connection_replaced"),
-                })
-                await old_websocket.close(code=4001, reason="Replaced by new connection")
+                await old_websocket.send_json(
+                    {
+                        "type": "connection_replaced",
+                        "messageCode": get_msg_code("connection_replaced"),
+                    }
+                )
+                await old_websocket.close(
+                    code=4001, reason="Replaced by new connection"
+                )
             except Exception as e:
                 debug_log(f"关闭旧 WebSocket 连接时出错（可忽略）: {e}")
 
         session.websocket = websocket
-        debug_log(f"WebSocket 连接建立: 当前活跃会话 {session.session_id}")
+        debug_log(
+            f"WebSocket 连接建立: 房间 {room.room_id} 的当前会话 {session.session_id}"
+        )
 
         # 发送连接成功消息
         try:
@@ -271,7 +311,7 @@ def setup_routes(manager: "WebUIManager"):
             )
 
             # 检查是否有待发送的会话更新
-            if getattr(manager, "_pending_session_update", False):
+            if room.pending_session_update:
                 debug_log("检测到待发送的会话更新，准备发送通知")
                 await websocket.send_json(
                     {
@@ -285,7 +325,7 @@ def setup_routes(manager: "WebUIManager"):
                         },
                     }
                 )
-                manager._pending_session_update = False
+                room.pending_session_update = False
                 debug_log("✅ 已发送会话更新通知到前端")
             else:
                 # 发送当前会话状态
@@ -302,10 +342,10 @@ def setup_routes(manager: "WebUIManager"):
                 data = await websocket.receive_text()
                 message = json.loads(data)
 
-                current_session = manager.get_current_session()
+                current_session = room.current_session
                 if current_session:
                     if current_session.websocket == websocket:
-                        await handle_websocket_message(manager, current_session, message)
+                        await handle_websocket_message(room, current_session, message)
                     else:
                         debug_log("此 WebSocket 已被新连接替代，关闭当前连接")
                         break
@@ -320,13 +360,15 @@ def setup_routes(manager: "WebUIManager"):
         except Exception as e:
             debug_log(f"WebSocket 错误: {e}")
         finally:
-            current_session = manager.get_current_session()
+            current_session = room.current_session
             if current_session and current_session.websocket == websocket:
                 current_session.websocket = None
                 debug_log("已清理会话中的 WebSocket 连接")
 
+    manager.app.include_router(router)
 
-async def handle_websocket_message(manager: "WebUIManager", session, data: dict):
+
+async def handle_websocket_message(room: Room, session: WebFeedbackSession, data: dict):
     """处理 WebSocket 消息"""
     message_type = data.get("type")
 
@@ -338,8 +380,8 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
             # AI 正在等回复：作为对当前提问的回复
             await session.submit_feedback(feedback, images, settings)
         else:
-            # AI 没有在等：进入队列，AI 下次提问时一并取走
-            await manager.enqueue_user_message(session, feedback, images, settings)
+            # AI 没有在等：进入房间的队列，AI 下次提问时一并取走
+            await room.enqueue_user_message(session, feedback, images, settings)
 
     else:
         debug_log(f"未知的消息类型: {message_type}")

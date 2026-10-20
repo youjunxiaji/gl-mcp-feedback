@@ -13,6 +13,7 @@ from fastmcp.exceptions import ToolError
 
 from mcp_feedback_enhanced import server
 from mcp_feedback_enhanced.web.main import WebUIManager
+from mcp_feedback_enhanced.web.models import DEFAULT_ROOM_ID
 from mcp_feedback_enhanced.web.models.feedback_session import WebFeedbackSession
 
 
@@ -51,14 +52,15 @@ class TestSessionApi:
             "/tmp/project", "摘要", conversation_id=CONVERSATION_ID
         )
         client = TestClient(web_ui_manager.app)
+        room = f"/c/{CONVERSATION_ID}"
 
-        status = client.get("/api/session-status").json()
+        status = client.get(f"{room}/api/session-status").json()
         assert status["session_info"]["conversation_id"] == CONVERSATION_ID
 
-        current = client.get("/api/current-session").json()
+        current = client.get(f"{room}/api/current-session").json()
         assert current["conversation_id"] == CONVERSATION_ID
 
-        sessions = client.get("/api/all-sessions").json()["sessions"]
+        sessions = client.get(f"{room}/api/all-sessions").json()["sessions"]
         assert [session["conversation_id"] for session in sessions] == [CONVERSATION_ID]
 
     def test_missing_or_invalid_id_becomes_empty(self, web_ui_manager: WebUIManager):
@@ -68,7 +70,9 @@ class TestSessionApi:
         )
         client = TestClient(web_ui_manager.app)
 
-        sessions = client.get("/api/all-sessions").json()["sessions"]
+        sessions = client.get(f"/c/{DEFAULT_ROOM_ID}/api/all-sessions").json()[
+            "sessions"
+        ]
         assert len(sessions) == 2
         assert {session["conversation_id"] for session in sessions} == {""}
 
@@ -76,7 +80,7 @@ class TestSessionApi:
         web_ui_manager.create_session(
             "/tmp/project", "摘要", conversation_id=CONVERSATION_ID
         )
-        page = TestClient(web_ui_manager.app).get("/")
+        page = TestClient(web_ui_manager.app).get(f"/c/{CONVERSATION_ID}/")
 
         assert page.status_code == 200
         assert 'id="conversationBadge"' in page.text

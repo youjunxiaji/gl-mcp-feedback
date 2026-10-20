@@ -42,6 +42,9 @@ class MessageCodes:
     SESSION_MANUAL_CLEANUP = "session.manualCleanup"
     SESSION_ERROR_CLEANUP = "session.errorCleanup"
 
+    # ========== 房间相关 ==========
+    ROOM_NOT_FOUND = "room.notFound"
+
     # ========== 消息队列相关 ==========
     QUEUE_MESSAGE_QUEUED = "queue.messageQueued"
     QUEUE_FULL = "queue.full"

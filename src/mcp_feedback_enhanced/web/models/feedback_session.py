@@ -118,9 +118,6 @@ class WebFeedbackSession:
             "resources_cleaned": 0,
         }
 
-        # 新增：活跃标签页管理
-        self.active_tabs: dict[str, Any] = {}
-
         # 确保临时目录存在
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
