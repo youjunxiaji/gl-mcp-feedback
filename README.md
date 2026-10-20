@@ -66,10 +66,11 @@
 
 ### Cursor 钩子
 
-仓库里的 `hooks/gl-feedback.sh` 是一个 Cursor 钩子脚本，管两件事：
+仓库里的 `hooks/gl-feedback.sh` 是一个 Cursor 钩子脚本，管三件事：
 
 - 给每次 `interactive_feedback` 填上 Cursor 的对话 ID，让每个对话用自己的页面
-- AI 调用完任意一次工具时，把用户排队的消息取走，附在那次工具结果后面交给 AI；消息带图片时，图片存成本地文件，路径写在文字里，AI 用 Read 查看
+- AI 调用完任意一次工具时，把用户排队的消息取走，附在那次工具结果后面交给 AI；消息带图片时，图片存成本地文件，路径写在文字里，AI 用 Read 查看；对话的房间销毁时这些图片一并删除，没被删掉的（比如服务异常退出）24 小时后清理
+- 对话正常结束时（`stop`），通知服务销毁这个对话的房间，页面随之关闭
 
 没装钩子，所有对话共用一个页面，排队的消息要等 AI 下次调用 `interactive_feedback` 才送达。脚本需要 bash、jq 和 curl，在用户级的 `~/.cursor/hooks.json` 里登记（`/path/to/gl-mcp-feedback` 换成仓库的位置）：
 
@@ -110,7 +111,7 @@
         ],
         "stop": [
             {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh log",
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh stop",
                 "timeout": 10
             }
         ]
@@ -118,7 +119,11 @@
 }
 ```
 
-`pre` 默认只给脚本所在仓库的项目里的对话填对话 ID，用环境变量 `GL_INJECT_ROOT` 换成别的项目目录。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。标记文件、图片和事件日志都放在 `GL_FEEDBACK_HOME`（默认 `~/.cache/gl-mcp-feedback`），服务端和钩子读同一个变量，一般不用改。
+`pre` 默认只给脚本所在仓库的项目里的对话填对话 ID，用环境变量 `GL_INJECT_ROOT` 换成别的项目目录。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
+
+`stop` 在 AI 的每个回合结束时触发：先记一条事件，再把回合的结束状态报告给这个对话的房间。状态是 `completed`（正常结束）时，房间 3 秒后销毁（它送达过的图片文件一并删除），页面收到「对话已结束」并关闭；这 3 秒里对话再提问，房间就留下。房间里还有排队中的消息时也留下，等对话下次提问或调用工具时送达。状态是 `aborted`（被中断）或 `error`（出错）时，房间只标成「已结束」，不销毁。不管有没有收到 `stop`，闲置超过 2 小时的房间都会销毁。
+
+标记文件、登记文件、图片和事件日志都放在 `GL_FEEDBACK_HOME`（默认 `~/.cache/gl-mcp-feedback`），服务端和钩子读同一个变量，一般不用改。
 
 ## 推荐的 AI 规则
 
@@ -144,6 +149,8 @@ gl-mcp-feedback 交互规范：
 **排队的消息要等 AI 下次提问才送达**：钩子没生效。确认 `~/.cursor/hooks.json` 里登记了 `post`，脚本有可执行权限（`chmod +x`），jq 和 curl 能找到。
 
 **AI 等后台命令的时候发的消息，要等它等完才读到**：钩子只在工具调用结束时送达。AI 用 AwaitShell 等后台命令期间，Cursor 每秒会触发几次内部轮询，这些触发送出去的内容会被丢弃，所以钩子跳过它们，消息在等待结束后的第一次工具调用结束时送达。
+
+**对话结束了，页面没有自己关掉**：确认 `~/.cursor/hooks.json` 里 `stop` 登记的命令是 `... gl-feedback.sh stop`（不是 `log`）。房间销毁后页面会显示「对话已结束」，并在 3 秒后尝试关闭自己；浏览器只允许脚本关闭自己打开的标签页，从房间列表点进去的页面可能关不掉，手动关闭即可。
 
 **AI 没有调用出 MCP**：确认 MCP 工具状态为绿灯，反复开关一次 MCP，等几秒让它重新连接。
 

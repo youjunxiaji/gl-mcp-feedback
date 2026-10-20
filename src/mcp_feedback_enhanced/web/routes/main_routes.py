@@ -261,6 +261,28 @@ def setup_routes(manager: "WebUIManager"):
         context = await room.deliver_for_tool_call()
         return JSONResponse(content={"additional_context": context} if context else {})
 
+    @router.post("/api/turn-ended")
+    async def turn_ended(room_id: str, request: Request):
+        """Cursor 的 stop 钩子在对话的一个回合结束时来报告
+
+        请求体 ``{"status": "completed"}``，status 是钩子拿到的回合结束状态。
+        正常结束（completed）的房间几秒后销毁，其他状态只标记。
+
+        Returns:
+            ``{"ended": true}`` 表示房间记下了结束标记，``false`` 表示被忽略
+            （AI 的调用还在等回复，或者是默认房间）。
+        """
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
+
+        try:
+            data = await request.json()
+        except ValueError:
+            data = {}
+        status = str(data.get("status", "")) if isinstance(data, dict) else ""
+        return JSONResponse(content={"ended": manager.end_turn(room, status)})
+
     @router.delete("/api/queue/{message_id}")
     async def cancel_queued_message(room_id: str, message_id: str):
         """撤回一条还在排队的消息"""
@@ -313,6 +335,7 @@ def setup_routes(manager: "WebUIManager"):
                 debug_log(f"关闭旧 WebSocket 连接时出错（可忽略）: {e}")
 
         session.websocket = websocket
+        room.touch()
         debug_log(
             f"WebSocket 连接建立: 房间 {room.room_id} 的当前会话 {session.session_id}"
         )

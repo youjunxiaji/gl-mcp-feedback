@@ -4,7 +4,8 @@
 ====================
 
 排队的消息有两条路送到 AI 手里：随 AI 的下一次提问，或者随 AI 的任意一次工具调用（钩子来取）。
-这里覆盖队列的两种送达途径、标记文件、图片文件、取走接口，以及钩子脚本本身。
+这里覆盖队列的两种送达途径、标记文件、图片文件、取走接口，以及钩子脚本本身，
+包括 stop 钩子向服务端报告对话结束、服务据此销毁房间的整条链路。
 """
 
 import asyncio
@@ -26,6 +27,7 @@ import pytest
 from fastapi import WebSocket
 from fastapi.testclient import TestClient
 from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import InvalidStatus
 
 from mcp_feedback_enhanced.web.main import WebUIManager, launch_web_feedback_ui
 from mcp_feedback_enhanced.web.models import (
@@ -33,10 +35,12 @@ from mcp_feedback_enhanced.web.models import (
     MessageQueue,
     QueueMarker,
     Room,
+    RoomRegistration,
 )
 from mcp_feedback_enhanced.web.models.message_queue import MAX_TOOL_CALL_RECORDS
 from mcp_feedback_enhanced.web.models.queue_files import (
     IMAGE_RETENTION_SECONDS,
+    delete_message_images,
     prune_message_images,
     save_message_images,
 )
@@ -400,6 +404,72 @@ class TestQueueMarker:
         )
 
 
+class TestRoomRegistration:
+    """房间存在期间，登记文件一直在，stop 钩子靠它找到房间"""
+
+    def test_registration_holds_the_room_address_and_the_server_pid(
+        self, isolated_feedback_home: Path
+    ):
+        registration = RoomRegistration(CONVERSATION_A, lambda: ROOM_URL)
+        path = isolated_feedback_home / "rooms" / CONVERSATION_A
+        assert registration.path == path
+        assert not path.exists()
+
+        registration.register()
+        assert path.read_text(encoding="utf-8") == f"{ROOM_URL}\n{os.getpid()}\n"
+
+        registration.clear()
+        assert not path.exists()
+        assert list(path.parent.iterdir()) == []
+        registration.clear()
+
+    def test_registering_again_picks_up_the_current_address(self):
+        urls = ["http://127.0.0.1:1/c/x", "http://127.0.0.1:2/c/x"]
+        registration = RoomRegistration(CONVERSATION_A, lambda: urls.pop(0))
+
+        registration.register()
+        registration.register()
+
+        assert registration.path.read_text(encoding="utf-8").startswith(
+            "http://127.0.0.1:2/c/x\n"
+        )
+
+    def test_the_registration_is_written_at_creation_and_follows_the_room(
+        self, isolated_feedback_home: Path
+    ):
+        room = Room(
+            CONVERSATION_A,
+            QueueMarker(CONVERSATION_A, lambda: ROOM_URL),
+            RoomRegistration(CONVERSATION_A, lambda: ROOM_URL),
+        )
+        assert room.registration is not None
+        assert not room.registration.path.exists()
+
+        room.register()
+        assert room.registration.path.exists()
+
+        room.cleanup_all_sessions()
+        assert not room.registration.path.exists()
+
+    def test_errors_writing_the_registration_do_not_break_the_room(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        blocker = tmp_path / "not-a-directory"
+        blocker.write_text("")
+        monkeypatch.setenv("GL_FEEDBACK_HOME", str(blocker))
+        room = Room(
+            CONVERSATION_A,
+            QueueMarker(CONVERSATION_A, lambda: ROOM_URL),
+            RoomRegistration(CONVERSATION_A, lambda: ROOM_URL),
+        )
+
+        room.register()
+        room.create_session("/tmp/project", "提问")
+        room.cleanup_all_sessions()
+
+        assert room.sessions == {}
+
+
 class TestMessageImages:
     """钩子送达只能传文字，图片先存成本地文件"""
 
@@ -465,6 +535,37 @@ class TestMessageImages:
 
         assert save_message_images(queue.deliver_with_tool_call()) == {}
 
+    def test_delete_removes_the_given_folders_only(self, isolated_feedback_home: Path):
+        queue = MessageQueue()
+        queue.enqueue("甲", [image(PNG)], [])
+        queue.enqueue("乙", [image(PNG)], [])
+        saved = save_message_images(queue.deliver_with_tool_call())
+        first, second = (paths[0].parent for paths in saved.values())
+
+        delete_message_images([first])
+
+        assert not first.exists()
+        assert second.exists()
+
+    def test_delete_never_leaves_the_images_folder(self, isolated_feedback_home: Path):
+        root = isolated_feedback_home / "images"
+        nested = root / "message" / "nested"
+        outside = isolated_feedback_home / "outside"
+        for folder in (nested, outside):
+            folder.mkdir(parents=True)
+            (folder / "1.png").write_bytes(PNG)
+
+        delete_message_images([nested, outside, root / ".." / "outside", root])
+
+        assert (nested / "1.png").exists()
+        assert (outside / "1.png").exists()
+        assert root.exists()
+
+    def test_delete_ignores_folders_that_are_already_gone(
+        self, isolated_feedback_home: Path
+    ):
+        delete_message_images([isolated_feedback_home / "images" / "gone"])
+
 
 class TestRoomToolCallDelivery:
     """房间替钩子取走消息"""
@@ -508,6 +609,61 @@ class TestRoomToolCallDelivery:
         assert saved.read_bytes() == PNG
         assert context is not None
         assert f"图片：{saved}" in context
+
+    async def test_closing_deletes_the_images_it_delivered(
+        self, isolated_feedback_home: Path
+    ):
+        room = make_room()
+        room.message_queue.enqueue("看图", [image(PNG), image(JPEG)], [])
+        room.message_queue.enqueue("再看一张", [image(GIF)], [])
+        await room.deliver_for_tool_call()
+        root = isolated_feedback_home / "images"
+        assert len(list(root.iterdir())) == 2
+
+        await room.close()
+
+        assert list(root.iterdir()) == []
+
+    async def test_closing_keeps_the_images_of_other_rooms(
+        self, isolated_feedback_home: Path
+    ):
+        mine, other = make_room(CONVERSATION_A), make_room(CONVERSATION_B)
+        mine.message_queue.enqueue("我的图", [image(PNG)], [])
+        other.message_queue.enqueue("别人的图", [image(JPEG)], [])
+        await mine.deliver_for_tool_call()
+        await other.deliver_for_tool_call()
+        root = isolated_feedback_home / "images"
+
+        await mine.close()
+
+        assert list(root.glob("*/1.png")) == []
+        assert len(list(root.glob("*/1.jpg"))) == 1
+
+    async def test_closing_leaves_folders_it_did_not_save(
+        self, isolated_feedback_home: Path
+    ):
+        leftover = isolated_feedback_home / "images" / "earlier-run"
+        leftover.mkdir(parents=True)
+        (leftover / "1.png").write_bytes(PNG)
+        room = make_room()
+        room.message_queue.enqueue("看图", [image(PNG)], [])
+        await room.deliver_for_tool_call()
+
+        await room.close()
+
+        assert (leftover / "1.png").exists()
+        assert [path.name for path in leftover.parent.iterdir()] == ["earlier-run"]
+
+    async def test_stopping_the_service_keeps_the_images(
+        self, isolated_feedback_home: Path
+    ):
+        room = make_room()
+        room.message_queue.enqueue("看图", [image(PNG)], [])
+        await room.deliver_for_tool_call()
+
+        room.cleanup_all_sessions()
+
+        assert len(list((isolated_feedback_home / "images").glob("*/1.png"))) == 1
 
     async def test_works_without_an_open_page(self):
         room = make_room()
@@ -711,11 +867,32 @@ def read_payload(
     }
 
 
+def write_hook_file(home: Path, folder: str, room_id: str, url: str, pid: int) -> Path:
+    path = home / folder / room_id
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{url}\n{pid}\n", encoding="utf-8")
+    return path
+
+
 def write_marker(home: Path, room_id: str, url: str, pid: int) -> Path:
-    marker = home / "queue" / room_id
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"{url}\n{pid}\n", encoding="utf-8")
-    return marker
+    return write_hook_file(home, "queue", room_id, url, pid)
+
+
+def write_registration(home: Path, room_id: str, url: str, pid: int) -> Path:
+    return write_hook_file(home, "rooms", room_id, url, pid)
+
+
+def stop_payload(
+    conversation_id: str = CONVERSATION_A, status: str | None = "completed"
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "hook_event_name": "stop",
+        "conversation_id": conversation_id,
+        "loop_count": 0,
+    }
+    if status is not None:
+        payload["status"] = status
+    return payload
 
 
 def dead_pid() -> int:
@@ -738,11 +915,14 @@ class StubQueueServer:
     def __init__(self) -> None:
         self.reply: tuple[int, str] = (200, "{}")
         self.requests: list[tuple[str, str]] = []
+        self.bodies: list[str] = []
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
                 stub.requests.append((self.command, self.path))
+                length = int(self.headers.get("Content-Length") or 0)
+                stub.bodies.append(self.rfile.read(length).decode())
                 status, body = stub.reply
                 data = body.encode()
                 self.send_response(status)
@@ -1065,10 +1245,133 @@ class TestHookLog:
 
 
 @requires_hook_tools
+class TestHookStop:
+    """stop：向对话的房间报告回合结束"""
+
+    @pytest.mark.parametrize("status", ["completed", "aborted", "error"])
+    def test_reports_the_status_to_the_room(
+        self, tmp_path: Path, stub_server: StubQueueServer, status: str
+    ):
+        write_registration(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        assert run_hook("stop", stop_payload(status=status), tmp_path) == {}
+
+        assert stub_server.requests == [("POST", f"/c/{CONVERSATION_A}/api/turn-ended")]
+        assert json.loads(stub_server.bodies[0]) == {"status": status}
+
+    @pytest.mark.parametrize(
+        "status", [None, "", "a b", 'x"y', "../../etc", "x" * 33, "完成"]
+    )
+    def test_an_unusable_status_is_reported_as_unknown(
+        self, tmp_path: Path, stub_server: StubQueueServer, status: str | None
+    ):
+        write_registration(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        run_hook("stop", stop_payload(status=status), tmp_path)
+
+        assert [json.loads(body) for body in stub_server.bodies] == [
+            {"status": "unknown"}
+        ]
+
+    def test_the_event_is_logged_even_without_a_room(self, tmp_path: Path):
+        assert run_hook("stop", stop_payload(status="aborted"), tmp_path) == {}
+
+        [line] = (tmp_path / "hook-events.log").read_text(encoding="utf-8").splitlines()
+        record = json.loads(line)
+        assert record["event"] == "stop"
+        assert record["status"] == "aborted"
+
+    def test_a_conversation_without_a_room_reports_nothing(
+        self, tmp_path: Path, stub_server: StubQueueServer
+    ):
+        # 只有排队标记、没有登记文件的不是房间，钩子不会去报告
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+        write_registration(
+            tmp_path, CONVERSATION_B, stub_server.room_url(CONVERSATION_B), os.getpid()
+        )
+
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+        assert stub_server.requests == []
+
+    @pytest.mark.parametrize(
+        "payload", ["", "not json", "{}", '{"hook_event_name": "stop"}']
+    )
+    def test_nothing_is_reported_without_a_conversation_id(
+        self, tmp_path: Path, stub_server: StubQueueServer, payload: str
+    ):
+        registration = write_registration(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        assert run_hook("stop", payload, tmp_path) == {}
+
+        assert stub_server.requests == []
+        assert registration.exists()
+
+    def test_ids_cannot_escape_the_rooms_folder(
+        self, tmp_path: Path, stub_server: StubQueueServer
+    ):
+        (tmp_path / "rooms").mkdir()
+        outside = tmp_path / "outside"
+        outside.write_text(f"{stub_server.room_url('x')}\n{os.getpid()}\n")
+
+        assert run_hook("stop", stop_payload("../outside"), tmp_path) == {}
+
+        assert stub_server.requests == []
+        assert outside.exists()
+
+    def test_a_registration_of_a_dead_server_is_removed(
+        self, tmp_path: Path, stub_server: StubQueueServer
+    ):
+        registration = write_registration(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), dead_pid()
+        )
+
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+        assert not registration.exists()
+        assert stub_server.requests == []
+
+    def test_the_registration_stays_when_the_server_does_not_answer(
+        self, tmp_path: Path
+    ):
+        registration = write_registration(
+            tmp_path,
+            CONVERSATION_A,
+            f"http://127.0.0.1:{unused_port()}/c/{CONVERSATION_A}",
+            os.getpid(),
+        )
+
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+        assert registration.exists()
+
+    @pytest.mark.parametrize("reply", [(404, '{"detail": "Not Found"}'), (500, "")])
+    def test_a_server_error_does_not_break_the_hook(
+        self, tmp_path: Path, stub_server: StubQueueServer, reply: tuple[int, str]
+    ):
+        stub_server.reply = reply
+        write_registration(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+        assert len(stub_server.requests) == 1
+
+
+@requires_hook_tools
 class TestHookScript:
     """不论什么输入，脚本都输出合法 JSON、退出码为 0"""
 
-    @pytest.mark.parametrize("mode", ["pre", "post", "log", "unknown", ""])
+    @pytest.mark.parametrize("mode", ["pre", "post", "log", "stop", "unknown", ""])
     @pytest.mark.parametrize("payload", ["", "not json", "{}", "[1, 2]"])
     def test_always_answers_with_valid_json(
         self, tmp_path: Path, mode: str, payload: str
@@ -1218,3 +1521,162 @@ class TestHookEndToEnd:
 
             assert "第二批" in second["additional_context"]
             assert "第一批" not in second["additional_context"]
+
+    async def test_stop_hook_closes_the_page_and_destroys_the_room(
+        self,
+        live_manager: tuple[WebUIManager, list[str]],
+        isolated_feedback_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(Room, "ENDED_DESTROY_DELAY_SECONDS", 0.2)
+        monkeypatch.setattr(WebUIManager, "ROOM_SWEEP_INTERVAL_SECONDS", 0.05)
+        manager, room, page = await self.start_conversation(
+            live_manager, CONVERSATION_A
+        )
+        registration = isolated_feedback_home / "rooms" / CONVERSATION_A
+        assert registration.exists()
+        async with page:
+            await run_hook_async("stop", stop_payload(), isolated_feedback_home)
+
+            await receive_until(page, lambda message: message["type"] == "room_closed")
+            async with asyncio.timeout(10):
+                await page.wait_closed()
+            assert page.close_code == 1000
+            assert page.close_reason == "对话已结束"
+
+        await wait_until(lambda: manager.get_room(CONVERSATION_A) is None)
+        assert not registration.exists()
+        await wait_until(lambda: room.sessions == {})
+
+        # 房间没了，页面重连会被拒绝
+        with pytest.raises(InvalidStatus):
+            await connect(f"ws://127.0.0.1:{manager.port}/c/{CONVERSATION_A}/ws")
+
+    async def test_the_next_question_after_destruction_gets_a_fresh_room(
+        self,
+        live_manager: tuple[WebUIManager, list[str]],
+        isolated_feedback_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(Room, "ENDED_DESTROY_DELAY_SECONDS", 0.2)
+        monkeypatch.setattr(WebUIManager, "ROOM_SWEEP_INTERVAL_SECONDS", 0.05)
+        manager, old_room, page = await self.start_conversation(
+            live_manager, CONVERSATION_A
+        )
+        async with page:
+            await run_hook_async("stop", stop_payload(), isolated_feedback_home)
+            await wait_until(lambda: manager.get_room(CONVERSATION_A) is None)
+
+        call = asyncio.create_task(
+            launch_web_feedback_ui(
+                "/tmp/project", "对话结束后又来了", 30, conversation_id=CONVERSATION_A
+            )
+        )
+        await wait_until(lambda: manager.get_room(CONVERSATION_A) is not None)
+        new_room = manager.get_room(CONVERSATION_A)
+        assert new_room is not None
+        assert new_room is not old_room
+        await wait_until(lambda: new_room.current_session is not None)
+        assert (isolated_feedback_home / "rooms" / CONVERSATION_A).exists()
+
+        async with connect(
+            f"ws://127.0.0.1:{manager.port}/c/{CONVERSATION_A}/ws"
+        ) as new_page:
+            await new_page.send(json.dumps(page_message("新房间里的回复")))
+            result = await asyncio.wait_for(call, 10)
+        assert result["interactive_feedback"] == "新房间里的回复"
+
+    async def test_queued_messages_keep_the_room_until_the_next_question(
+        self,
+        live_manager: tuple[WebUIManager, list[str]],
+        isolated_feedback_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(Room, "ENDED_DESTROY_DELAY_SECONDS", 0.2)
+        monkeypatch.setattr(WebUIManager, "ROOM_SWEEP_INTERVAL_SECONDS", 0.05)
+        manager, room, page = await self.start_conversation(
+            live_manager, CONVERSATION_A
+        )
+        async with page:
+            await page.send(json.dumps(page_message("结束前发的")))
+            await wait_until(lambda: room.message_queue.pending_count() == 1)
+
+            await run_hook_async("stop", stop_payload(), isolated_feedback_home)
+            await wait_until(lambda: room.is_ended)
+            await asyncio.sleep(1)
+
+            # 过了销毁的缓冲时间，房间和页面仍在，排队的消息也没丢
+            assert manager.get_room(CONVERSATION_A) is room
+            assert room.message_queue.pending_count() == 1
+            assert (isolated_feedback_home / "queue" / CONVERSATION_A).exists()
+
+            # 对话继续提问，排队的消息随之送达，房间不再算已结束
+            result = await asyncio.wait_for(
+                launch_web_feedback_ui(
+                    "/tmp/project", "下一问", 30, conversation_id=CONVERSATION_A
+                ),
+                10,
+            )
+            assert "结束前发的" in result["interactive_feedback"]
+            assert not room.is_ended
+            await asyncio.sleep(1)
+            assert manager.get_room(CONVERSATION_A) is room
+
+    @pytest.mark.parametrize("status", ["aborted", "error"])
+    async def test_an_interrupted_conversation_only_marks_the_room(
+        self,
+        live_manager: tuple[WebUIManager, list[str]],
+        isolated_feedback_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        status: str,
+    ):
+        monkeypatch.setattr(Room, "ENDED_DESTROY_DELAY_SECONDS", 0.2)
+        monkeypatch.setattr(WebUIManager, "ROOM_SWEEP_INTERVAL_SECONDS", 0.05)
+        manager, room, page = await self.start_conversation(
+            live_manager, CONVERSATION_A
+        )
+        async with page:
+            await run_hook_async(
+                "stop", stop_payload(status=status), isolated_feedback_home
+            )
+            await wait_until(lambda: room.is_ended)
+            await asyncio.sleep(1)
+
+            assert room.ended_status == status
+            assert manager.get_room(CONVERSATION_A) is room
+            async with httpx.AsyncClient(trust_env=False) as http:
+                response = await http.get(f"http://127.0.0.1:{manager.port}/api/rooms")
+            [item] = [
+                item
+                for item in response.json()["rooms"]
+                if item["room_id"] == CONVERSATION_A
+            ]
+            assert item["ended"] is True
+            # 页面没有被关，对话回来继续用这个房间
+            await page.send(json.dumps(page_message("中断后又发了一条")))
+            await wait_until(lambda: room.message_queue.pending_count() == 1)
+
+    async def test_destroying_the_room_deletes_the_images_it_delivered(
+        self,
+        live_manager: tuple[WebUIManager, list[str]],
+        isolated_feedback_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(Room, "ENDED_DESTROY_DELAY_SECONDS", 0.2)
+        monkeypatch.setattr(WebUIManager, "ROOM_SWEEP_INTERVAL_SECONDS", 0.05)
+        manager, room, page = await self.start_conversation(
+            live_manager, CONVERSATION_A
+        )
+        home = isolated_feedback_home
+        async with page:
+            await page.send(json.dumps(page_message("看这张图", [upload(PNG)])))
+            await wait_until(lambda: room.message_queue.pending_count() == 1)
+            output = await run_hook_async("post", post_payload(), home)
+            [saved] = (home / "images").glob("*/1.png")
+            assert f"图片：{saved}" in output["additional_context"]
+
+            await run_hook_async("stop", stop_payload(), home)
+            await wait_until(lambda: manager.get_room(CONVERSATION_A) is None)
+
+        await wait_until(lambda: not saved.parent.exists())
+        assert list((home / "images").iterdir()) == []

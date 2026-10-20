@@ -5,11 +5,15 @@
 
 一个对话一个房间：会话、排队消息、页面连接各自独立，
 一个对话的新提问不会替换另一个对话的会话，也不会取走另一个对话排队的消息。
+对话结束后房间的销毁也在这里：stop 钩子的报告、到期判断、销毁时对页面的通知和钩子文件的清理。
 """
 
 import asyncio
 import json
+import os
+import re
 import time
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -20,7 +24,12 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.client import connect
 
 from mcp_feedback_enhanced.web.main import WebUIManager, launch_web_feedback_ui
-from mcp_feedback_enhanced.web.models import DEFAULT_ROOM_ID, Room, SessionStatus
+from mcp_feedback_enhanced.web.models import (
+    DEFAULT_ROOM_ID,
+    Room,
+    SessionStatus,
+    TurnStatus,
+)
 from tests.helpers import wait_until
 
 
@@ -36,6 +45,24 @@ class FakeWebSocket:
 
     async def send_json(self, data: dict[str, Any]) -> None:
         self.sent.append(data)
+
+
+class ClosablePage(FakeWebSocket):
+    """还能记录关闭动作的页面连接替身"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed_with: tuple[int, str] | None = None
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        self.closed_with = (code, reason or "")
+
+
+class HangingPage(FakeWebSocket):
+    """发送永远不返回的页面连接替身"""
+
+    async def send_json(self, data: dict[str, Any]) -> None:
+        await asyncio.Event().wait()
 
 
 def reply_message(text: str) -> dict[str, Any]:
@@ -321,6 +348,42 @@ class TestRoomRoutes:
 
         assert '<a id="homeLink" href="/"' in page.text
 
+    def test_room_page_handles_the_conversation_ending(self, client: TestClient):
+        page = client.get(f"/c/{CONVERSATION_A}/")
+
+        assert "data.type === 'room_closed'" in page.text
+        assert "const handleRoomClosed = () => {" in page.text
+
+    def test_room_page_shows_the_time_under_each_bubble(self, client: TestClient):
+        page = client.get(f"/c/{CONVERSATION_A}/")
+
+        assert "const createMessageMeta = (item) => {" in page.text
+        assert "createTimeSeparator" not in page.text
+        assert "wrap.title" not in page.text
+
+    def test_bubbles_stay_inside_their_column(self, client: TestClient):
+        page = client.get(f"/c/{CONVERSATION_A}/")
+
+        # 气泡按内容定宽，必须限制在外层宽度（最宽 2/3）里，否则代码块的长行会把它撑出屏幕
+        assert "max-w-[90%] sm:max-w-[66.667%]" in page.text
+        for bubble in ("bubble-ai", "bubble-user"):
+            assert f"bubble.className = '{bubble} min-w-0 max-w-full " in page.text
+
+    def test_composer_buttons_have_the_same_height(self, client: TestClient):
+        page = client.get(f"/c/{CONVERSATION_A}/")
+
+        heights = re.findall(
+            r'id="(?:attachBtn|submitBtn)"[^>]*class="[^"]*?\bh-\[(\d+px)\]', page.text
+        )
+        assert len(heights) == 2
+        assert heights[0] == heights[1]
+
+    def test_room_list_marks_ended_conversations(self, client: TestClient):
+        page = client.get("/")
+
+        assert "room.ended" in page.text
+        assert "createChip('已结束'" in page.text
+
     def test_unknown_room_page_goes_back_to_the_list(self, client: TestClient):
         response = client.get("/c/not-created/", follow_redirects=False)
 
@@ -542,3 +605,418 @@ class TestLaunchEndToEnd:
             await page_b.send(json.dumps(reply_message("给 B 的回复")))
             result_b = await asyncio.wait_for(call_b, 10)
         assert result_b["interactive_feedback"] == "给 B 的回复"
+
+
+def finished_room(conversation_id: str = CONVERSATION_A) -> Room:
+    """AI 的上一次调用已经结束、没有在等回复的房间"""
+    room = Room(conversation_id)
+    room.create_session("/tmp/project", "摘要").close_with_queued_messages(0)
+    return room
+
+
+class TestRoomLifecycle:
+    """房间什么时候该销毁：对话正常结束，或者闲置太久"""
+
+    def test_turn_end_marks_the_room(self):
+        room = finished_room()
+        assert not room.is_ended
+
+        assert room.end_turn(TurnStatus.COMPLETED) is True
+
+        assert room.is_ended
+        assert room.ended_status == TurnStatus.COMPLETED
+        assert room.ended_at is not None
+
+    def test_turn_end_is_ignored_while_the_call_waits(self):
+        room = Room(CONVERSATION_A)
+        room.create_session("/tmp/project", "摘要")
+
+        assert room.end_turn(TurnStatus.COMPLETED) is False
+
+        assert not room.is_ended
+
+    def test_a_new_question_revokes_the_mark(self):
+        room = finished_room()
+        room.end_turn(TurnStatus.COMPLETED)
+
+        room.create_session("/tmp/project", "下一问")
+
+        assert not room.is_ended
+        assert room.ended_status is None
+
+    async def test_a_tool_call_delivery_revokes_the_mark(self):
+        room = finished_room()
+        room.message_queue.enqueue("排队的消息", [], [])
+        room.end_turn(TurnStatus.COMPLETED)
+
+        assert await room.deliver_for_tool_call() is not None
+
+        assert not room.is_ended
+
+    @pytest.mark.parametrize(
+        ("status", "seconds_after_end", "pending", "expected"),
+        [
+            # 正常结束：过了缓冲时间就销毁
+            (TurnStatus.COMPLETED, Room.ENDED_DESTROY_DELAY_SECONDS - 1, 0, False),
+            (TurnStatus.COMPLETED, Room.ENDED_DESTROY_DELAY_SECONDS, 0, True),
+            (TurnStatus.COMPLETED, 600, 0, True),
+            # 还有排队中的消息：留着，等对话下次提问或调用工具时送达
+            (TurnStatus.COMPLETED, 600, 1, False),
+            # 被中断、出错：只标记，不销毁
+            (TurnStatus.ABORTED, 600, 0, False),
+            (TurnStatus.ERROR, 600, 0, False),
+            # 闲置太久，不管是什么状态、有没有排队消息都销毁
+            (TurnStatus.ABORTED, Room.IDLE_DESTROY_SECONDS + 1, 0, True),
+            (TurnStatus.ERROR, Room.IDLE_DESTROY_SECONDS + 1, 0, True),
+            (TurnStatus.COMPLETED, Room.IDLE_DESTROY_SECONDS + 1, 1, True),
+        ],
+    )
+    def test_due_after_the_conversation_ended(
+        self, status: TurnStatus, seconds_after_end: float, pending: int, expected: bool
+    ):
+        room = finished_room()
+        for _ in range(pending):
+            room.message_queue.enqueue("排队中", [], [])
+        room.end_turn(status)
+        assert room.ended_at is not None
+
+        assert room.due_for_destroy(room.ended_at + seconds_after_end) is expected
+
+    def test_a_room_that_never_got_stop_is_destroyed_when_idle(self):
+        room = finished_room()
+        last_activity = room.last_activity
+
+        assert not room.due_for_destroy(last_activity + Room.IDLE_DESTROY_SECONDS - 1)
+        assert room.due_for_destroy(last_activity + Room.IDLE_DESTROY_SECONDS)
+
+    def test_a_waiting_call_keeps_the_room_whatever_the_time(self):
+        room = Room(CONVERSATION_A)
+        room.create_session("/tmp/project", "摘要")
+        far_future = time.time() + 10 * Room.IDLE_DESTROY_SECONDS
+
+        assert not room.due_for_destroy(far_future)
+
+    def test_the_default_room_is_never_destroyed(self):
+        room = Room(DEFAULT_ROOM_ID)
+        room.create_session("/tmp/project", "摘要").close_with_queued_messages(0)
+        room.ended_at = 0
+        room.ended_status = TurnStatus.COMPLETED
+
+        assert not room.due_for_destroy(time.time() + 10 * Room.IDLE_DESTROY_SECONDS)
+
+    def test_queue_activity_counts_as_room_activity(self):
+        room = finished_room()
+        room.touched_at = 0
+        for session in room.sessions.values():
+            session.last_activity = 0
+
+        room.message_queue.enqueue("有动静", [], [])
+
+        assert room.last_activity > time.time() - 5
+
+    def test_list_item_tells_whether_the_conversation_ended(self):
+        room = finished_room()
+        assert room.to_list_item()["ended"] is False
+
+        room.end_turn(TurnStatus.ABORTED)
+
+        assert room.to_list_item()["ended"] is True
+
+    async def test_closing_tells_the_page_and_releases_the_sessions(self):
+        room = finished_room()
+        session = room.current_session
+        assert session is not None
+        page = ClosablePage()
+        session.websocket = cast(WebSocket, page)
+
+        await room.close()
+
+        assert page.sent == [{"type": "room_closed"}]
+        assert page.closed_with == (1000, "对话已结束")
+        assert room.sessions == {}
+        assert room.current_session is None
+        assert session.feedback_completed.is_set()
+
+    async def test_closing_tells_a_shared_page_connection_only_once(self):
+        room = Room(CONVERSATION_A)
+        first = room.create_session("/tmp/project", "第一问")
+        page = ClosablePage()
+        first.websocket = cast(WebSocket, page)
+        room.create_session("/tmp/project", "第二问")
+
+        await room.close()
+
+        assert page.sent == [{"type": "room_closed"}]
+
+    async def test_a_stuck_page_does_not_block_closing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(Room, "NOTIFY_TIMEOUT_SECONDS", 0.1)
+        room = finished_room()
+        session = room.current_session
+        assert session is not None
+        session.websocket = cast(WebSocket, HangingPage())
+
+        await asyncio.wait_for(room.close(), 5)
+
+        assert room.sessions == {}
+
+
+class TestRoomDestruction:
+    """服务销毁到期的房间"""
+
+    @staticmethod
+    def finished_conversation(manager: WebUIManager, conversation_id: str) -> Room:
+        session = manager.create_session(
+            "/tmp/project", "提问", conversation_id=conversation_id
+        )
+        session.close_with_queued_messages(0)
+        room = manager.get_room(conversation_id)
+        assert room is not None
+        return room
+
+    @staticmethod
+    def ended_at(room: Room) -> float:
+        assert room.ended_at is not None
+        return room.ended_at
+
+    async def test_sweep_destroys_only_the_rooms_that_are_due(
+        self, web_ui_manager: WebUIManager
+    ):
+        ended = self.finished_conversation(web_ui_manager, CONVERSATION_A)
+        waiting = web_ui_manager.get_or_create_room(CONVERSATION_B)
+        waiting.create_session("/tmp/project", "还在等回复")
+        default = web_ui_manager.get_or_create_room("")
+        default.create_session("/tmp/project", "默认房间").close_with_queued_messages(0)
+        assert web_ui_manager.end_turn(ended, TurnStatus.COMPLETED) is True
+        now = self.ended_at(ended) + 600
+
+        assert await web_ui_manager.sweep_rooms(now) == 1
+
+        assert web_ui_manager.get_room(CONVERSATION_A) is None
+        assert web_ui_manager.get_room(CONVERSATION_B) is waiting
+        assert web_ui_manager.get_room(DEFAULT_ROOM_ID) is default
+        assert await web_ui_manager.sweep_rooms(now) == 0
+
+    async def test_destruction_closes_the_page_and_removes_the_hook_files(
+        self, web_ui_manager: WebUIManager, isolated_feedback_home: Path
+    ):
+        room = self.finished_conversation(web_ui_manager, CONVERSATION_A)
+        session = room.current_session
+        assert session is not None
+        page = ClosablePage()
+        session.websocket = cast(WebSocket, page)
+        registration = isolated_feedback_home / "rooms" / CONVERSATION_A
+        assert registration.exists()
+        web_ui_manager.end_turn(room, TurnStatus.COMPLETED)
+
+        await web_ui_manager.sweep_rooms(self.ended_at(room) + 600)
+
+        assert page.sent == [{"type": "room_closed"}]
+        assert page.closed_with == (1000, "对话已结束")
+        assert not registration.exists()
+        assert room.sessions == {}
+
+    async def test_a_room_with_queued_messages_stays_until_they_are_delivered(
+        self, web_ui_manager: WebUIManager, isolated_feedback_home: Path
+    ):
+        room = self.finished_conversation(web_ui_manager, CONVERSATION_A)
+        room.message_queue.enqueue("还没被取走的消息", [], [])
+        web_ui_manager.end_turn(room, TurnStatus.COMPLETED)
+        marker = isolated_feedback_home / "queue" / CONVERSATION_A
+
+        assert await web_ui_manager.sweep_rooms(self.ended_at(room) + 600) == 0
+        assert web_ui_manager.get_room(CONVERSATION_A) is room
+        assert marker.exists()
+
+        # 对话下次提问时消息送达，房间随之继续使用，不再销毁
+        session = room.create_session("/tmp/project", "下一问")
+        assert await room.deliver_queued_messages(session) is not None
+        assert not room.is_ended
+        assert await web_ui_manager.sweep_rooms(time.time() + 600) == 0
+        assert web_ui_manager.get_room(CONVERSATION_A) is room
+
+    async def test_a_new_question_saves_the_room_from_destruction(
+        self, web_ui_manager: WebUIManager
+    ):
+        room = self.finished_conversation(web_ui_manager, CONVERSATION_A)
+        web_ui_manager.end_turn(room, TurnStatus.COMPLETED)
+        now = self.ended_at(room) + 600
+
+        web_ui_manager.create_session(
+            "/tmp/project", "三秒内又提问了", conversation_id=CONVERSATION_A
+        )
+
+        assert await web_ui_manager.sweep_rooms(now) == 0
+        assert web_ui_manager.get_room(CONVERSATION_A) is room
+
+    async def test_asking_again_after_destruction_opens_a_fresh_room(
+        self, web_ui_manager: WebUIManager, isolated_feedback_home: Path
+    ):
+        old_room = self.finished_conversation(web_ui_manager, CONVERSATION_A)
+        web_ui_manager.end_turn(old_room, TurnStatus.COMPLETED)
+        await web_ui_manager.sweep_rooms(self.ended_at(old_room) + 600)
+
+        new_room, session = web_ui_manager.create_session_in_room(
+            "/tmp/project", "对话结束后又来了", conversation_id=CONVERSATION_A
+        )
+
+        assert new_room is not old_room
+        assert new_room.current_session is session
+        assert web_ui_manager.get_room(CONVERSATION_A) is new_room
+        assert (isolated_feedback_home / "rooms" / CONVERSATION_A).exists()
+
+    def test_create_session_in_room_returns_the_conversation_room(
+        self, web_ui_manager: WebUIManager
+    ):
+        room, session = web_ui_manager.create_session_in_room(
+            "/tmp/project", "提问", conversation_id=CONVERSATION_A
+        )
+
+        assert room is web_ui_manager.get_room(CONVERSATION_A)
+        assert room.current_session is session
+        assert (
+            web_ui_manager.create_session_in_room(
+                "/tmp/project", "再问", conversation_id=CONVERSATION_A
+            )[0]
+            is room
+        )
+
+    def test_turn_end_of_a_room_that_is_gone_is_ignored(
+        self, web_ui_manager: WebUIManager
+    ):
+        room = self.finished_conversation(web_ui_manager, CONVERSATION_A)
+        web_ui_manager.rooms.clear()
+
+        assert web_ui_manager.end_turn(room, TurnStatus.COMPLETED) is False
+        assert not room.is_ended
+
+    def test_turn_end_of_the_default_room_is_ignored(
+        self, web_ui_manager: WebUIManager
+    ):
+        web_ui_manager.create_session("/tmp/project", "默认房间")
+        room = web_ui_manager.get_room(DEFAULT_ROOM_ID)
+        assert room is not None
+        room.current_session = None
+
+        assert web_ui_manager.end_turn(room, TurnStatus.COMPLETED) is False
+        assert not room.is_ended
+
+
+class TestRoomRegistrationFiles:
+    """stop 钩子靠登记文件找到房间"""
+
+    def test_rooms_are_registered_with_the_server_address(
+        self, web_ui_manager: WebUIManager, isolated_feedback_home: Path
+    ):
+        web_ui_manager.create_session(
+            "/tmp/project", "提问", conversation_id=CONVERSATION_A
+        )
+        web_ui_manager.create_session("/tmp/project", "没有对话标识")
+
+        address, pid = (
+            (isolated_feedback_home / "rooms" / CONVERSATION_A)
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        assert address == f"http://127.0.0.1:{web_ui_manager.port}/c/{CONVERSATION_A}"
+        assert pid == str(os.getpid())
+        # 默认房间没有对话标识，钩子找不到它，不登记
+        assert [path.name for path in (isolated_feedback_home / "rooms").iterdir()] == [
+            CONVERSATION_A
+        ]
+
+    def test_registration_follows_a_changed_server_port(
+        self, web_ui_manager: WebUIManager, isolated_feedback_home: Path
+    ):
+        room = web_ui_manager.get_or_create_room(CONVERSATION_A)
+
+        web_ui_manager.port = 54321
+        room.register()
+
+        registration = isolated_feedback_home / "rooms" / CONVERSATION_A
+        assert registration.read_text(encoding="utf-8").startswith(
+            f"http://127.0.0.1:54321/c/{CONVERSATION_A}\n"
+        )
+
+    def test_stopping_the_service_removes_every_registration(
+        self, web_ui_manager: WebUIManager, isolated_feedback_home: Path
+    ):
+        for conversation_id in (CONVERSATION_A, CONVERSATION_B):
+            web_ui_manager.create_session(
+                "/tmp/project", "提问", conversation_id=conversation_id
+            )
+
+        web_ui_manager.stop()
+
+        assert list((isolated_feedback_home / "rooms").iterdir()) == []
+
+
+class TestTurnEndedRoute:
+    """stop 钩子调用的结束报告接口"""
+
+    @pytest.fixture
+    def client(self, web_ui_manager: WebUIManager) -> TestClient:
+        for conversation_id in (CONVERSATION_A, CONVERSATION_B):
+            web_ui_manager.create_session(
+                "/tmp/project", "提问", conversation_id=conversation_id
+            ).close_with_queued_messages(0)
+        return TestClient(web_ui_manager.app)
+
+    @staticmethod
+    def room_of(manager: WebUIManager, conversation_id: str) -> Room:
+        room = manager.get_room(conversation_id)
+        assert room is not None
+        return room
+
+    def test_completed_turn_marks_only_its_own_room(
+        self, client: TestClient, web_ui_manager: WebUIManager
+    ):
+        response = client.post(
+            f"/c/{CONVERSATION_A}/api/turn-ended", json={"status": "completed"}
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"ended": True}
+        assert self.room_of(web_ui_manager, CONVERSATION_A).is_ended
+        assert not self.room_of(web_ui_manager, CONVERSATION_B).is_ended
+        rooms = {
+            room["room_id"]: room for room in client.get("/api/rooms").json()["rooms"]
+        }
+        assert rooms[CONVERSATION_A]["ended"] is True
+        assert rooms[CONVERSATION_B]["ended"] is False
+
+    @pytest.mark.parametrize(
+        "body", [None, "not json", "[1]", '{"status": 3}', '{"status": "weird"}']
+    )
+    def test_an_unusable_report_only_marks_the_room(
+        self, client: TestClient, web_ui_manager: WebUIManager, body: str | None
+    ):
+        response = client.post(f"/c/{CONVERSATION_A}/api/turn-ended", content=body)
+
+        assert response.json() == {"ended": True}
+        room = self.room_of(web_ui_manager, CONVERSATION_A)
+        assert room.is_ended
+        assert room.ended_status != TurnStatus.COMPLETED
+        assert not room.due_for_destroy(time.time() + 600)
+
+    def test_a_waiting_call_ignores_the_report(
+        self, client: TestClient, web_ui_manager: WebUIManager
+    ):
+        room = self.room_of(web_ui_manager, CONVERSATION_A)
+        room.create_session("/tmp/project", "还在等回复")
+
+        response = client.post(
+            f"/c/{CONVERSATION_A}/api/turn-ended", json={"status": "completed"}
+        )
+
+        assert response.json() == {"ended": False}
+        assert not room.is_ended
+
+    def test_unknown_room_is_404(self, client: TestClient):
+        response = client.post(
+            "/c/not-created/api/turn-ended", json={"status": "completed"}
+        )
+
+        assert response.status_code == 404
+        assert response.json()["messageCode"] == "room.notFound"

@@ -5,14 +5,19 @@
 
 一个对话一个房间：房间持有这个对话自己的会话、排队消息和页面连接。
 对话 B 的新提问不会替换对话 A 的会话，排队的消息也只在本房间里取走。
+
+对话结束后房间会被销毁：Cursor 的 stop 钩子报告一个回合正常结束，房间几秒后销毁，
+页面收到「对话已结束」的通知并断开；闲置太久的房间也会销毁。
 """
 
 import asyncio
 import time
 import uuid
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 
 from ...debug import web_debug_log as debug_log
@@ -25,7 +30,12 @@ from .feedback_session import (
     WebFeedbackSession,
 )
 from .message_queue import MessageQueue, QueueFullError
-from .queue_files import QueueMarker, save_message_images
+from .queue_files import (
+    QueueMarker,
+    RoomRegistration,
+    delete_message_images,
+    save_message_images,
+)
 
 
 # 没有对话标识的调用共用的房间
@@ -42,6 +52,17 @@ TERMINAL_STATES = frozenset(
 )
 
 
+class TurnStatus(StrEnum):
+    """Cursor 的 stop 钩子报告的回合结束状态"""
+
+    # 正常结束，对话多半到此为止
+    COMPLETED = "completed"
+    # 被用户中断
+    ABORTED = "aborted"
+    # 出错
+    ERROR = "error"
+
+
 class Room:
     """一个对话的房间
 
@@ -51,8 +72,12 @@ class Room:
         current_session: 最新一轮的会话，页面的 WebSocket 和用户的回复都交给它。
         message_queue: 用户在 AI 没有等回复时排队发送的消息。
         marker: 队列里有排队中的消息时写下的标记文件，钩子靠它判断要不要来取；没有钩子的场景为 None。
+        registration: 房间存在期间一直在的登记文件，stop 钩子靠它找到房间；没有钩子的场景为 None。
         pending_session_update: 新会话创建时页面还没连上，页面连上后要补发更新通知。
         created_at: 房间创建的时间戳（秒）。
+        touched_at: 房间最近一次有动静的时间戳（秒），会话的进展不算在内。
+        ended_at: stop 钩子报告回合结束的时间戳（秒），没报告过或对话又动起来之后为 None。
+        ended_status: stop 钩子报告的回合结束状态（TurnStatus 的值），``ended_at`` 为 None 时也为 None。
     """
 
     # 房间里最多保留的会话数量
@@ -61,14 +86,32 @@ class Room:
     # 通知页面「排队的消息已送达」最多等多久（秒），页面连接异常时不拖慢钩子的响应
     NOTIFY_TIMEOUT_SECONDS = 2
 
-    def __init__(self, room_id: str, marker: QueueMarker | None = None):
+    # 对话正常结束（stop 钩子报告 completed）后，房间再保留这么久（秒）才销毁，
+    # 这段时间里对话再次提问就撤销
+    ENDED_DESTROY_DELAY_SECONDS = 3
+
+    # 房间闲置这么久（秒）就销毁，不论有没有收到过 stop
+    IDLE_DESTROY_SECONDS = 2 * 60 * 60
+
+    def __init__(
+        self,
+        room_id: str,
+        marker: QueueMarker | None = None,
+        registration: RoomRegistration | None = None,
+    ):
         self.room_id = room_id
         self.sessions: dict[str, WebFeedbackSession] = {}
         self.current_session: WebFeedbackSession | None = None
         self.marker = marker
-        self.message_queue = MessageQueue(on_pending_changed=self._sync_marker)
-        self.pending_session_update = False
+        self.registration = registration
         self.created_at = time.time()
+        self.touched_at = self.created_at
+        self.ended_at: float | None = None
+        self.ended_status: str | None = None
+        self.message_queue = MessageQueue(on_pending_changed=self._on_pending_changed)
+        self.pending_session_update = False
+        # 钩子送达时存过图片的目录，房间销毁时删除
+        self._image_directories: set[Path] = set()
 
     @staticmethod
     def room_id_for(conversation_id: str | None) -> str:
@@ -102,25 +145,99 @@ class Room:
     def to_list_item(self) -> dict[str, Any]:
         """房间列表里的一项"""
         session = self.current_session
-        last_activity = session.last_activity if session else self.created_at
         return {
             "room_id": self.room_id,
             "title": self.page_title(),
             "conversation_id": self.conversation_id,
             "project_directory": session.project_directory if session else "",
             "awaiting_feedback": bool(session and session.is_awaiting_feedback()),
+            "ended": self.is_ended,
             "pending_count": self.message_queue.pending_count(),
             "session_count": len(self.sessions),
-            "last_activity": int(last_activity * 1000),
+            "last_activity": int(self.last_activity * 1000),
             "has_websocket": bool(session and session.websocket),
         }
+
+    def touch(self) -> None:
+        """记一次动静：房间闲置的时间从这里算起"""
+        self.touched_at = time.time()
+
+    @property
+    def last_activity(self) -> float:
+        """房间最近一次有动静的时间戳（秒）：会话有进展，或者有人动过房间（排队消息变化、页面连上）"""
+        return max(
+            [
+                self.touched_at,
+                *(session.last_activity for session in list(self.sessions.values())),
+            ]
+        )
+
+    @property
+    def is_ended(self) -> bool:
+        """stop 钩子是否报告过回合结束，之后对话还没有再动起来"""
+        return self.ended_at is not None
+
+    def end_turn(self, status: str) -> bool:
+        """Cursor 的 stop 钩子报告：对话的一个回合结束了
+
+        AI 的调用还在等回复时，对话明显还在继续，不理会这次报告。否则房间标成已结束：
+        ``status`` 是 completed 时，``ENDED_DESTROY_DELAY_SECONDS`` 秒后由服务销毁；
+        其他状态（被中断、出错）只标记，对话随时可能接着聊，等闲置超时再销毁。
+
+        Args:
+            status: stop 钩子报告的回合结束状态，取值见 TurnStatus。
+
+        Returns:
+            True 表示记下了结束标记，False 表示被忽略。
+        """
+        session = self.current_session
+        if session is not None and session.is_awaiting_feedback():
+            debug_log(f"房间 {self.room_id} 的调用还在等回复，忽略回合结束的报告")
+            return False
+        self.ended_at = time.time()
+        self.ended_status = status
+        self.touch()
+        debug_log(f"房间 {self.room_id} 的对话回合结束: {status}")
+        return True
+
+    def clear_ended(self) -> None:
+        """对话又动起来了（再次提问，或者 AI 又在调用工具）：撤销已结束标记"""
+        if self.ended_at is not None:
+            debug_log(f"房间 {self.room_id} 的对话又动起来了，撤销已结束标记")
+        self.ended_at = None
+        self.ended_status = None
+
+    def due_for_destroy(self, now: float) -> bool:
+        """房间是否该销毁了
+
+        默认房间不销毁，AI 的调用还在等回复的房间也不销毁。其余两种情况销毁：
+        对话正常结束，过了 ``ENDED_DESTROY_DELAY_SECONDS`` 秒，并且没有排队中的消息
+        （有的话留着，等对话下次提问或调用工具时送达）；
+        或者闲置超过 ``IDLE_DESTROY_SECONDS`` 秒。
+
+        Args:
+            now: 当前时间戳（秒）。
+        """
+        if self.room_id == DEFAULT_ROOM_ID:
+            return False
+        session = self.current_session
+        if session is not None and session.is_awaiting_feedback():
+            return False
+        if (
+            self.ended_at is not None
+            and self.ended_status == TurnStatus.COMPLETED
+            and now - self.ended_at >= self.ENDED_DESTROY_DELAY_SECONDS
+            and self.message_queue.pending_count() == 0
+        ):
+            return True
+        return now - self.last_activity >= self.IDLE_DESTROY_SECONDS
 
     def create_session(
         self, project_directory: str, summary: str
     ) -> WebFeedbackSession:
         """在房间里创建新一轮的会话，它成为房间的当前会话
 
-        房间里还没结束的旧会话标成已完成，页面的 WebSocket 连接转给新会话。
+        房间里还没结束的旧会话标成已完成，页面的 WebSocket 连接转给新会话，已结束标记撤销。
 
         Args:
             project_directory: 专案目录路径。
@@ -129,6 +246,8 @@ class Room:
         Returns:
             新会话。
         """
+        self.clear_ended()
+        self.touch()
         old_session = self.current_session
         old_websocket = old_session.websocket if old_session else None
 
@@ -288,8 +407,14 @@ class Room:
         if not messages:
             return None
 
+        # AI 在调用工具，对话还在继续
+        self.clear_ended()
+
         # 消息已经标记为送达，之后任何一步都不能让钩子拿不到说明文字，所以通知页面放在最后，并限时
         image_paths = await asyncio.to_thread(save_message_images, messages)
+        self._image_directories.update(
+            path.parent for paths in image_paths.values() for path in paths
+        )
         context = MessageQueue.build_tool_call_context(messages, image_paths)
         await self.notify_queue_delivered(len(messages))
         return context
@@ -313,10 +438,23 @@ class Room:
         except Exception as e:
             debug_log(f"发送排队消息送达通知失败: {e}")
 
-    def _sync_marker(self) -> None:
-        """队列里排队中的消息数量变了：让标记文件和队列一致"""
+    def _on_pending_changed(self) -> None:
+        """队列里排队中的消息数量变了：记一次动静，让标记文件和队列一致"""
+        self.touch()
         if self.marker is not None:
             self.marker.sync(self.message_queue.pending_count)
+
+    def register(self) -> None:
+        """写下登记文件，服务的地址变了之后可以再调用一次来更新"""
+        if self.registration is not None:
+            self.registration.register()
+
+    def release_files(self) -> None:
+        """删掉标记文件和登记文件，钩子之后找不到这个房间"""
+        if self.marker is not None:
+            self.marker.clear()
+        if self.registration is not None:
+            self.registration.clear()
 
     async def notify_existing_tab_to_refresh(self, *, silent: bool = False) -> bool:
         """通知房间已打开的页面刷新显示新会话内容
@@ -465,19 +603,61 @@ class Room:
         return cleaned
 
     def cleanup_all_sessions(self) -> int:
-        """服务停止时清理房间里的全部会话，并删掉标记文件
+        """服务停止时清理房间里的全部会话，并删掉标记文件和登记文件
 
         Returns:
             清理的会话数量。
         """
-        if self.marker is not None:
-            self.marker.clear()
+        self.release_files()
+        return self._release_sessions()
+
+    async def close(self) -> None:
+        """销毁房间：通知页面对话已结束并断开连接，释放会话，删掉送达过的图片文件
+
+        调用方负责先把房间从服务的房间表里摘掉、删掉钩子文件。
+        """
+        for websocket in self._connected_pages():
+            await self._close_page(websocket)
+        self._release_sessions()
+        directories = list(self._image_directories)
+        self._image_directories.clear()
+        await asyncio.to_thread(delete_message_images, directories)
+
+    def _connected_pages(self) -> list[WebSocket]:
+        """房间里页面的 WebSocket 连接；页面的连接会随新会话转手，几个会话可能指向同一个，所以去重"""
+        pages: list[WebSocket] = []
+        for session in list(self.sessions.values()):
+            websocket = session.websocket
+            if websocket is not None and all(websocket is not page for page in pages):
+                pages.append(websocket)
+        return pages
+
+    async def _close_page(self, websocket: WebSocket) -> None:
+        """告诉页面对话已结束，再关掉连接；页面连接异常时限时放弃，不拖慢销毁"""
+        try:
+            await asyncio.wait_for(
+                websocket.send_json({"type": "room_closed"}),
+                timeout=self.NOTIFY_TIMEOUT_SECONDS,
+            )
+            await asyncio.wait_for(
+                websocket.close(code=1000, reason="对话已结束"),
+                timeout=self.NOTIFY_TIMEOUT_SECONDS,
+            )
+        except Exception as e:
+            debug_log(f"通知页面对话已结束失败: {e}")
+
+    def _release_sessions(self) -> int:
+        """清理房间里的全部会话
+
+        Returns:
+            清理的会话数量。
+        """
         count = len(self.sessions)
         for session in list(self.sessions.values()):
             try:
                 session._cleanup_sync_enhanced(CleanupReason.SHUTDOWN)
             except Exception as e:
-                debug_log(f"停止服务时清理会话失败: {e}")
+                debug_log(f"清理会话失败: {e}")
         self.sessions.clear()
         self.current_session = None
         return count

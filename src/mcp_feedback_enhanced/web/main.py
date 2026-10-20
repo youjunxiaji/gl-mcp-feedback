@@ -7,9 +7,11 @@ Web UI 主要管理类
 """
 
 import asyncio
+import contextlib
 import os
 import threading
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import uvicorn
@@ -21,7 +23,13 @@ from fastapi.templating import Jinja2Templates
 from ..debug import web_debug_log as debug_log
 from ..utils.error_handler import ErrorHandler, ErrorType
 from ..utils.memory_monitor import get_memory_monitor
-from .models import DEFAULT_ROOM_ID, QueueMarker, Room, WebFeedbackSession
+from .models import (
+    DEFAULT_ROOM_ID,
+    QueueMarker,
+    Room,
+    RoomRegistration,
+    WebFeedbackSession,
+)
 from .routes import setup_routes
 from .utils import get_browser_opener
 from .utils.compression_config import get_compression_manager
@@ -30,6 +38,9 @@ from .utils.port_manager import PortManager
 
 class WebUIManager:
     """Web UI 管理器：一个服务，每个对话一个房间"""
+
+    # 多久检查一次有没有到期要销毁的房间（秒）
+    ROOM_SWEEP_INTERVAL_SECONDS = 0.5
 
     def __init__(self, host: str = "127.0.0.1", port: int | None = None):
         # 确定偏好主机：环境变数 > 参数 > 默认值 127.0.0.1
@@ -98,7 +109,7 @@ class WebUIManager:
             self.port = PortManager.find_free_port_enhanced(
                 preferred_port=preferred_port, auto_cleanup=auto_cleanup, host=self.host
             )
-        self.app = FastAPI(title="gl-mcp-feedback")
+        self.app = FastAPI(title="gl-mcp-feedback", lifespan=self._lifespan)
 
         # 对话房间：键是房间标识（对话标识，没有对话标识的调用共用 default）。
         # 每个房间有自己的会话、排队消息和页面连接；MCP 线程创建房间，Web 线程查询。
@@ -262,20 +273,29 @@ class WebUIManager:
         Args:
             conversation_id: 钩子填入的对话标识，没有或格式不对时用默认房间。
         """
-        room_id = Room.room_id_for(conversation_id)
         with self._rooms_lock:
-            room = self.rooms.get(room_id)
-            if room is None:
-                # 默认房间没有对话标识，钩子找不到它，不写标记文件
-                marker = (
-                    None
-                    if room_id == DEFAULT_ROOM_ID
-                    else QueueMarker(room_id, lambda: self.get_hook_room_url(room_id))
-                )
-                room = Room(room_id, marker)
-                self.rooms[room_id] = room
-                debug_log(f"新建房间: {room_id}")
-            return room
+            return self._get_or_create_room_locked(conversation_id)
+
+    def _get_or_create_room_locked(self, conversation_id: str) -> Room:
+        """get_or_create_room 的实现，调用方已经持有 ``_rooms_lock``"""
+        room_id = Room.room_id_for(conversation_id)
+        room = self.rooms.get(room_id)
+        if room is None:
+            # 默认房间没有对话标识，钩子找不到它，不写标记文件和登记文件
+            is_default = room_id == DEFAULT_ROOM_ID
+
+            def room_url() -> str:
+                return self.get_hook_room_url(room_id)
+
+            room = Room(
+                room_id,
+                None if is_default else QueueMarker(room_id, room_url),
+                None if is_default else RoomRegistration(room_id, room_url),
+            )
+            room.register()
+            self.rooms[room_id] = room
+            debug_log(f"新建房间: {room_id}")
+        return room
 
     def create_session(
         self, project_directory: str, summary: str, *, conversation_id: str = ""
@@ -290,9 +310,108 @@ class WebUIManager:
         Returns:
             新会话。
         """
-        return self.get_or_create_room(conversation_id).create_session(
-            project_directory, summary
-        )
+        return self.create_session_in_room(
+            project_directory, summary, conversation_id=conversation_id
+        )[1]
+
+    def create_session_in_room(
+        self, project_directory: str, summary: str, *, conversation_id: str = ""
+    ) -> tuple[Room, WebFeedbackSession]:
+        """在对话对应的房间里创建新一轮的会话，并返回房间。
+
+        取房间和创建会话在同一把锁里完成：房间不会在这中间被销毁，
+        提问和 stop 钩子的结束报告也不会交错。
+
+        Args:
+            project_directory: 专案目录路径。
+            summary: AI 工作摘要（Markdown）。
+            conversation_id: 这次调用来自哪个 Cursor 对话，由钩子填入，没有钩子时为空。
+
+        Returns:
+            会话所在的房间和新会话。
+        """
+        with self._rooms_lock:
+            room = self._get_or_create_room_locked(conversation_id)
+            return room, room.create_session(project_directory, summary)
+
+    def end_turn(self, room: Room, status: str) -> bool:
+        """Cursor 的 stop 钩子报告房间对应的对话结束了一个回合。
+
+        和提问共用 ``_rooms_lock``：结束报告和 AI 的新提问同时到时，
+        不会把刚提问的对话标成已结束。
+
+        Args:
+            room: 对话的房间。
+            status: stop 钩子报告的回合结束状态。
+
+        Returns:
+            True 表示房间记下了结束标记，False 表示被忽略（默认房间、已销毁的房间、AI 的调用还在等回复）。
+        """
+        if room.room_id == DEFAULT_ROOM_ID:
+            return False
+        with self._rooms_lock:
+            if self.rooms.get(room.room_id) is not room:
+                return False
+            return room.end_turn(status)
+
+    async def sweep_rooms(self, now: float | None = None) -> int:
+        """销毁到期的房间：页面收到「对话已结束」并断开，会话和钩子文件释放。
+
+        Args:
+            now: 当前时间戳（秒），默认取系统时间。
+
+        Returns:
+            销毁的房间数量。
+        """
+        moment = time.time() if now is None else now
+        destroyed = 0
+        for room in list(self.rooms.values()):
+            if self._detach_if_due(room, moment):
+                await room.close()
+                destroyed += 1
+        return destroyed
+
+    def _detach_if_due(self, room: Room, now: float) -> bool:
+        """房间仍然到期的话，从房间表里摘掉并删掉钩子文件
+
+        判断到期和摘掉在同一把锁里完成，不会和 AI 的新提问交错。
+
+        Args:
+            room: 要检查的房间。
+            now: 当前时间戳（秒）。
+
+        Returns:
+            True 表示房间已摘掉，调用方接着收尾（room.close）。
+        """
+        with self._rooms_lock:
+            if self.rooms.get(room.room_id) is not room or not room.due_for_destroy(
+                now
+            ):
+                return False
+            del self.rooms[room.room_id]
+            room.release_files()
+        debug_log(f"销毁房间: {room.room_id}")
+        return True
+
+    async def _sweep_rooms_forever(self) -> None:
+        """服务运行期间，定时销毁到期的房间"""
+        while True:
+            await asyncio.sleep(self.ROOM_SWEEP_INTERVAL_SECONDS)
+            try:
+                await self.sweep_rooms()
+            except Exception as e:
+                debug_log(f"销毁到期房间失败: {e}")
+
+    @contextlib.asynccontextmanager
+    async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:
+        """Web 服务运行期间，后台定时销毁到期的房间"""
+        sweeper = asyncio.create_task(self._sweep_rooms_forever())
+        try:
+            yield
+        finally:
+            sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sweeper
 
     def get_room_url(self, room: Room) -> str:
         """房间页面的地址"""
@@ -447,6 +566,10 @@ class WebUIManager:
         else:
             debug_log(f"服务器就绪，耗时 {waited:.1f} 秒")
 
+        # 端口可能在启动时换过，登记文件里的房间地址要跟着更新
+        for room in list(self.rooms.values()):
+            room.register()
+
     def open_browser(self, url: str):
         """开启浏览器"""
         try:
@@ -568,8 +691,9 @@ async def launch_web_feedback_ui(
     """
     manager = get_web_ui_manager()
 
-    room = manager.get_or_create_room(conversation_id)
-    session = room.create_session(project_directory, summary)
+    room, session = manager.create_session_in_room(
+        project_directory, summary, conversation_id=conversation_id
+    )
 
     # 用户在 AI 工作期间排队的消息：直接取走返回，不打开浏览器，也不等用户回复
     queued_result = await room.deliver_queued_messages(session)

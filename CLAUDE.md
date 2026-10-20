@@ -25,11 +25,11 @@
 - `src/mcp_feedback_enhanced/web/models/feedback_session.py` — 反馈会话模型
 - `src/mcp_feedback_enhanced/web/models/feedback_result.py` — 反馈结果模型
 - `src/mcp_feedback_enhanced/web/models/message_queue.py` — 用户消息队列（`MessageQueue`，AI 没在等回复时用户发的消息先排队，两种送达途径）
-- `src/mcp_feedback_enhanced/web/models/queue_files.py` — 排队消息的本地文件（`QueueMarker` 标记文件、图片文件）
+- `src/mcp_feedback_enhanced/web/models/queue_files.py` — 钩子用的本地文件（`QueueMarker` 标记文件、`RoomRegistration` 登记文件、图片文件）
 - `src/mcp_feedback_enhanced/web/utils/` — 工具函数（浏览器、网络、端口、压缩配置）
 
 ### 其他
-- `hooks/gl-feedback.sh` — Cursor 钩子脚本（`pre` 填对话标识，`post` 送达排队消息，`log` 记录会话事件），见「Cursor 钩子」
+- `hooks/gl-feedback.sh` — Cursor 钩子脚本（`pre` 填对话标识，`post` 送达排队消息，`stop` 报告对话回合结束，`log` 记录会话事件），见「Cursor 钩子」
 - `todo.md` — 待办（只列没做的事，做完就删）
 - `release.sh` + `.github/workflows/publish.yml` — 发布到 PyPI：脚本改版本号（`pyproject.toml`、`__init__.py`）、`uv lock`、提交、打 `v*` tag 并推送，工作流由 `v*` tag 触发
 
@@ -52,14 +52,14 @@
 - **顶栏**：Logo 加名称（链接到 `/`，即所有对话的总览，`#homeLink`）、项目路径、对话 ID（最新一轮带了 `conversation_id` 才显示，取前 8 位，悬停看完整值）、连接状态
 - **房间前缀与标签页标题**：页面地址是 `/c/{room_id}/`，服务端把前缀以 `room_base` 传给模板，写在 `<body>` 的 `data-room-base` 上，脚本里的 `ROOM_BASE` 从它读，WebSocket、`/api/all-sessions`、`/api/queue/{id}` 都拼在它后面；`<title>` 由服务端按房间生成（`Room.page_title()`）：项目目录名，对话的房间再加对话 ID 前 4 位，没有会话时是 `gl-mcp-feedback`
 - **Tab 导航**：工作区、关于
-- **工作区**：微信聊天式的对话流 + 底部固定输入框。AI 消息靠左、用户回复靠右，每条气泡最宽占 2/3（窄屏 90%），带头像、小尾巴，相邻消息间隔 ≥ 5 分钟时插入居中的时间分隔
-    - 对话记录由 `loadHistory()` 从 `ROOM_BASE + '/api/all-sessions'` 拉取，`buildTimeline()` 把 AI 消息（按会话 `created_at`）、用户对提问的回复（按 `feedback_submitted_at`）、用户排队发送的消息合成一条时间线：随提问送达的排队消息（`delivered_via` 为 `question`）是那次 AI 调用带回来的结果，按发送顺序紧跟在 `delivered_session_id` 对应的 AI 消息（及其下方说明）之后，位置按那条 AI 消息的 `created_at` 算（对应会话已不在记录里时按 `delivered_at` 兜底）；排队中的消息和随工具调用送达的消息（`tool_call`）按 `submitted_at` 排位，所以被钩子取走的那一刻位置不变；其余按时间升序（同一时刻 AI 消息排前）；时间线条目的 `at` 是排序位置，`sentAt` 是排队消息的真实发送时间，悬停提示用它。`renderChat()` 整体重绘，只给新出现的消息加入场动画（`prefers-reduced-motion` 下关闭）
+- **工作区**：微信聊天式的对话流 + 底部固定输入框。AI 消息靠左、用户回复靠右，每条气泡最宽占 2/3（窄屏 90%，气泡本身 `max-w-full`，代码块的长行在块内横向滚动，不会把气泡撑宽），带头像、小尾巴，每条气泡下方一行浅灰小字显示时间（`createMessageMeta()`；当天只显示 `HH:MM:SS`，昨天加「昨天」，更早显示月日，跨年再加年份，格式见 `formatChatTime()`）
+    - 对话记录由 `loadHistory()` 从 `ROOM_BASE + '/api/all-sessions'` 拉取，`buildTimeline()` 把 AI 消息（按会话 `created_at`）、用户对提问的回复（按 `feedback_submitted_at`）、用户排队发送的消息合成一条时间线：随提问送达的排队消息（`delivered_via` 为 `question`）是那次 AI 调用带回来的结果，按发送顺序紧跟在 `delivered_session_id` 对应的 AI 消息（及其下方说明）之后，位置按那条 AI 消息的 `created_at` 算（对应会话已不在记录里时按 `delivered_at` 兜底）；排队中的消息和随工具调用送达的消息（`tool_call`）按 `submitted_at` 排位，所以被钩子取走的那一刻位置不变；其余按时间升序（同一时刻 AI 消息排前）；时间线条目的 `at` 是排序位置，`sentAt` 是排队消息的真实发送时间，气泡下方显示的时间用它。`renderChat()` 整体重绘，只给新出现的消息加入场动画（`prefers-reduced-motion` 下关闭）
     - AI 气泡：Markdown 渲染（`.md` 样式 + 代码块复制按钮：`enhanceCodeBlocks()` 给每个 `<pre>` 包一层 `.code-block`，按钮挂在这层上，代码横向滚动时按钮不跟着跑）；AI 的调用仍在等回复（`round.is_current && round.awaiting_feedback`）的最新一条在气泡首行带 `NEW` 标记（`data-awaiting`）
     - 用户气泡：纯文本（`textContent`）+ 图片缩略图；没有收到回复的 AI 消息下方显示一行灰字说明：随这次调用送达了排队消息（「已随这次调用送达你排队的 N 条消息」，说明下面紧跟这 N 条消息）、超时、过期、出错、这次提问已结束、被新提问替代
-    - 排队消息气泡（`role: 'queued'`）：用户气泡下方一行状态——排队中（琥珀色「排队中 · AI 下次调用工具或提问时送达」+「编辑」「撤回」）或灰色的「✓ 已随hook送达 AI · HH:MM 发送」（钩子取走）/「✓ 已随提问送达 AI · HH:MM 发送」（HH:MM 是真实发送时间，`formatChatTime()` 格式）。「编辑」就地展开文字编辑框（`startQueuedEdit()`，Ctrl/⌘+Enter 保存、Esc 取消，只改文字、图片不变），保存走 `PUT {ROOM_BASE}/api/queue/{id}`；「撤回」走 `DELETE {ROOM_BASE}/api/queue/{id}`；编辑期间其他消息不显示操作按钮，重绘时保持编辑框内容、焦点和光标。保存或撤回遇到 409（已被 AI 取走）时提示用户，编辑中的草稿放回主输入框；编辑中的消息被取走时（`releaseDeliveredEditor()`）同样放回
+    - 排队消息气泡（`role: 'queued'`）：用户气泡下方那一行，除了真实发送时间，还带状态（`appendQueuedStatus()`）——排队中（琥珀色「排队中 · AI 下次调用工具或提问时送达」+「编辑」「撤回」）或灰色的「✓ 已随hook送达 AI」（钩子取走）/「✓ 已随提问送达 AI」。「编辑」就地展开文字编辑框（`startQueuedEdit()`，Ctrl/⌘+Enter 保存、Esc 取消，只改文字、图片不变），保存走 `PUT {ROOM_BASE}/api/queue/{id}`；「撤回」走 `DELETE {ROOM_BASE}/api/queue/{id}`；编辑期间其他消息不显示操作按钮，重绘时保持编辑框内容、焦点和光标。保存或撤回遇到 409（已被 AI 取走）时提示用户，编辑中的草稿放回主输入框；编辑中的消息被取走时（`releaseDeliveredEditor()`）同样放回
     - 本地先行显示：发出排队消息后立刻插入 `local: true` 的临时气泡（key 为 `local-N`，没有编辑/撤回），收到 `queue.messageQueued`（带 `message_id`）后去掉本地副本，`queuedKeyAlias` 让气泡的 key 沿用本地的，不重复播放入场动画；`loadHistory()` 重新拉取时保留尚未确认的本地气泡
     - 滚动：首次加载与新一轮到达时，若最新 AI 消息一屏放不下就对齐到它的开头，否则停在底部；自己发送后立刻滚到底部（不做动画，免得被发送后马上到来的服务端确认重绘打断）；重绘前视图离底部不到 80px（`NEAR_BOTTOM_PX`）的话，重绘后继续贴着底部，服务端确认、状态行、图片让内容变高时最新的消息不会落到输入框后面；切到其他标签页再切回会恢复滚动位置
-    - 输入框（`applyComposerState()`）：只有连接被其他窗口接管时才禁用（`getComposerLock()`）。AI 在等回复时按钮为「发送」、提示快捷键；AI 没在等时按钮为「排队发送」、提示「AI 正在处理，消息会排队（n/3），AI 下次调用工具或提问时一并读取」；排队满额（`isQueueFull()`，上限取自 `/api/all-sessions` 的 `queue_limit`）时按钮禁用并显示「队列已满」。拉取记录之前保持常规状态。临时提示（`setComposerNotice()`：队列已满、消息已被取走、编辑内容为空等）用琥珀色显示 6 秒并同步给读屏；「队列已满」的提示在队列不再满时（撤回、被取走）立即清除
+    - 输入框（`applyComposerState()`）：只有连接被其他窗口接管、或对话已结束（房间被销毁）时才禁用（`getComposerLock()`，`COMPOSER_LOCKS`）。附件图片和发送按钮高度一致（都是 `h-[34px]`）。AI 在等回复时按钮为「发送」、提示快捷键；AI 没在等时按钮为「排队发送」、提示「AI 正在处理，消息会排队（n/3），AI 下次调用工具或提问时一并读取」；排队满额（`isQueueFull()`，上限取自 `/api/all-sessions` 的 `queue_limit`）时按钮禁用并显示「队列已满」。拉取记录之前保持常规状态。临时提示（`setComposerNotice()`：队列已满、消息已被取走、编辑内容为空等）用琥珀色显示 6 秒并同步给读屏；「队列已满」的提示在队列不再满时（撤回、被取走）立即清除
 - **反馈提交**：WebSocket 发送 `submit_feedback` 消息，支持 Ctrl/⌘+Enter 快捷键。前端按 `isAwaitingReply()` 决定本地显示成回复还是排队气泡，实际分流以服务端为准（见「消息队列」）。每条消息服务端都回应一条 `notification`，前端按发送顺序对账（`inflightSends`，回复记空串、排队消息记本地气泡的 key，`settleSend()` 逐条销账），再重新拉取记录校正：`code` 为 `session.feedbackSubmitted`（作为回复）、`queue.messageQueued`（进了队列）、`queue.full`（队列已满）或 `queue.messageEmpty`（没有文字且图片都被过滤掉，例如过大），后两种都是被拒绝：撤掉本地气泡，发送的文字和图片放回输入框，不丢。WebSocket 断线重连后（`ws.onopen`），没收到回应的本地气泡一律撤掉（`dropUnconfirmedSends()`），以重新拉取的服务端记录为准
 - **新反馈提醒**：收到 WebSocket `session_updated` 时调用 `notifyNewFeedback()`，用 Web Audio 合成「叮咚」提示音（`playAlertSound`）+ 桌面通知（`showDesktopNotification`，仅 `document.hidden` 时弹、点击聚焦窗口），同时重新拉取对话记录并滚到新消息。`silent: true` 的 `session_updated`（AI 的新一轮调用直接取走了排队消息，没有要用户回复的提问）不响不弹，只重新拉取并读屏提示「AI 已读取你排队的消息」；收到 `queue_delivered`（AI 调用完一次工具，钩子取走了排队的消息）同样不响不弹，重新拉取记录，把「排队中」翻成「已送达」。默认始终开启、无设置开关；首次用户手势由 `setupAlertOnFirstGesture()` 解锁音频播放并请求 `Notification` 授权
 - **图片上传**：支持文件选择和 Ctrl+V 粘贴，base64 编码随反馈一起发送；客户端同时生成长边 ≤ 320px 的 JPEG 缩略图（`thumbnail`，data URL）随每张图片一起上传，服务端单独保存，仅用于对话记录展示
@@ -70,10 +70,10 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **`MessageQueue`**：只放内存，服务重启即清空；线程安全（Web 线程写入、修改、撤回，随提问送达在 MCP 线程取走，钩子的请求在 Web 线程里取走）。排队中的消息最多 3 条（`MAX_PENDING_MESSAGES`，已送达的记录不占名额），满额抛 `QueueFullError`，前端收到 `queue.full` 通知。排队消息可以改文字（`update_text`，纯文字消息不能改成空）和撤回（`cancel`），已被取走的抛 `MessageNotPendingError`。取走有两个方法：`deliver_with_question(session_id)`（随提问）和 `deliver_with_tool_call()`（随工具调用），各自在锁里一次取走全部排队中的消息并标上 `DeliveryChannel`。排队中的消息数可能变了（加入、撤回、取走）之后调用 `on_pending_changed`，在锁之外执行、出错只记日志，房间用它同步标记文件。队列由房间持有（`Room.message_queue`），每个对话一个；没有对话标识的调用共用 `default` 房间的队列，不区分项目目录
 - **随提问送达（AI 再次调用时）**：`launch_web_feedback_ui()` 在 `Room.create_session()` 之后、启动服务和打开浏览器之前调用 `Room.deliver_queued_messages()`。房间的队列非空就取走所有排队消息，新会话 `close_with_queued_messages()`（状态 `WAITING` → `ACTIVE`、等待事件置位），已打开的页面收到 `silent: true` 的 `session_updated` 静默刷新，调用立刻返回，不等用户；队列为空则照常等用户回复
 - **随工具调用送达（钩子）**：`hooks/gl-feedback.sh post` 挂在所有工具的 `postToolUse` 和 `postToolUseFailure` 上，每次工具调用结束都会触发，所以热路径只做一件事：从输入开头取 `conversation_id`，看标记文件 `$GL_FEEDBACK_HOME/queue/<对话标识>` 在不在，不在就直接返回（几毫秒）。
-    - 标记文件（`QueueMarker`，`queue_files.py`）：房间的队列里有排队中的消息时存在，没有时不存在；两行内容，房间的地址（`WebUIManager.get_hook_room_url()`，监听 `0.0.0.0` 时用 `127.0.0.1`）和写它的服务进程号。写入是原子的（临时文件加 `replace`），`sync()` 在自己的锁里重新读排队数量，几个线程同时同步时文件最终和队列一致；写入失败只记日志，不影响队列。`default` 房间没有对话标识，钩子找不到它，不写标记；房间清理时（`cleanup_all_sessions()`）删掉标记。钩子发现进程号对应的进程已经不在，就把这个过期的标记删掉
+    - 标记文件（`QueueMarker`，`queue_files.py`）：房间的队列里有排队中的消息时存在，没有时不存在；两行内容，房间的地址（`WebUIManager.get_hook_room_url()`，监听 `0.0.0.0` 时用 `127.0.0.1`）和写它的服务进程号。写入是原子的（临时文件加 `replace`），`sync()` 在自己的锁里重新读排队数量，几个线程同时同步时文件最终和队列一致；写入失败只记日志，不影响队列。`default` 房间没有对话标识，钩子找不到它，不写标记；房间销毁或服务停止时（`Room.release_files()`）删掉标记。钩子发现进程号对应的进程已经不在，就把这个过期的标记删掉
     - 取走接口：钩子用 `curl --noproxy '*'` 调标记里的地址加 `/api/queue/take`（连接超时 1 秒、总超时 5 秒）。接口调 `Room.deliver_for_tool_call()` 取走全部排队消息，有消息返回 `{"additional_context": "..."}`，没有返回 `{}`；钩子只在收到 HTTP 成功且以 `{` 开头的回复时原样交给 Cursor，Cursor 把 `additional_context` 附在那次工具结果后面给 AI，其余情况输出 `{}`
     - 跳过内部轮询：AwaitShell 等后台任务（带 `shell_id`）时，Cursor 每秒几次对终端输出文件（`.../terminals/<编号>.txt`）发起内部 `Read`，每次都触发 `postToolUse`（同一个 `tool_use_id`），这些事件返回的 `additional_context` 会被丢弃，这时取走消息就丢了。钩子认出工具是 `Read`、读的是 `/terminals/*.txt` 的事件就不取（`is_terminal_poll()`，只看输入开头 4096 个字符），消息留给下一次真正的工具调用；不带 `shell_id` 的 AwaitShell 是纯等待，不产生钩子事件，等待期间发的消息在之后第一次工具调用结束时送达。这是按 Cursor 3.25.9 实测的行为做的判断，没有官方说明
-    - 图片：钩子送达只能传文字，图片先存成 `$GL_FEEDBACK_HOME/images/<消息标识>/<序号>.<扩展名>`（按文件头判断格式），路径写进说明里让 AI 用 Read 查看；超过 24 小时的图片目录在下一次存图片时清掉（`IMAGE_RETENTION_SECONDS`）
+    - 图片：钩子送达只能传文字，图片先存成 `$GL_FEEDBACK_HOME/images/<消息标识>/<序号>.<扩展名>`（按文件头判断格式），路径写进说明里让 AI 用 Read 查看。房间销毁时（`Room.close()`）删掉这个房间送达过的图片目录：房间自己记着存过哪些（`_image_directories`），`delete_message_images()` 只删 `images/` 下的一级目录；服务停止时不删，对话可能还在继续。其余的（服务异常退出留下的、别的运行留下的）超过 24 小时的在下一次存图片时清掉（`IMAGE_RETENTION_SECONDS`）
     - 页面通知：消息已经标记送达之后，说明文字先备好，再通知页面（WebSocket `queue_delivered`，带 `count`），通知限时 2 秒（`Room.NOTIFY_TIMEOUT_SECONDS`），页面连接异常不会拖慢钩子的响应、也不会让取走的消息丢失
 - **送达后的记录**：消息标记 `delivered_at` 和 `delivered_via`（`question` 或 `tool_call`），随提问送达的再带 `delivered_session_id`；原图释放、只留缩略图。随提问送达的记录对话记录里继续显示（排在送达它的那条 AI 消息之后），直到它随之送达的会话被淘汰出内存（`visible_messages()` 同时清理）；随工具调用送达的记录没有对应的会话，只保留最近 20 条（`MAX_TOOL_CALL_RECORDS`）
 - **调用被取消**：`wait_for_feedback()` 捕获 `asyncio.CancelledError`，会话标记 `COMPLETED` 并放行等待事件，之后用户发的消息改走队列
@@ -86,14 +86,25 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **新提问只替换自己房间的上一轮**：`Room.create_session()` 把房间里还没结束的旧会话标成 `COMPLETED`（「被新会话替代，自动完成」），页面的 WebSocket 转给新会话；别的房间不受影响。`current_session` 是房间里最新一轮的会话，页面的回复和排队都交给它
 - **地址**：`/c/{room_id}/` 是对话的页面，页面用到的 `/api/*` 和 `/ws` 都在这个前缀下；`/` 是房间列表，`/api/rooms` 是它的数据。房间不存在、或房间里已经没有会话时，`/c/{room_id}/` 跳回 `/`
 - **打开浏览器**：`WebUIManager.smart_open_browser(room, url)`：房间的页面还连着（`Room.check_active_tab()` 发 ping 探测）就只发刷新通知，否则新开标签页；每个对话第一次提问会新开自己的页面。页面是新连上来的，补发一次 `session_updated`（`Room.pending_session_update`）
-- **清理**：内存监控触发的清理（过期、内存压力）逐个房间执行（`Room.cleanup_expired_sessions()`、`Room.cleanup_sessions_by_memory_pressure()`）；房间表只增不减，清理只清房间里的会话
+- **清理**：内存监控触发的清理（过期、内存压力）逐个房间执行（`Room.cleanup_expired_sessions()`、`Room.cleanup_sessions_by_memory_pressure()`），只清房间里的会话，房间本身按下面的规则销毁
+- **对话结束与销毁**：Cursor 的 `stop` 钩子在每个回合结束时触发，`hooks/gl-feedback.sh stop` 把 `status`（`completed`、`aborted`、`error`）报告给房间（`POST /c/{room_id}/api/turn-ended`）。`Room.end_turn()` 记下结束标记（`ended_at`、`ended_status`），`Room.due_for_destroy()` 判断房间是否到期：
+    - 登记文件：有对话标识的房间创建时写下 `$GL_FEEDBACK_HOME/rooms/<对话标识>`（`RoomRegistration`），格式同标记文件（房间的地址、服务进程号），房间存在期间一直在，`stop` 钩子靠它找到服务；服务启动完成后按实际端口重写一遍；`default` 房间没有对话标识，不登记
+    - 报告被忽略：AI 的调用还在等回复（`is_awaiting_feedback()`）时对话明显还在继续，`end_turn()` 返回 `False`，接口响应 `{"ended": false}`；默认房间、已销毁的房间同样忽略，房间不存在返回 404
+    - `completed`：房间标成已结束，`ENDED_DESTROY_DELAY_SECONDS`（3 秒）后销毁；这期间对话再提问（`Room.create_session()`），或者 AI 又调用了工具、钩子取走了排队的消息（`Room.deliver_for_tool_call()`），结束标记撤销，房间继续用。这时还有排队中的消息就不销毁，留着等对话下次提问或调用工具时送达
+    - `aborted`、`error`（钩子读不出合法状态时是 `unknown`）：只标成已结束，不销毁，对话随时可能接着聊
+    - 闲置：不论有没有收到过 `stop`，房间闲置超过 `IDLE_DESTROY_SECONDS`（2 小时）就销毁。`last_activity` 取房间和会话里最近的一次动静：会话有进展、排队消息变化、页面连上都算。AI 的调用还在等回复的房间、默认房间永远不销毁
+    - 执行：服务运行期间一个后台任务（`WebUIManager._sweep_rooms_forever()`，在 FastAPI 的 lifespan 里启动）每 `ROOM_SWEEP_INTERVAL_SECONDS`（0.5 秒）调一次 `sweep_rooms()`。判断到期、从房间表摘掉、删标记和登记文件在 `_rooms_lock` 里一次完成（`_detach_if_due()`），和 AI 的新提问（`create_session_in_room()`）、结束报告（`WebUIManager.end_turn()`）互斥，刚被提问救回的房间不会被销毁。摘掉之后 `Room.close()` 给页面发 `{"type": "room_closed"}`、以 1000 / 「对话已结束」关闭连接（各限时 `NOTIFY_TIMEOUT_SECONDS`），再释放会话、排队消息，删掉送达过的图片文件。销毁后同一个对话再提问会建一个全新的房间
+    - 图片：`Room.close()` 删掉这个房间钩子送达过的图片目录，别的房间的、不是它存的都不碰；服务停止（`cleanup_all_sessions()`）不删
+    - 页面：收到 `room_closed` 后不再重连，连接状态显示「对话已结束」、输入框锁定，3 秒后 `window.close()`；浏览器只允许脚本关闭自己打开的标签页，关不掉的就留着这个状态。WebSocket 异常断开时页面等 3 秒重连一次，再失败同样 `window.close()`；房间已不存在时重连会被拒绝
+    - 房间列表页：已结束的房间显示「已结束」，房间销毁后下一次轮询就看不到它
 
 ### Cursor 钩子
-`hooks/gl-feedback.sh` 是本项目的 Cursor 钩子，一个脚本三种模式，在用户级 `~/.cursor/hooks.json` 里登记（写法见 README）。只依赖 bash、jq 和 curl；任何异常都放行：输出合法 JSON、退出码 0（`preToolUse` 输出非法 JSON 会拦住调用）。
+`hooks/gl-feedback.sh` 是本项目的 Cursor 钩子，一个脚本四种模式，在用户级 `~/.cursor/hooks.json` 里登记（写法见 README）。只依赖 bash、jq 和 curl；任何异常都放行：输出合法 JSON、退出码 0（`preToolUse` 输出非法 JSON 会拦住调用）。
 - `pre`（`preToolUse`，matcher 限定 `interactive_feedback`）：删掉入参里的 `title` 和 AI 自己填的 `conversation_id`，再把 Cursor 给的对话标识写进 `conversation_id`。只给 `GL_INJECT_ROOT`（默认是脚本所在的仓库）项目里的对话填，其他项目只做删除
 - `post`（`postToolUse` 和 `postToolUseFailure`，不加 matcher，所有工具）：这个对话有排队的消息就取走（认出 AwaitShell 的内部轮询就跳过），见「消息队列」
-- `log`（`sessionStart`、`sessionEnd`、`stop`）：把事件的几个字段（不含用户输入、AI 的摘要、命令和文件内容）追加到 `$GL_FEEDBACK_HOME/hook-events.log`，超过 1 MB 换新文件、旧的留一份
-- 环境变量：`GL_FEEDBACK_HOME`（标记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）、`GL_INJECT_ROOT`、`GL_JQ`（jq 的位置）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
+- `stop`（`stop`，agent 每个回合结束时触发，输入带 `status`）：先和 `log` 一样写事件日志，再看登记文件 `$GL_FEEDBACK_HOME/rooms/<对话标识>` 在不在（进程号对应的进程已不在就删掉），在就用 `curl --noproxy '*'`（连接超时 1 秒、总超时 5 秒）向登记的地址加 `/api/turn-ended` POST `{"status": "<状态>"}`；状态只认 1 到 32 位的字母和下划线，其余写成 `unknown`。没有登记文件说明这个对话没有房间（没提过问、已销毁、服务不在），什么也不做。房间据此销毁或标记，见「房间」
+- `log`（`sessionStart`、`sessionEnd`）：把事件的几个字段（不含用户输入、AI 的摘要、命令和文件内容）追加到 `$GL_FEEDBACK_HOME/hook-events.log`，超过 1 MB 换新文件、旧的留一份
+- 环境变量：`GL_FEEDBACK_HOME`（标记文件、登记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）、`GL_INJECT_ROOT`、`GL_JQ`（jq 的位置）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
 
 ### 对话标识（conversation_id）字段
 - 数据流：Cursor 钩子（`hooks/gl-feedback.sh pre`，`preToolUse` 的 `updated_input`）把对话标识填进 `interactive_feedback(conversation_id=...)` → `WebFeedbackSession.conversation_id`。AI 不填这个参数，schema 的描述和 docstring 都写明了
@@ -107,7 +118,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 `interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题 / 收到排队消息怎么处理」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本文件不重复这些内容。
 
 ### index.html 功能
-- 房间列表页（`/`）：每个对话一张卡片，显示标题（`Room.page_title()`）、项目目录、「等你回复」或「AI 处理中」、排队消息数、最近活动时间，点击进入 `/c/{room_id}/`；没有房间时显示「等待 MCP 服务调用」提示
+- 房间列表页（`/`）：每个对话一张卡片，显示标题（`Room.page_title()`）、项目目录、「等你回复」、「AI 处理中」或「已结束」（`stop` 钩子报告过回合结束，对话再动起来之前）、排队消息数、最近活动时间，点击进入 `/c/{room_id}/`；没有房间时显示「等待 MCP 服务调用」提示
 - 每 3 秒轮询 `/api/rooms` 刷新；项目目录来自 AI 的调用参数，一律用 `textContent` 显示
 
 ## 编码规范
@@ -129,16 +140,17 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 
 ### 后端 API
 - `GET /` — 房间列表页（index.html）
-- `GET /api/rooms` — 返回 `{ rooms }`，最近有动静的在前；每项含 `room_id`、`title`（同 `Room.page_title()`）、`conversation_id`、`project_directory`、`awaiting_feedback`（房间最新一轮的调用是否还在等回复）、`pending_count`（排队中的消息数）、`session_count`、`last_activity`（毫秒时间戳）、`has_websocket`
+- `GET /api/rooms` — 返回 `{ rooms }`，最近有动静的在前；每项含 `room_id`、`title`（同 `Room.page_title()`）、`conversation_id`、`project_directory`、`awaiting_feedback`（房间最新一轮的调用是否还在等回复）、`ended`（`stop` 钩子报告过回合结束，对话再动起来之前为 `true`）、`pending_count`（排队中的消息数）、`session_count`、`last_activity`（毫秒时间戳，会话有进展、排队消息变化、页面连上都算）、`has_websocket`
 - `GET /c/{room_id}/` — 对话的页面（feedback.html）；房间不存在或房间里没有会话时重定向到 `/`
 - 以下接口都挂在 `/c/{room_id}` 前缀下，房间不存在返回 404（`messageCode` 为 `room.notFound`）：
     - `GET /api/session-status` — 返回房间当前会话状态（含 `has_session`、`session_info`）
     - `GET /api/all-sessions` — 返回 `{ sessions, queued_messages, queue_limit }`。`sessions` 是房间里的所有会话（最多 10 个），每项含 AI 侧的 `summary`、`conversation_id`、`created_at`、`awaiting_feedback`（AI 的调用是否还在等这一轮的回复），以及用户回复的 `feedback`、`feedback_submitted_at`（毫秒时间戳，未回复为 `null`）、`feedback_images`（缩略图列表，每项含 `name` 和 `thumbnail`）；`queued_messages` 是用户排队发送的消息，每项含 `id`、`feedback`、`feedback_images`（缩略图）、`submitted_at`、`delivered_at`（毫秒时间戳，排队中为 `null`）、`delivered_via`（`question`、`tool_call`，排队中为 `null`）、`delivered_session_id`（随提问送达时才有）；`queue_limit` 是排队上限。对话流用的就是这个接口
+    - `POST /api/turn-ended` — `stop` 钩子报告对话的一个回合结束了，请求体 `{ "status": "completed" }`（请求体读不出来或没有 `status` 时状态为空串，只标记、不销毁）：返回 `{ "ended": true }` 表示房间记下了结束标记，`{ "ended": false }` 表示被忽略（AI 的调用还在等回复）
     - `POST /api/queue/take` — 钩子在 AI 调用完一次工具后来取排队的消息：有消息返回 `{ "additional_context": "..." }`，没有返回 `{}`；只取这个房间的队列
     - `PUT /api/queue/{id}` — 修改排队中消息的文字，请求体 `{ "feedback": "..." }`；消息不在这个房间的队列里或已被取走返回 409，内容为空且没有图片返回 400
     - `DELETE /api/queue/{id}` — 撤回排队中的消息；消息不在这个房间的队列里或已被取走返回 409
     - `GET /api/current-session` — 返回房间当前会话详情
-    - `WebSocket /ws` — 实时通信（反馈提交、会话更新、排队结果通知、排队消息被取走的通知）；房间不存在或没有会话时拒绝连接
+    - `WebSocket /ws` — 实时通信（反馈提交、会话更新、排队结果通知、排队消息被取走的通知、房间销毁的通知 `room_closed`）；房间不存在或没有会话时拒绝连接
 
 ## MCP Prompt 设计规范
 

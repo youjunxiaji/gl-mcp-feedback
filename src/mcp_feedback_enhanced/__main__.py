@@ -161,7 +161,7 @@ class _DemoRound(NamedTuple):
 def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
     """往测试用的管理器里灌入两轮带用户回复的历史对话
 
-    这样页面一打开就能看到多轮消息、时间分隔和图片缩略图。
+    这样页面一打开就能看到多轮消息、每条消息下方的时间和图片缩略图。
 
     Args:
         manager: Web UI 管理器

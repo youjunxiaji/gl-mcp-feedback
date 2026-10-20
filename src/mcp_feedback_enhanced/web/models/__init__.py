@@ -15,8 +15,8 @@ from .message_queue import (
     QueuedMessage,
     QueueFullError,
 )
-from .queue_files import QueueMarker
-from .room import DEFAULT_ROOM_ID, Room
+from .queue_files import QueueMarker, RoomRegistration
+from .room import DEFAULT_ROOM_ID, Room, TurnStatus
 
 
 __all__ = [
@@ -30,6 +30,8 @@ __all__ = [
     "QueueMarker",
     "QueuedMessage",
     "Room",
+    "RoomRegistration",
     "SessionStatus",
+    "TurnStatus",
     "WebFeedbackSession",
 ]

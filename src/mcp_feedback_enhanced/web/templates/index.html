@@ -129,9 +129,13 @@
             const top = document.createElement('div');
             top.className = 'flex items-center justify-between gap-3';
             const title = createChip(room.title, 'text-[15px] font-semibold text-slate-100 truncate');
-            const state = room.awaiting_feedback
-                ? createChip('等你回复', 'shrink-0 text-xs font-medium text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full')
-                : createChip('AI 处理中', 'shrink-0 text-xs font-medium text-slate-400 bg-surface-overlay px-2 py-0.5 rounded-full');
+            // 对话的回合结束了（stop 钩子报告过），对话再动起来之前显示「已结束」
+            let state = createChip('AI 处理中', 'shrink-0 text-xs font-medium text-slate-400 bg-surface-overlay px-2 py-0.5 rounded-full');
+            if (room.awaiting_feedback) {
+                state = createChip('等你回复', 'shrink-0 text-xs font-medium text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full');
+            } else if (room.ended) {
+                state = createChip('已结束', 'shrink-0 text-xs font-medium text-slate-500 bg-surface-overlay px-2 py-0.5 rounded-full');
+            }
             top.append(title, state);
 
             const meta = document.createElement('div');

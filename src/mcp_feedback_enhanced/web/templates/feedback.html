@@ -227,14 +227,14 @@
                     <input type="file" id="imageInput" accept="image/*" multiple class="hidden">
                     <div class="flex items-center justify-between gap-3 px-3 pb-3">
                         <div class="flex items-center gap-2.5 min-w-0">
-                            <button id="attachBtn" type="button" onclick="document.getElementById('imageInput').click()" class="shrink-0 flex items-center gap-1.5 text-xs font-medium text-slate-400 bg-surface-overlay border border-dashed border-white/[0.06] rounded-lg px-3.5 py-2 hover:text-blue-400 hover:border-blue-500/40 hover:bg-blue-500/[0.08] transition disabled:pointer-events-none disabled:opacity-50">
+                            <button id="attachBtn" type="button" onclick="document.getElementById('imageInput').click()" class="shrink-0 flex items-center gap-1.5 text-xs font-medium text-slate-400 bg-surface-overlay border border-dashed border-white/[0.06] rounded-lg px-3.5 h-[34px] hover:text-blue-400 hover:border-blue-500/40 hover:bg-blue-500/[0.08] transition disabled:pointer-events-none disabled:opacity-50">
                                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                                 附件图片
                             </button>
                             <span id="imageCount" class="hidden shrink-0 text-xs text-blue-400"></span>
                             <span id="composerHint" class="truncate text-xs text-slate-400"></span>
                         </div>
-                        <button id="submitBtn" type="button" onclick="submitFeedback()" class="shrink-0 text-[14px] font-semibold text-white bg-gradient-to-br from-blue-600 to-violet-600 rounded-lg px-7 py-2.5 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all disabled:pointer-events-none disabled:bg-none disabled:bg-surface-muted disabled:text-slate-400 disabled:shadow-none">
+                        <button id="submitBtn" type="button" onclick="submitFeedback()" class="shrink-0 text-[14px] font-semibold text-white bg-gradient-to-br from-blue-600 to-violet-600 rounded-lg px-7 h-[34px] hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(59,130,246,0.35)] active:translate-y-0 transition-all disabled:pointer-events-none disabled:bg-none disabled:bg-surface-muted disabled:text-slate-400 disabled:shadow-none">
                             <span id="submitLabel">发送</span>
                         </button>
                     </div>
@@ -357,7 +357,8 @@
             var map = {
                 connecting: { color: 'amber', label: '连接中...' },
                 connected:  { color: 'emerald', label: '已连接' },
-                disconnected: { color: 'red', label: '已断开' }
+                disconnected: { color: 'red', label: '已断开' },
+                closed: { color: 'slate', label: '对话已结束' }
             };
             var info = map[state] || map.connecting;
             var c = info.color;
@@ -470,9 +471,23 @@
         let wsReady = false;
         let wsReplaced = false;
         let wsRetried = false;
+        // 服务端销毁了这个房间（对话已结束）
+        let roomClosed = false;
+        const ROOM_CLOSE_DELAY_MS = 3000;
+
+        // 房间被销毁：不再重连，几秒后尝试关掉页面。
+        // 浏览器只允许脚本关闭自己打开的标签页（或只有一条历史记录的标签页），关不掉时页面留着，显示「对话已结束」
+        const handleRoomClosed = () => {
+            roomClosed = true;
+            wsReady = false;
+            setConnStatus('closed');
+            applyComposerState();
+            announceToScreenReader('对话已结束，页面即将关闭');
+            setTimeout(() => window.close(), ROOM_CLOSE_DELAY_MS);
+        };
 
         const connectWebSocket = () => {
-            if (wsReplaced) return;
+            if (wsReplaced || roomClosed) return;
             setConnStatus('connecting');
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(protocol + '//' + location.host + ROOM_BASE + '/ws');
@@ -493,6 +508,11 @@
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                if (data.type === 'room_closed') {
+                    console.log('Room closed by server (conversation ended)');
+                    handleRoomClosed();
+                    return;
+                }
                 if (data.type === 'connection_replaced') {
                     wsReplaced = true;
                     wsReady = false;
@@ -549,6 +569,7 @@
 
             ws.onclose = () => {
                 wsReady = false;
+                if (roomClosed) return;
                 if (wsReplaced) {
                     setConnStatus('disconnected');
                     console.log('WebSocket closed (replaced), will not reconnect');
@@ -574,7 +595,6 @@
         // --- Chat stream ---
         // 对话记录来自 <房间前缀>/api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
         // 排成一条时间线：随提问送达的排队消息跟在送达它们的那条 AI 消息之后，其余按发生时间从旧到新。
-        const SEPARATOR_GAP_MS = 5 * 60 * 1000;
         // 重绘前视图离底部不到这个距离，就当作贴着底部
         const NEAR_BOTTOM_PX = 80;
         const UNANSWERED_NOTES = {
@@ -584,7 +604,10 @@
         };
         const UNANSWERED_NOTE_DEFAULT = '该轮对话已被新的提问替代，未收到回复';
         const UNANSWERED_NOTE_CURRENT = '这次提问已结束，未收到回复';
-        const COMPOSER_REPLACED = { label: '连接已转移', hint: '连接已转移到其他窗口，请在新窗口继续' };
+        const COMPOSER_LOCKS = {
+            replaced: { label: '连接已转移', hint: '连接已转移到其他窗口，请在新窗口继续' },
+            closed: { label: '对话已结束', hint: '对话已结束，这个页面可以关闭了' }
+        };
         const COMPOSER_NOTICE_MS = 6000;
         const EMPTY_MESSAGE_TEXT = '这条消息没有可发送的内容（图片过大会被忽略），请检查后重发';
         const MOD_KEY = /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl';
@@ -626,16 +649,16 @@
 
         const pad2 = (n) => String(n).padStart(2, '0');
 
-        // 当天只显示时分，昨天加「昨天」，更早显示月日，跨年再加年份
+        // 当天只显示时分秒，昨天加「昨天」，更早显示月日，跨年再加年份
         const formatChatTime = (ms) => {
             const d = new Date(ms);
             const now = new Date();
-            const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+            const hms = pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
             const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
             const dayDiff = Math.round((dayStart(now) - dayStart(d)) / 86400000);
-            if (dayDiff === 0) return hm;
-            if (dayDiff === 1) return '昨天 ' + hm;
-            const monthDay = (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+            if (dayDiff === 0) return hms;
+            if (dayDiff === 1) return '昨天 ' + hms;
+            const monthDay = (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hms;
             return d.getFullYear() === now.getFullYear() ? monthDay : d.getFullYear() + '年' + monthDay;
         };
 
@@ -658,7 +681,10 @@
             '队列已满（最多 ' + queueLimit + ' 条），请等 AI 读取，或编辑、撤回已排队的消息';
 
         // 返回输入框的锁定原因，空字符串表示可以输入
-        const getComposerLock = () => (wsReplaced ? 'replaced' : '');
+        const getComposerLock = () => {
+            if (wsReplaced) return 'replaced';
+            return roomClosed ? 'closed' : '';
+        };
 
         const clearComposerNotice = () => {
             composerNotice = '';
@@ -680,7 +706,8 @@
         };
 
         const applyComposerState = () => {
-            const locked = getComposerLock() !== '';
+            const lock = getComposerLock();
+            const locked = lock !== '';
             const awaiting = isAwaitingReply();
             const full = isQueueFull();
             const textarea = document.getElementById('feedbackText');
@@ -692,13 +719,13 @@
             if (attachBtn) attachBtn.disabled = locked;
             if (submitBtn) submitBtn.disabled = locked || full;
             if (label) {
-                if (locked) label.textContent = COMPOSER_REPLACED.label;
+                if (locked) label.textContent = COMPOSER_LOCKS[lock].label;
                 else if (full) label.textContent = '队列已满';
                 else label.textContent = awaiting ? '发送' : '排队发送';
             }
             if (hint) {
                 let text = COMPOSER_HINT;
-                if (locked) text = COMPOSER_REPLACED.hint;
+                if (locked) text = COMPOSER_LOCKS[lock].hint;
                 else if (full) text = queueFullText();
                 else if (!awaiting) {
                     text = 'AI 正在处理，消息会排队（' + getPendingQueued().length + '/' + queueLimit + '），AI 下次调用工具或提问时一并读取';
@@ -743,7 +770,7 @@
 
         // 把 AI 的消息、用户的回复、用户排队发送的消息排成一条时间线。
         // 随提问送达的排队消息是那次 AI 调用带回来的结果：按发送顺序紧跟在送达它们的 AI 消息（及其说明）之后，
-        // 位置按那条 AI 消息的时间算，悬停提示（sentAt）仍是真实发送时间；
+        // 位置按那条 AI 消息的时间算，气泡下方显示的时间（sentAt）仍是真实发送时间；
         // 排队中的消息和随工具调用送达的消息按发送时间排位，所以被钩子取走的那一刻位置不变。
         // 没收到回复的 AI 消息带一条说明（note），显示在它下方。
         const buildTimeline = () => {
@@ -787,16 +814,6 @@
             return items.sort((a, b) => a.at - b.at || a.order - b.order);
         };
 
-        const createTimeSeparator = (ms) => {
-            const wrap = document.createElement('div');
-            wrap.className = 'flex justify-center';
-            const label = document.createElement('span');
-            label.className = 'text-[11px] text-slate-400 bg-white/[0.04] px-2.5 py-0.5 rounded-full';
-            label.textContent = formatChatTime(ms);
-            wrap.append(label);
-            return wrap;
-        };
-
         const createNote = (text) => {
             const wrap = document.createElement('div');
             wrap.className = 'flex justify-center';
@@ -822,7 +839,8 @@
 
         const createAiBubble = (round, awaiting) => {
             const bubble = document.createElement('div');
-            bubble.className = 'bubble-ai min-w-0 px-4 py-3 text-[15px] leading-relaxed break-words';
+            // 气泡在纵向 flex 的外层里按内容定宽，代码块的长行会把它撑开；max-w-full 把它限制在外层的宽度（最宽 2/3）里，长行在代码块内横向滚动
+            bubble.className = 'bubble-ai min-w-0 max-w-full px-4 py-3 text-[15px] leading-relaxed break-words';
             if (awaiting) {
                 const header = document.createElement('div');
                 header.className = 'flex items-center gap-2 mb-1.5';
@@ -848,7 +866,7 @@
         // source 是会话（对提问的回复）或排队消息，两者都带 feedback 和 feedback_images
         const createUserBubble = (source) => {
             const bubble = document.createElement('div');
-            bubble.className = 'bubble-user min-w-0 px-4 py-3 text-[15px] leading-relaxed text-white break-words';
+            bubble.className = 'bubble-user min-w-0 max-w-full px-4 py-3 text-[15px] leading-relaxed text-white break-words';
             const text = source.feedback || '';
             const images = (source.feedback_images || []).filter(
                 (item) => typeof item.thumbnail === 'string' && item.thumbnail.startsWith('data:image/')
@@ -890,17 +908,14 @@
             return btn;
         };
 
-        // 排队消息气泡下方的状态行：排队中（可编辑、撤回）或已送达（区分随工具调用送达还是随提问送达）
-        const createQueuedStatus = (message) => {
-            const line = document.createElement('div');
-            line.className = 'mt-1.5 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[12px]';
+        // 排队消息的状态：排队中（可编辑、撤回）或已送达（区分随工具调用送达还是随提问送达）
+        const appendQueuedStatus = (line, message) => {
             const label = document.createElement('span');
             if (message.delivered_at) {
                 const via = message.delivered_via === 'tool_call' ? '随hook' : '随提问';
-                label.className = 'text-slate-400';
-                label.textContent = '✓ 已' + via + '送达 AI · ' + formatChatTime(message.submitted_at) + ' 发送';
+                label.textContent = '✓ 已' + via + '送达 AI';
                 line.append(label);
-                return line;
+                return;
             }
             label.className = 'text-amber-300';
             label.textContent = '排队中 · AI 下次调用工具或提问时送达';
@@ -912,6 +927,20 @@
                     createQueueAction('撤回', () => cancelQueuedMessage(message.id))
                 );
             }
+        };
+
+        // 气泡下方的一行浅灰小字：消息的时间（AI 提问的时间、用户发送的时间），排队消息后面接着它的状态
+        const createMessageMeta = (item) => {
+            const line = document.createElement('div');
+            line.className = 'mt-1 px-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-400 '
+                + (item.role === 'ai' ? 'justify-start' : 'justify-end');
+            const ms = item.sentAt || item.at;
+            const time = document.createElement('time');
+            time.dateTime = new Date(ms).toISOString();
+            time.className = 'tabular-nums';
+            time.textContent = formatChatTime(ms);
+            line.append(time);
+            if (item.role === 'queued') appendQueuedStatus(line, item.message);
             return line;
         };
 
@@ -967,18 +996,17 @@
             row.className = 'flex items-start gap-3 ' + (isAi ? 'justify-start' : 'justify-end');
             if (isAi && item.open) row.dataset.awaiting = '1';
             const wrap = document.createElement('div');
-            wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%]'
-                + (isQueued ? ' flex flex-col items-end' : '')
+            wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%] flex flex-col '
+                + (isAi ? 'items-start' : 'items-end')
                 + (editing ? ' w-full' : '');
-            if (!editing) wrap.title = new Date(item.sentAt || item.at).toLocaleString('zh-CN', { hour12: false });
             if (isAi) {
-                wrap.append(createAiBubble(item.round, item.open));
+                wrap.append(createAiBubble(item.round, item.open), createMessageMeta(item));
             } else if (editing) {
                 wrap.append(createQueuedEditor());
             } else if (isQueued) {
-                wrap.append(createUserBubble(item.message), createQueuedStatus(item.message));
+                wrap.append(createUserBubble(item.message), createMessageMeta(item));
             } else {
-                wrap.append(createUserBubble(item.round));
+                wrap.append(createUserBubble(item.round), createMessageMeta(item));
             }
             if (isAi) {
                 row.append(createAvatar('ai'), wrap);
@@ -1044,12 +1072,7 @@
 
             const timeline = buildTimeline();
             const fragment = document.createDocumentFragment();
-            let previousAt = 0;
             timeline.forEach((item) => {
-                if (!previousAt || item.at - previousAt >= SEPARATOR_GAP_MS) {
-                    fragment.append(createTimeSeparator(item.at));
-                }
-                previousAt = item.at;
                 const row = createMessageRow(item);
                 // 只有新出现的消息才有入场动画，整页重绘时旧消息保持不动
                 if (!firstRender && !previousKeys.has(item.key)) row.classList.add('msg-in');
