@@ -7,7 +7,7 @@
 gl-mcp-feedback 的 Cursor 钩子，用法：gl-feedback.py <模式>
 
     pre   preToolUse，只挂在 interactive_feedback 上：
-          先删掉入参里的 title 和 conversation_id（服务端不认 title，对话标识只认钩子填的），
+          先删掉入参里 AI 自己填的 conversation_id（对话标识只认钩子填的），
           再把本次对话的标识写进 conversation_id，所有项目的对话都填。
           preToolUse 的输入里没有 MCP 服务器名，只能按工具名匹配：
           别的 MCP 服务器如果也有叫 interactive_feedback 的工具，它的调用同样会被改写。
@@ -255,7 +255,7 @@ def request_room(
 
 
 def run_pre(text: str) -> dict[str, Any]:
-    """preToolUse：删掉入参里的 title 和 conversation_id，再填上 Cursor 给的对话标识"""
+    """preToolUse：删掉入参里 AI 自己填的 conversation_id，再填上 Cursor 给的对话标识"""
     allow: dict[str, Any] = {"permission": "allow"}
     data = parse_object(text)
     if data is None:
@@ -266,9 +266,7 @@ def run_pre(text: str) -> dict[str, Any]:
     if not isinstance(tool_input, dict):
         return allow
     cleaned = {
-        key: value
-        for key, value in tool_input.items()
-        if key not in ("title", "conversation_id")
+        key: value for key, value in tool_input.items() if key != "conversation_id"
     }
     conversation_id = data.get("conversation_id")
     if isinstance(conversation_id, str) and CONVERSATION_ID.fullmatch(conversation_id):

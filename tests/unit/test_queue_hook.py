@@ -959,12 +959,10 @@ def stub_server() -> Generator[StubQueueServer, None, None]:
 class TestHookPre:
     """preToolUse：给 interactive_feedback 的入参填对话标识"""
 
-    def test_fills_in_the_conversation_id_and_drops_title(self, tmp_path: Path):
+    def test_fills_in_the_conversation_id(self, tmp_path: Path):
         output = run_hook(
             "pre",
-            pre_payload(
-                {"summary": "摘要", "title": "标题", "project_directory": "/work/p"}
-            ),
+            pre_payload({"summary": "摘要", "project_directory": "/work/p"}),
             tmp_path,
         )
 
@@ -988,11 +986,16 @@ class TestHookPre:
 
     def test_accepts_tool_input_given_as_a_json_string(self, tmp_path: Path):
         output = run_hook(
-            "pre", pre_payload(json.dumps({"summary": "摘要", "title": "t"})), tmp_path
+            "pre",
+            pre_payload(
+                json.dumps({"summary": "摘要", "project_directory": "/work/p"})
+            ),
+            tmp_path,
         )
 
         assert output["updated_input"] == {
             "summary": "摘要",
+            "project_directory": "/work/p",
             "conversation_id": CONVERSATION_A,
         }
 
@@ -1006,7 +1009,7 @@ class TestHookPre:
         output = run_hook(
             "pre",
             pre_payload(
-                {"summary": "摘要", "title": "t", "conversation_id": "ai-made-this-up"},
+                {"summary": "摘要", "conversation_id": "ai-made-this-up"},
                 workspace_roots=workspace_roots,
             ),
             tmp_path,
@@ -1049,11 +1052,7 @@ class TestHookPre:
         output = run_hook(
             "pre",
             pre_payload(
-                {
-                    "summary": "摘要",
-                    "title": "标题",
-                    "conversation_id": "ai-made-this-up",
-                },
+                {"summary": "摘要", "conversation_id": "ai-made-this-up"},
                 conversation_id=conversation_id,
             ),
             tmp_path,
