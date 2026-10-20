@@ -8,7 +8,7 @@
 
 - **微信式对话流**：AI 的摘要（Markdown 渲染，代码块带复制按钮）靠左，用户回复靠右，历史消息可回看。
 - **文字与图片回复**：图片可选文件或 `Ctrl/⌘+V` 粘贴，`Ctrl/⌘+Enter` 发送。
-- **消息排队**：AI 干活期间用户也能继续发消息，最多排 3 条，排队中可以编辑、撤回；AI 下次调用 `interactive_feedback` 时一并带回，不会因为 AI 再次提问而丢失。
+- **消息排队**：AI 干活期间用户也能继续发消息，最多排 3 条，排队中可以编辑、撤回。装了 [Cursor 钩子](#cursor-钩子)，AI 调用完任意一次工具就能读到；没装，或 AI 先一步再次提问，则随下一次 `interactive_feedback` 一并带回，不会因为 AI 再次提问而丢失。
 - **多对话分开**：每个 Cursor 对话一个页面（`/c/<对话 ID>/`），回复和排队的消息不会串到别的对话；对话 ID 由 Cursor 钩子填入 `conversation_id`，没有钩子的调用共用一个页面。`/` 列出所有对话。
 - **新提问提醒**：新一轮提问到达时播放提示音，页面在后台时再弹桌面通知。
 - **环境自动检测**：识别 SSH Remote、WSL 等环境，无法打开浏览器时可通过端口转发访问。
@@ -64,6 +64,62 @@
 
 `MCP_WEB_HOST` 为 `127.0.0.1` 时只能本机访问；SSH 远程开发时可设为 `0.0.0.0`，再用 `http://[远程主机 IP]:8765` 访问。也可以保持默认，改用 SSH 端口转发把远程的 8765 转到本机。详见 [SSH Remote 环境使用指南](docs/zh-CN/ssh-remote/browser-launch-issues.md)。
 
+### Cursor 钩子
+
+仓库里的 `hooks/gl-feedback.sh` 是一个 Cursor 钩子脚本，管两件事：
+
+- 给每次 `interactive_feedback` 填上 Cursor 的对话 ID，让每个对话用自己的页面
+- AI 调用完任意一次工具时，把用户排队的消息取走，附在那次工具结果后面交给 AI；消息带图片时，图片存成本地文件，路径写在文字里，AI 用 Read 查看
+
+没装钩子，所有对话共用一个页面，排队的消息要等 AI 下次调用 `interactive_feedback` 才送达。脚本需要 bash、jq 和 curl，在用户级的 `~/.cursor/hooks.json` 里登记（`/path/to/gl-mcp-feedback` 换成仓库的位置）：
+
+```json
+{
+    "version": 1,
+    "hooks": {
+        "preToolUse": [
+            {
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh pre",
+                "matcher": ".*interactive_feedback.*",
+                "timeout": 10
+            }
+        ],
+        "postToolUse": [
+            {
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh post",
+                "timeout": 10
+            }
+        ],
+        "postToolUseFailure": [
+            {
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh post",
+                "timeout": 10
+            }
+        ],
+        "sessionStart": [
+            {
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh log",
+                "timeout": 10
+            }
+        ],
+        "sessionEnd": [
+            {
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh log",
+                "timeout": 10
+            }
+        ],
+        "stop": [
+            {
+                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh log",
+                "timeout": 10
+            }
+        ]
+    }
+}
+```
+
+`pre` 默认只给脚本所在仓库的项目里的对话填对话 ID，用环境变量 `GL_INJECT_ROOT` 换成别的项目目录。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。标记文件、图片和事件日志都放在 `GL_FEEDBACK_HOME`（默认 `~/.cache/gl-mcp-feedback`），服务端和钩子读同一个变量，一般不用改。
+
 ## 推荐的 AI 规则
 
 为了让 AI 稳定地走「先确认 → 再动手 → 最后回收反馈」的流程，建议把下面这段放进 AI 助手的规则（Cursor 的 User Rules / Project Rules、Cline 的 Custom Instructions 等）：
@@ -84,6 +140,8 @@ gl-mcp-feedback 交互规范：
 ## 常见问题
 
 **页面没有收到新的反馈**：多半是 WebSocket 断了，刷新浏览器页面即可。
+
+**排队的消息要等 AI 下次提问才送达**：钩子没生效。确认 `~/.cursor/hooks.json` 里登记了 `post`，脚本有可执行权限（`chmod +x`），jq 和 curl 能找到。
 
 **AI 没有调用出 MCP**：确认 MCP 工具状态为绿灯，反复开关一次 MCP，等几秒让它重新连接。
 

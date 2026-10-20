@@ -180,10 +180,10 @@
     <!-- ===== TOP BAR ===== -->
     <header class="glow-line relative flex items-center justify-between px-5 h-11 bg-surface-raised border-b border-white/[0.06] shrink-0 z-50">
         <div class="flex items-center gap-4">
-            <div class="flex items-center gap-2">
+            <a id="homeLink" href="/" title="返回总览（所有对话）" aria-label="返回总览，查看所有对话" class="flex items-center gap-2 -mx-2 px-2 py-1 rounded-lg hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 transition">
                 <div class="w-5 h-5 rounded-[5px] bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-xs font-bold text-white">M</div>
                 <span class="text-[14px] font-semibold tracking-tight">gl-mcp-feedback</span>
-            </div>
+            </a>
             <div class="flex items-center gap-2.5 text-xs text-slate-500">
                 <span title="{{ project_directory }}" class="hidden sm:inline font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition truncate max-w-[300px]">{{ project_directory }}</span>
                 <span id="conversationBadge" class="hidden font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded"></span>
@@ -514,6 +514,12 @@
                     loadHistory('auto');
                     return;
                 }
+                if (data.type === 'queue_delivered') {
+                    // AI 调用完一次工具，钩子把排队的消息取走了：把「排队中」翻成「已送达」
+                    announceToScreenReader('AI 已读取你排队的消息，正在处理');
+                    loadHistory('keep');
+                    return;
+                }
                 if (data.type !== 'notification') return;
                 if (data.code === 'session.feedbackSubmitted') {
                     // 服务端确认已收到回复，用服务端记录校正本地先行显示的回复气泡
@@ -524,7 +530,7 @@
                     // 服务端确认消息已排队：沿用本地先行显示的气泡的 key，避免重复播放入场动画
                     settleSend(data.message_id);
                     lastSubmission = null;
-                    announceToScreenReader('消息已加入队列，AI 下次提问时送达');
+                    announceToScreenReader('消息已加入队列，AI 下次调用工具或提问时送达');
                     loadHistory('keep');
                 } else if (data.code === 'queue.full') {
                     // 队列已满，消息没有被接收：把内容放回输入框
@@ -567,7 +573,7 @@
 
         // --- Chat stream ---
         // 对话记录来自 <房间前缀>/api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
-        // 排成一条时间线：已送达的排队消息跟在送达它们的那条 AI 消息之后，其余按发生时间从旧到新。
+        // 排成一条时间线：随提问送达的排队消息跟在送达它们的那条 AI 消息之后，其余按发生时间从旧到新。
         const SEPARATOR_GAP_MS = 5 * 60 * 1000;
         const UNANSWERED_NOTES = {
             timeout: '该轮对话已超时，未收到回复',
@@ -693,7 +699,7 @@
                 if (locked) text = COMPOSER_REPLACED.hint;
                 else if (full) text = queueFullText();
                 else if (!awaiting) {
-                    text = 'AI 正在处理，消息会排队（' + getPendingQueued().length + '/' + queueLimit + '），AI 下次提问时一并读取';
+                    text = 'AI 正在处理，消息会排队（' + getPendingQueued().length + '/' + queueLimit + '），AI 下次调用工具或提问时一并读取';
                 }
                 hint.textContent = composerNotice || text;
                 hint.title = composerNotice || text;
@@ -734,8 +740,9 @@
         };
 
         // 把 AI 的消息、用户的回复、用户排队发送的消息排成一条时间线。
-        // 已送达的排队消息是那次 AI 调用带回来的结果：按发送顺序紧跟在送达它们的 AI 消息（及其说明）之后，
-        // 位置按那条 AI 消息的时间算，悬停提示（sentAt）仍是真实发送时间；排队中的消息按发送时间排在最后。
+        // 随提问送达的排队消息是那次 AI 调用带回来的结果：按发送顺序紧跟在送达它们的 AI 消息（及其说明）之后，
+        // 位置按那条 AI 消息的时间算，悬停提示（sentAt）仍是真实发送时间；
+        // 排队中的消息和随工具调用送达的消息按发送时间排位，所以被钩子取走的那一刻位置不变。
         // 没收到回复的 AI 消息带一条说明（note），显示在它下方。
         const buildTimeline = () => {
             const roundIds = new Set(rounds.map((round) => round.session_id));
@@ -770,9 +777,10 @@
                     items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at: round.created_at, sentAt: message.submitted_at, order: 1, message });
                 });
             });
-            // 排队中的消息；送达它的会话不在记录里时（刚被淘汰），按送达时间兜底显示
+            // 排队中和随工具调用送达的消息按发送时间排位；随提问送达、而送达它的会话不在记录里时（刚被淘汰），按送达时间兜底显示
             loose.forEach((message) => {
-                items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at: message.delivered_at || message.submitted_at, sentAt: message.submitted_at, order: 1, message });
+                const at = message.delivered_via === 'question' ? message.delivered_at : message.submitted_at;
+                items.push({ key: 'queued:' + queuedKeyOf(message), role: 'queued', at, sentAt: message.submitted_at, order: 1, message });
             });
             return items.sort((a, b) => a.at - b.at || a.order - b.order);
         };
@@ -880,19 +888,20 @@
             return btn;
         };
 
-        // 排队消息气泡下方的状态行：排队中（可编辑、撤回）或已送达
+        // 排队消息气泡下方的状态行：排队中（可编辑、撤回）或已送达（区分随工具调用送达还是随提问送达）
         const createQueuedStatus = (message) => {
             const line = document.createElement('div');
             line.className = 'mt-1.5 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[12px]';
             const label = document.createElement('span');
             if (message.delivered_at) {
+                const via = message.delivered_via === 'tool_call' ? '随hook' : '随提问';
                 label.className = 'text-slate-400';
-                label.textContent = '✓ 已送达 AI · ' + formatChatTime(message.submitted_at) + ' 发送';
+                label.textContent = '✓ 已' + via + '送达 AI · ' + formatChatTime(message.submitted_at) + ' 发送';
                 line.append(label);
                 return line;
             }
             label.className = 'text-amber-300';
-            label.textContent = '排队中 · AI 下次提问时送达';
+            label.textContent = '排队中 · AI 下次调用工具或提问时送达';
             line.append(label);
             // 本地先行显示、还没得到服务端确认的消息，以及正在编辑别的消息时，不提供操作
             if (!message.local && !editingQueueId) {
@@ -1292,7 +1301,7 @@
                 return;
             }
 
-            // AI 在等回复：这条消息是回复；没在等：进入队列，AI 下次提问时一并取走
+            // AI 在等回复：这条消息是回复；没在等：进入队列，AI 下次调用工具或提问时一并取走
             const awaiting = isAwaitingReply();
             const sentImages = pendingImages;
             const imagesPayload = sentImages.map((img) => {
@@ -1334,6 +1343,7 @@
                     feedback_images: thumbnails,
                     submitted_at: Date.now(),
                     delivered_at: null,
+                    delivered_via: null,
                     delivered_session_id: null,
                     local: true
                 });

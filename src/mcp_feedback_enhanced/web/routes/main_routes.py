@@ -171,7 +171,7 @@ def setup_routes(manager: "WebUIManager"):
             # 按创建时间排序（最新的在前）
             sessions_data.sort(key=lambda x: x["created_at"], reverse=True)
 
-            # 用户在 AI 没有等回复时排队发送的消息（排队中的，以及随记录里的会话送达过的）
+            # 用户在 AI 没有等回复时排队发送的消息：排队中的、最近随工具调用送达的、以及随记录里的会话送达过的
             queued_data = [
                 {
                     "id": message.message_id,
@@ -183,6 +183,7 @@ def setup_routes(manager: "WebUIManager"):
                         if message.delivered_at
                         else None
                     ),
+                    "delivered_via": message.delivered_via,
                     "delivered_session_id": message.delivered_session_id,
                 }
                 for message in room.message_queue.visible_messages(set(room.sessions))
@@ -244,6 +245,21 @@ def setup_routes(manager: "WebUIManager"):
                 "messageCode": get_msg_code("QUEUE_MESSAGE_UPDATED"),
             }
         )
+
+    @router.post("/api/queue/take")
+    async def take_queued_messages(room_id: str):
+        """Cursor 钩子在 AI 调用完一次工具后来取排队的消息
+
+        Returns:
+            有排队消息时是 ``{"additional_context": "..."}``，钩子原样交给 Cursor，
+            文字会附在那次工具结果后面；没有时是空对象。
+        """
+        room = manager.get_room(room_id)
+        if room is None:
+            return room_not_found()
+
+        context = await room.deliver_for_tool_call()
+        return JSONResponse(content={"additional_context": context} if context else {})
 
     @router.delete("/api/queue/{message_id}")
     async def cancel_queued_message(room_id: str, message_id: str):
@@ -380,7 +396,7 @@ async def handle_websocket_message(room: Room, session: WebFeedbackSession, data
             # AI 正在等回复：作为对当前提问的回复
             await session.submit_feedback(feedback, images, settings)
         else:
-            # AI 没有在等：进入房间的队列，AI 下次提问时一并取走
+            # AI 没有在等：进入房间的队列，AI 下次调用工具（钩子来取）或提问时一并取走
             await room.enqueue_user_message(session, feedback, images, settings)
 
     else:

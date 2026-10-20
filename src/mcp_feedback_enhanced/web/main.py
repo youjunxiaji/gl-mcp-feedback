@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from ..debug import web_debug_log as debug_log
 from ..utils.error_handler import ErrorHandler, ErrorType
 from ..utils.memory_monitor import get_memory_monitor
-from .models import Room, WebFeedbackSession
+from .models import DEFAULT_ROOM_ID, QueueMarker, Room, WebFeedbackSession
 from .routes import setup_routes
 from .utils import get_browser_opener
 from .utils.compression_config import get_compression_manager
@@ -266,7 +266,13 @@ class WebUIManager:
         with self._rooms_lock:
             room = self.rooms.get(room_id)
             if room is None:
-                room = Room(room_id)
+                # 默认房间没有对话标识，钩子找不到它，不写标记文件
+                marker = (
+                    None
+                    if room_id == DEFAULT_ROOM_ID
+                    else QueueMarker(room_id, lambda: self.get_hook_room_url(room_id))
+                )
+                room = Room(room_id, marker)
                 self.rooms[room_id] = room
                 debug_log(f"新建房间: {room_id}")
             return room
@@ -291,6 +297,17 @@ class WebUIManager:
     def get_room_url(self, room: Room) -> str:
         """房间页面的地址"""
         return f"{self.get_server_url()}/c/{room.room_id}/"
+
+    def get_hook_room_url(self, room_id: str) -> str:
+        """钩子访问房间用的地址（不带结尾的斜杠）
+
+        服务监听在所有网卡时（0.0.0.0），钩子从本机访问，用 127.0.0.1。
+
+        Args:
+            room_id: 房间标识。
+        """
+        host = "127.0.0.1" if self.host in ("", "0.0.0.0", "::") else self.host
+        return f"http://{host}:{self.port}/c/{room_id}"
 
     def start_server(self):
         """启动 Web 服务器"""

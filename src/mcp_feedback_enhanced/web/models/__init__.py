@@ -9,21 +9,25 @@ Web UI 数据模型模组
 from .feedback_result import FeedbackResult
 from .feedback_session import CleanupReason, SessionStatus, WebFeedbackSession
 from .message_queue import (
+    DeliveryChannel,
     MessageNotPendingError,
     MessageQueue,
     QueuedMessage,
     QueueFullError,
 )
+from .queue_files import QueueMarker
 from .room import DEFAULT_ROOM_ID, Room
 
 
 __all__ = [
     "DEFAULT_ROOM_ID",
     "CleanupReason",
+    "DeliveryChannel",
     "FeedbackResult",
     "MessageNotPendingError",
     "MessageQueue",
     "QueueFullError",
+    "QueueMarker",
     "QueuedMessage",
     "Room",
     "SessionStatus",

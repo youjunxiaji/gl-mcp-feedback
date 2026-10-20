@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 # 使用正確的模組導入，不手動修改 sys.path
+from mcp_feedback_enhanced.web import main as web_main
 from mcp_feedback_enhanced.web.main import WebUIManager
 
 
@@ -89,6 +90,23 @@ def web_ui_manager() -> Generator[WebUIManager, None, None]:
 
 
 @pytest.fixture
+def live_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[tuple[WebUIManager, list[str]], None, None]:
+    """真正启动 Web 服务的管理器，打开浏览器改成记下地址"""
+    monkeypatch.setenv("MCP_TEST_MODE", "true")
+    monkeypatch.setenv("MCP_WEB_HOST", "127.0.0.1")
+    monkeypatch.setenv("MCP_WEB_PORT", "0")
+    monkeypatch.setattr(web_main, "_web_ui_manager", None)
+
+    manager = web_main.get_web_ui_manager()
+    opened_urls: list[str] = []
+    monkeypatch.setattr(manager, "open_browser", opened_urls.append)
+    yield manager, opened_urls
+    web_main.stop_web_ui()
+
+
+@pytest.fixture
 def test_config() -> dict[str, Any]:
     """測試配置 fixture"""
     return {
@@ -98,6 +116,14 @@ def test_config() -> dict[str, Any]:
         "test_summary": "測試摘要 - 這是一個自動化測試",
         "test_feedback": "這是測試回饋內容",
     }
+
+
+@pytest.fixture(autouse=True)
+def isolated_feedback_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """排队消息的标记文件和图片都写进临时目录，不碰真实的 ~/.cache/gl-mcp-feedback"""
+    home = tmp_path / "feedback-home"
+    monkeypatch.setenv("GL_FEEDBACK_HOME", str(home))
+    return home
 
 
 @pytest.fixture(autouse=True)

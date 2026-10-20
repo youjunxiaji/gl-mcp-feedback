@@ -10,7 +10,6 @@
 import asyncio
 import json
 import time
-from collections.abc import Callable, Generator
 from typing import Any, cast
 
 import pytest
@@ -20,9 +19,9 @@ from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 from websockets.asyncio.client import connect
 
-from mcp_feedback_enhanced.web import main as web_main
 from mcp_feedback_enhanced.web.main import WebUIManager, launch_web_feedback_ui
 from mcp_feedback_enhanced.web.models import DEFAULT_ROOM_ID, Room, SessionStatus
+from tests.helpers import wait_until
 
 
 CONVERSATION_A = "a1b2c3d4-0000-4000-8000-000000000001"
@@ -317,6 +316,11 @@ class TestRoomRoutes:
         assert "/Users/gulei/Documents/project-a" in page.text
         assert "project-b" not in page.text
 
+    def test_room_page_logo_links_to_the_room_list(self, client: TestClient):
+        page = client.get(f"/c/{CONVERSATION_A}/")
+
+        assert '<a id="homeLink" href="/"' in page.text
+
     def test_unknown_room_page_goes_back_to_the_list(self, client: TestClient):
         response = client.get("/c/not-created/", follow_redirects=False)
 
@@ -440,30 +444,6 @@ class TestRoomWebSocket:
             client.websocket_connect("/c/not-created/ws"),
         ):
             pass
-
-
-async def wait_until(condition: Callable[[], bool], timeout: float = 10) -> None:
-    """等条件成立，超时就让测试失败"""
-    async with asyncio.timeout(timeout):
-        while not condition():
-            await asyncio.sleep(0.05)
-
-
-@pytest.fixture
-def live_manager(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Generator[tuple[WebUIManager, list[str]], None, None]:
-    """真正启动 Web 服务的管理器，打开浏览器改成记下地址"""
-    monkeypatch.setenv("MCP_TEST_MODE", "true")
-    monkeypatch.setenv("MCP_WEB_HOST", "127.0.0.1")
-    monkeypatch.setenv("MCP_WEB_PORT", "0")
-    monkeypatch.setattr(web_main, "_web_ui_manager", None)
-
-    manager = web_main.get_web_ui_manager()
-    opened_urls: list[str] = []
-    monkeypatch.setattr(manager, "open_browser", opened_urls.append)
-    yield manager, opened_urls
-    web_main.stop_web_ui()
 
 
 class TestLaunchEndToEnd:

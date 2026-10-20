@@ -25,6 +25,7 @@ from .feedback_session import (
     WebFeedbackSession,
 )
 from .message_queue import MessageQueue, QueueFullError
+from .queue_files import QueueMarker, save_message_images
 
 
 # 没有对话标识的调用共用的房间
@@ -49,6 +50,7 @@ class Room:
         sessions: 房间里的会话，按创建顺序排列，最多 MAX_SESSIONS 个。
         current_session: 最新一轮的会话，页面的 WebSocket 和用户的回复都交给它。
         message_queue: 用户在 AI 没有等回复时排队发送的消息。
+        marker: 队列里有排队中的消息时写下的标记文件，钩子靠它判断要不要来取；没有钩子的场景为 None。
         pending_session_update: 新会话创建时页面还没连上，页面连上后要补发更新通知。
         created_at: 房间创建的时间戳（秒）。
     """
@@ -56,11 +58,15 @@ class Room:
     # 房间里最多保留的会话数量
     MAX_SESSIONS = 10
 
-    def __init__(self, room_id: str):
+    # 通知页面「排队的消息已送达」最多等多久（秒），页面连接异常时不拖慢钩子的响应
+    NOTIFY_TIMEOUT_SECONDS = 2
+
+    def __init__(self, room_id: str, marker: QueueMarker | None = None):
         self.room_id = room_id
         self.sessions: dict[str, WebFeedbackSession] = {}
         self.current_session: WebFeedbackSession | None = None
-        self.message_queue = MessageQueue()
+        self.marker = marker
+        self.message_queue = MessageQueue(on_pending_changed=self._sync_marker)
         self.pending_session_update = False
         self.created_at = time.time()
 
@@ -262,7 +268,7 @@ class Room:
         Returns:
             interactive_feedback 的返回结构；没有排队消息时返回 None，调用方照常等用户回复。
         """
-        messages = self.message_queue.deliver(session.session_id)
+        messages = self.message_queue.deliver_with_question(session.session_id)
         if not messages:
             return None
 
@@ -271,6 +277,46 @@ class Room:
         self.pending_session_update = False
         await self.notify_existing_tab_to_refresh(silent=True)
         return MessageQueue.build_result(messages)
+
+    async def deliver_for_tool_call(self) -> str | None:
+        """AI 调用完一次工具后（由钩子来取），取走房间里用户排队的消息
+
+        Returns:
+            附在工具结果后面的说明文字（消息文字，图片以本地文件路径给出）；没有排队消息时返回 None。
+        """
+        messages = self.message_queue.deliver_with_tool_call()
+        if not messages:
+            return None
+
+        # 消息已经标记为送达，之后任何一步都不能让钩子拿不到说明文字，所以通知页面放在最后，并限时
+        image_paths = await asyncio.to_thread(save_message_images, messages)
+        context = MessageQueue.build_tool_call_context(messages, image_paths)
+        await self.notify_queue_delivered(len(messages))
+        return context
+
+    async def notify_queue_delivered(self, count: int) -> None:
+        """通知房间的页面：排队的消息已经被 AI 取走，页面据此把「排队中」翻成「已送达」
+
+        Args:
+            count: 取走的消息条数。
+        """
+        session = self.current_session
+        if not session or not session.websocket:
+            return
+        try:
+            await asyncio.wait_for(
+                session.websocket.send_json(
+                    {"type": "queue_delivered", "count": count}
+                ),
+                timeout=self.NOTIFY_TIMEOUT_SECONDS,
+            )
+        except Exception as e:
+            debug_log(f"发送排队消息送达通知失败: {e}")
+
+    def _sync_marker(self) -> None:
+        """队列里排队中的消息数量变了：让标记文件和队列一致"""
+        if self.marker is not None:
+            self.marker.sync(self.message_queue.pending_count)
 
     async def notify_existing_tab_to_refresh(self, *, silent: bool = False) -> bool:
         """通知房间已打开的页面刷新显示新会话内容
@@ -419,11 +465,13 @@ class Room:
         return cleaned
 
     def cleanup_all_sessions(self) -> int:
-        """服务停止时清理房间里的全部会话
+        """服务停止时清理房间里的全部会话，并删掉标记文件
 
         Returns:
             清理的会话数量。
         """
+        if self.marker is not None:
+            self.marker.clear()
         count = len(self.sessions)
         for session in list(self.sessions.values()):
             try:

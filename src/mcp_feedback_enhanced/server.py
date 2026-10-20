@@ -384,9 +384,11 @@ _CHAT_PROMPT = """\
 4. **只在用户明确终止时停止**（`结束` / `不用了` / `stop` / `done`）。
    `summary` 为空字符串、或填占位套话（如"我已完成了您请求的任务。"）
    会被运行时校验拒绝，必须重新调用并写入真实内容。
-5. **处理排队消息**：若返回内容以「（你工作期间，用户追加了 N 条消息」开头，
-   说明这些是用户在你干活时排队发的，**不是**对本次 `summary` 的回答；
-   按顺序当作新指令处理，处理完再调用本工具汇报。\
+5. **处理排队消息**：用户在你干活时发的消息会排队，有两种方式送到你手里：
+   某个工具的结果后面多出一段以「（你工作期间，用户追加了 N 条消息」开头的说明，
+   或者你下次调用本工具时，返回内容以同样的话开头。
+   它们**不是**对本次 `summary` 的回答，按顺序当作新指令处理，处理完再调用本工具汇报；
+   消息带图片时，说明里写着图片的本地文件路径，用 Read 查看。\
 """
 
 
@@ -461,12 +463,19 @@ async def interactive_feedback(
 
     Queued messages:
         While you work between two calls, the user can keep typing in the
-        Web UI; those messages are queued (at most 3). On your next call the
-        queue is returned immediately, without waiting for a new reply,
-        under a header starting with ``（你工作期间，用户追加了 N 条消息``.
-        They are NOT an answer to the ``summary`` you just passed: treat
-        them as new instructions in the given order, act on them, then
-        call this tool again.
+        Web UI; those messages are queued (at most 3) and reach you in one
+        of two ways, both under a header starting with
+        ``（你工作期间，用户追加了 N 条消息``:
+
+        - After any tool call, a Cursor hook appends the queue to that
+          tool's result. Images are saved as local files whose paths are
+          listed in the block: open them with ``Read``.
+        - On your next call to this tool, the queue is returned
+          immediately, without waiting for a new reply.
+
+        Either way they are NOT an answer to the ``summary`` you just
+        passed: treat them as new instructions in the given order, act on
+        them, then call this tool again.
 
     Args:
         project_directory: Absolute or relative project path. Defaults to cwd.
