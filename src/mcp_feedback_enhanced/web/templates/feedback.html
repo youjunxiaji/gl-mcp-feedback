@@ -132,9 +132,12 @@
         .md em { color: #e2e8f0; }
         .md del, .md s { color: #506078; text-decoration: line-through; }
         .md code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(255,255,255,0.06); padding: 0.2em 0.45em; border-radius: 4px; color: #60a5fa; }
-        .md pre { position: relative; background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
+        .md pre { background: #0b0e14; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 14px 16px; margin: 0.6em 0; overflow-x: auto; }
         .md pre code { background: none; padding: 0; color: #e2e8f0; font-size: 0.85em; line-height: 1.55; }
-        .md pre .copy-btn {
+        /* 复制按钮挂在不滚动的外层容器上，代码横向滚动时按钮保持在原位 */
+        .md .code-block { position: relative; margin: 0.6em 0; }
+        .md .code-block > pre { margin: 0; }
+        .md .code-block .copy-btn {
             position: absolute;
             top: 8px;
             right: 8px;
@@ -155,10 +158,10 @@
             transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
             backdrop-filter: blur(4px);
         }
-        .md pre:hover .copy-btn { opacity: 1; }
-        .md pre .copy-btn:hover { color: #e2e8f0; background: rgba(30, 38, 54, 0.95); border-color: rgba(255, 255, 255, 0.12); }
-        .md pre .copy-btn.copied { opacity: 1; color: #34d399; border-color: rgba(52, 211, 153, 0.3); background: rgba(52, 211, 153, 0.08); }
-        .md pre .copy-btn svg { width: 12px; height: 12px; }
+        .md .code-block:hover .copy-btn { opacity: 1; }
+        .md .code-block .copy-btn:hover { color: #e2e8f0; background: rgba(30, 38, 54, 0.95); border-color: rgba(255, 255, 255, 0.12); }
+        .md .code-block .copy-btn.copied { opacity: 1; color: #34d399; border-color: rgba(52, 211, 153, 0.3); background: rgba(52, 211, 153, 0.08); }
+        .md .code-block .copy-btn svg { width: 12px; height: 12px; }
         .md blockquote { border-left: 3px solid #3b82f6; margin: 0.6em 0; padding: 0.5em 1em; background: rgba(59,130,246,0.06); border-radius: 0 8px 8px 0; color: #8494a7; font-style: italic; }
         .md blockquote strong { font-style: normal; }
         .md a { color: #60a5fa; text-decoration: none; }
@@ -179,7 +182,7 @@
         <div class="flex items-center gap-4">
             <div class="flex items-center gap-2">
                 <div class="w-5 h-5 rounded-[5px] bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-xs font-bold text-white">M</div>
-                <span class="text-[14px] font-semibold tracking-tight">MCP Feedback</span>
+                <span class="text-[14px] font-semibold tracking-tight">gl-mcp-feedback</span>
             </div>
             <div class="flex items-center gap-2.5 text-xs text-slate-500">
                 <span title="{{ project_directory }}" class="hidden sm:inline font-mono text-xs text-slate-400 bg-surface-overlay px-2 py-0.5 rounded cursor-pointer hover:bg-blue-500/10 hover:text-blue-400 transition truncate max-w-[300px]">{{ project_directory }}</span>
@@ -199,11 +202,7 @@
     <nav class="flex items-center gap-0.5 px-5 py-2 bg-surface-base border-b border-white/[0.06] shrink-0" id="tabNav">
         <button class="tab-btn tab-active-dot relative px-4 py-2 text-[14px] font-medium rounded-full text-slate-200 bg-surface-overlay shadow-sm ring-1 ring-white/[0.06] transition-all"
                 data-tab="workspace">工作区</button>
-        <button class="tab-btn px-4 py-2 text-[14px] font-medium rounded-full text-slate-500 hover:text-slate-400 hover:bg-surface-overlay transition-all"
-                data-tab="sessions">会话管理</button>
         <div class="w-px h-4 bg-white/[0.06] mx-1.5"></div>
-        <button class="tab-btn px-4 py-2 text-[14px] font-medium rounded-full text-slate-500 hover:text-slate-400 hover:bg-surface-overlay transition-all"
-                data-tab="settings">设定</button>
         <button class="tab-btn px-4 py-2 text-[14px] font-medium rounded-full text-slate-500 hover:text-slate-400 hover:bg-surface-overlay transition-all"
                 data-tab="about">关于</button>
     </nav>
@@ -243,82 +242,6 @@
             </div>
         </div>
 
-        <!-- SESSIONS -->
-        <div id="page-sessions" class="page hidden flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-            <div id="sessionsContainer">
-                <div class="text-xs text-slate-600 text-center py-8">加载中...</div>
-            </div>
-        </div>
-
-        <!-- SETTINGS -->
-        <div id="page-settings" class="page hidden flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-            <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
-                <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
-                    <div class="w-[3px] h-5 rounded-sm bg-emerald-500"></div>
-                    <span class="text-sm font-semibold text-slate-200">语言设定</span>
-                </div>
-                <div class="px-[18px] divide-y divide-white/[0.06]">
-                    <div class="flex items-center justify-between py-3.5">
-                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">界面语言</div><div class="text-xs text-slate-500">选择界面显示语言</div></div>
-                        <select class="font-sans text-[14px] text-slate-200 bg-surface-base border border-white/[0.06] rounded px-3 py-[7px] min-w-[140px] outline-none focus:border-blue-500 transition cursor-pointer"><option>简体中文</option><option>繁体中文</option><option>English</option></select>
-                    </div>
-                </div>
-            </div>
-            <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
-                <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
-                    <div class="w-[3px] h-5 rounded-sm bg-amber-500"></div>
-                    <span class="text-sm font-semibold text-slate-200">自动定时提交</span>
-                </div>
-                <div class="px-[18px] divide-y divide-white/[0.06]">
-                    <div class="flex items-center justify-between py-3.5">
-                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">启用自动提交</div><div class="text-xs text-slate-500">在指定时间后自动提交选定的提示词</div></div>
-                        <button class="relative w-11 h-6 bg-surface-muted border border-white/[0.06] rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-blue-500');this.classList.toggle('!border-blue-500');this.querySelector('div').classList.toggle('translate-x-5')">
-                            <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform"></div>
-                        </button>
-                    </div>
-                    <div class="flex items-center justify-between py-3.5">
-                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">倒数时间</div><div class="text-xs text-slate-500">范围：1 ~ 86400 秒</div></div>
-                        <div class="flex items-center gap-1.5">
-                            <input type="number" value="30" min="1" max="86400" class="font-mono text-[14px] text-slate-200 bg-surface-base border border-white/[0.06] rounded px-3 py-[7px] w-[100px] outline-none focus:border-blue-500 transition">
-                            <span class="text-xs text-slate-500">秒</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
-                <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
-                    <div class="w-[3px] h-5 rounded-sm bg-violet-500"></div>
-                    <span class="text-sm font-semibold text-slate-200">通知与音效</span>
-                </div>
-                <div class="px-[18px] divide-y divide-white/[0.06]">
-                    <div class="flex items-center justify-between py-3.5">
-                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">浏览器通知</div><div class="text-xs text-slate-500">新会话到达时发送桌面通知</div></div>
-                        <button class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-surface-muted');this.classList.toggle('!border-white/[0.06]');this.querySelector('div').classList.toggle('translate-x-5')">
-                            <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform translate-x-5"></div>
-                        </button>
-                    </div>
-                    <div class="flex items-center justify-between py-3.5">
-                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">提示音</div><div class="text-xs text-slate-500">新会话到达时播放提示音</div></div>
-                        <button class="relative w-11 h-6 bg-blue-500 border border-blue-500 rounded-full cursor-pointer transition-colors" onclick="this.classList.toggle('!bg-surface-muted');this.classList.toggle('!border-white/[0.06]');this.querySelector('div').classList.toggle('translate-x-5')">
-                            <div class="absolute top-[2px] left-[2px] w-[18px] h-[18px] bg-white rounded-full shadow transition-transform translate-x-5"></div>
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="bg-surface-raised border border-white/[0.06] rounded-2xl overflow-hidden hover:border-white/[0.08] transition">
-                <div class="flex items-center gap-2.5 px-[18px] py-3.5 border-b border-white/[0.06]">
-                    <div class="w-[3px] h-5 rounded-sm bg-red-500"></div>
-                    <span class="text-sm font-semibold text-slate-200">进阶设定</span>
-                </div>
-                <div class="px-[18px]">
-                    <div class="flex items-center justify-between py-3.5">
-                        <div><div class="text-[14px] font-medium text-slate-200 mb-0.5">重置设定</div><div class="text-xs text-slate-500">清除所有已保存的设定，恢复默认状态</div></div>
-                        <button class="text-xs font-medium text-red-400 border border-red-400/30 rounded px-3 py-1.5 hover:bg-red-500/10 transition">重置</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- ABOUT -->
         <div id="page-about" class="page hidden flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
             <div class="text-center pt-8 pb-4">
@@ -327,7 +250,7 @@
                 <span class="font-mono text-xs text-blue-400 bg-blue-500/[0.12] px-2.5 py-0.5 rounded-full">v{{ version }}</span>
                 <p class="text-[14px] text-slate-400 max-w-md mx-auto mt-3 leading-relaxed">
                     MCP 交互式反馈收集工具，提供 Web UI 供用户与 AI 代理交互。<br>
-                    支持 Markdown 摘要、图片上传、多语言、会话管理等功能。
+                    支持 Markdown 摘要、图片上传、对话记录等功能。
                 </p>
                 <div class="flex justify-center gap-2.5 mt-3">
                     <a href="https://github.com/youjunxiaji/gl-mcp-feedback" target="_blank" class="text-xs font-semibold text-white bg-blue-500 hover:bg-blue-400 rounded-lg px-5 py-2 hover:-translate-y-0.5 transition-all inline-flex items-center gap-1.5">GitHub</a>
@@ -346,40 +269,6 @@
             </div>
         </div>
 
-    </div>
-
-    <!-- ===== BOTTOM STATS PANEL ===== -->
-    <div id="bottomPanel" class="bg-surface-raised border-t border-white/[0.06] shrink-0 overflow-hidden transition-all duration-[400ms]" style="max-height: 36px;">
-        <div class="flex items-center justify-between px-5 py-2 cursor-pointer select-none" onclick="toggleBottom()">
-            <span class="text-xs font-medium text-slate-400">统计</span>
-            <span id="bottomArrow" class="text-[11px] text-slate-500 transition-transform duration-300">▼</span>
-        </div>
-        <div class="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2.5 px-5 pb-3.5">
-            <div class="flex flex-col gap-0.5 p-2.5 bg-surface-base rounded border border-white/[0.06]">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider">连接时间</span>
-                <span class="font-mono text-sm font-semibold text-blue-400">--:--</span>
-            </div>
-            <div class="flex flex-col gap-0.5 p-2.5 bg-surface-base rounded border border-white/[0.06]">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider">重连次数</span>
-                <span class="font-mono text-sm font-semibold text-blue-400">0</span>
-            </div>
-            <div class="flex flex-col gap-0.5 p-2.5 bg-surface-base rounded border border-white/[0.06]">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider">消息数</span>
-                <span class="font-mono text-sm font-semibold text-blue-400">0</span>
-            </div>
-            <div class="flex flex-col gap-0.5 p-2.5 bg-surface-base rounded border border-white/[0.06]">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider">延迟</span>
-                <span class="font-mono text-sm font-semibold text-blue-400">--ms</span>
-            </div>
-            <div class="flex flex-col gap-0.5 p-2.5 bg-surface-base rounded border border-white/[0.06]">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider">会话数</span>
-                <span class="font-mono text-sm font-semibold text-blue-400">0</span>
-            </div>
-            <div class="flex flex-col gap-0.5 p-2.5 bg-surface-base rounded border border-white/[0.06]">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider">状态</span>
-                <span class="font-mono text-sm font-semibold text-blue-400">等待中</span>
-            </div>
-        </div>
     </div>
 
     <!-- ===== SCRIPTS ===== -->
@@ -413,42 +302,46 @@
             });
         }
 
-        function enhanceCodeBlocks(rootEl) {
+        const enhanceCodeBlocks = (rootEl) => {
             if (!rootEl) return;
-            var pres = rootEl.querySelectorAll('pre');
-            pres.forEach(function(pre) {
-                if (pre.querySelector(':scope > .copy-btn')) return;
-                var code = pre.querySelector('code');
+            rootEl.querySelectorAll('pre').forEach((pre) => {
+                if (pre.parentElement && pre.parentElement.classList.contains('code-block')) return;
+                const code = pre.querySelector('code');
                 if (!code) return;
 
-                var btn = document.createElement('button');
+                // 按钮放在不滚动的外层容器里，代码横向滚动时按钮保持在原位
+                const wrap = document.createElement('div');
+                wrap.className = 'code-block';
+                pre.parentNode.insertBefore(wrap, pre);
+                wrap.appendChild(pre);
+
+                const btn = document.createElement('button');
                 btn.type = 'button';
                 btn.className = 'copy-btn';
                 btn.setAttribute('aria-label', '复制代码');
                 btn.innerHTML = COPY_ICON_SVG + '<span>复制</span>';
 
-                btn.addEventListener('click', function(e) {
+                btn.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    var text = code.innerText;
-                    copyTextToClipboard(text).then(function() {
+                    copyTextToClipboard(code.innerText).then(() => {
                         btn.classList.add('copied');
                         btn.innerHTML = CHECK_ICON_SVG + '<span>已复制</span>';
-                        setTimeout(function() {
+                        setTimeout(() => {
                             btn.classList.remove('copied');
                             btn.innerHTML = COPY_ICON_SVG + '<span>复制</span>';
                         }, 1800);
-                    }).catch(function() {
+                    }).catch(() => {
                         btn.innerHTML = COPY_ICON_SVG + '<span>复制失败</span>';
-                        setTimeout(function() {
+                        setTimeout(() => {
                             btn.innerHTML = COPY_ICON_SVG + '<span>复制</span>';
                         }, 1800);
                     });
                 });
 
-                pre.appendChild(btn);
+                wrap.appendChild(btn);
             });
-        }
+        };
 
         // --- Connection status ---
         function setConnStatus(state) {
@@ -474,8 +367,8 @@
 
         const updateDocumentTitle = (title) => {
             document.title = title
-                ? title + ' · MCP Feedback'
-                : 'Interactive Feedback - 反馈收集';
+                ? title + ' · gl-mcp-feedback'
+                : 'gl-mcp-feedback';
         };
 
         // --- Alert / 提醒（声音 + 桌面通知） ---
@@ -1308,6 +1201,13 @@
         let pendingImages = [];
         const THUMBNAIL_MAX_SIDE = 320;
 
+        const escapeHtml = (s) => String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
         // 生成对话记录里展示用的缩略图（JPEG data URL），失败时返回 null
         const createThumbnail = (dataUrl) => new Promise((resolve) => {
             const img = new Image();
@@ -1499,155 +1399,6 @@
             }
         });
 
-        // --- Sessions ---
-        var sessionsLoaded = false;
-
-        function loadSessions() {
-            fetch('/api/all-sessions')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    sessionsLoaded = true;
-                    renderSessions(data.sessions || []);
-                })
-                .catch(function() {
-                    document.getElementById('sessionsContainer').innerHTML =
-                        '<div class="text-xs text-red-400 text-center py-8">加载失败</div>';
-                });
-        }
-
-        function formatTime(ms) {
-            if (!ms) return '--:--:--';
-            var d = new Date(ms);
-            return d.toLocaleTimeString('zh-CN', { hour12: false });
-        }
-
-        function statusLabel(status, isCurrent) {
-            var map = {
-                waiting: { text: '等待中', cls: 'text-amber-400 bg-amber-400/10 border-amber-400/20' },
-                active: { text: '活跃', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' },
-                feedback_submitted: { text: '已提交', cls: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20' },
-                completed: { text: '已完成', cls: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
-                timeout: { text: '超时', cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
-                error: { text: '错误', cls: 'text-red-400 bg-red-400/10 border-red-400/20' },
-                expired: { text: '已过期', cls: 'text-slate-400 bg-slate-400/10 border-slate-400/20' }
-            };
-            var info = map[status] || map.waiting;
-            return '<span class="text-[11px] font-semibold uppercase tracking-wide ' + info.cls + ' border px-2.5 py-0.5 rounded-full">' + info.text + '</span>';
-        }
-
-        function escapeHtml(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function renderSessionCard(s, isCurrent) {
-            var borderCls = isCurrent ? 'border-blue-500/30 bg-gradient-to-br from-blue-500/[0.06] to-transparent' : 'border-white/[0.06]';
-            var sid = s.session_id.substring(0, 8);
-            var titleHtml = s.title
-                ? '<div class="text-[13px] font-semibold text-slate-200 mb-1.5 truncate" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + '</div>'
-                : '';
-            return '<div class="bg-surface-raised border ' + borderCls + ' rounded-2xl p-4 hover:shadow-lg transition">' +
-                '<div class="flex items-center justify-between mb-2">' +
-                    '<span class="font-mono text-xs text-blue-400 bg-blue-500/[0.12] px-2.5 py-0.5 rounded-full">' + sid + '</span>' +
-                    statusLabel(s.status, isCurrent) +
-                '</div>' +
-                titleHtml +
-                '<div class="text-xs text-slate-500 space-y-0.5">' +
-                    '<div>创建时间：' + formatTime(s.created_at) + '</div>' +
-                    '<div>项目：' + escapeHtml(s.project_directory || '--') + '</div>' +
-                '</div>' +
-                '<div class="flex gap-2 mt-3">' +
-                    '<button onclick="showSessionDetail(\'' + s.session_id + '\')" class="text-xs font-medium text-slate-400 border border-white/[0.06] rounded px-3 py-1.5 hover:text-slate-200 hover:border-blue-500 hover:bg-blue-500/10 transition">查看详情</button>' +
-                '</div>' +
-            '</div>';
-        }
-
-        // Session detail modal
-        var allSessionsCache = [];
-
-        function showSessionDetail(sessionId) {
-            var s = allSessionsCache.find(function(x) { return x.session_id === sessionId; });
-            if (!s) return;
-
-            var overlay = document.createElement('div');
-            overlay.className = 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-6';
-            overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-
-            var summaryHtml = s.summary && typeof marked !== 'undefined' ? marked.parse(s.summary) : escapeHtml(s.summary || '无摘要');
-            var titleRow = s.title
-                ? '<div class="text-slate-500">标题</div><div class="text-slate-200 font-medium break-all">' + escapeHtml(s.title) + '</div>'
-                : '';
-
-            overlay.innerHTML = '<div class="bg-surface-raised border border-white/[0.06] rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden">' +
-                '<div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">' +
-                    '<span class="text-sm font-semibold text-slate-200">会话详情</span>' +
-                    '<button onclick="this.closest(\'.fixed\').remove()" class="text-slate-500 hover:text-slate-300 text-lg">&times;</button>' +
-                '</div>' +
-                '<div class="flex-1 overflow-y-auto p-5 space-y-4">' +
-                    '<div class="grid grid-cols-2 gap-3 text-xs">' +
-                        titleRow +
-                        '<div class="text-slate-500">会话 ID</div><div class="font-mono text-slate-300">' + escapeHtml(s.session_id) + '</div>' +
-                        '<div class="text-slate-500">状态</div><div>' + statusLabel(s.status) + '</div>' +
-                        '<div class="text-slate-500">创建时间</div><div class="text-slate-300">' + formatTime(s.created_at) + '</div>' +
-                        '<div class="text-slate-500">最后活动</div><div class="text-slate-300">' + formatTime(s.last_activity) + '</div>' +
-                        '<div class="text-slate-500">项目</div><div class="text-slate-300 break-all">' + escapeHtml(s.project_directory || '--') + '</div>' +
-                    '</div>' +
-                    '<div class="border-t border-white/[0.06] pt-4">' +
-                        '<div class="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">AI 工作摘要</div>' +
-                        '<div class="md text-[14px] leading-relaxed">' + summaryHtml + '</div>' +
-                    '</div>' +
-                '</div>' +
-            '</div>';
-
-            document.body.appendChild(overlay);
-            enhanceCodeBlocks(overlay);
-        }
-
-        function renderSessions(sessions) {
-            allSessionsCache = sessions;
-            var container = document.getElementById('sessionsContainer');
-            if (!container) return;
-
-            var currentSessions = sessions.filter(function(s) { return s.is_current; });
-            var historySessions = sessions.filter(function(s) { return !s.is_current; });
-
-            var html = '';
-
-            html += '<span class="text-xs font-semibold uppercase tracking-wider text-slate-400 block mb-3">当前会话</span>';
-            if (currentSessions.length > 0) {
-                currentSessions.forEach(function(s) { html += renderSessionCard(s, true); });
-            } else {
-                html += '<div class="text-xs text-slate-600 text-center py-4">无活跃会话</div>';
-            }
-
-            html += '<span class="text-xs font-semibold uppercase tracking-wider text-slate-400 pt-4 block mb-3">历史会话</span>';
-            if (historySessions.length > 0) {
-                html += '<div class="space-y-3">';
-                historySessions.forEach(function(s) { html += renderSessionCard(s, false); });
-                html += '</div>';
-            } else {
-                html += '<div class="text-xs text-slate-600 text-center py-4">暂无历史会话</div>';
-            }
-
-            html += '<span class="text-xs font-semibold uppercase tracking-wider text-slate-400 pt-4 block mb-3">统计</span>';
-            html += '<div class="grid grid-cols-2 gap-3">' +
-                '<div class="bg-surface-raised border border-white/[0.06] rounded-xl p-4 text-center">' +
-                    '<span class="font-mono text-2xl font-semibold text-blue-400 block mb-1">' + sessions.length + '</span>' +
-                    '<span class="text-xs text-slate-500 uppercase tracking-wider">总会话数</span>' +
-                '</div>' +
-                '<div class="bg-surface-raised border border-white/[0.06] rounded-xl p-4 text-center">' +
-                    '<span class="font-mono text-2xl font-semibold text-blue-400 block mb-1">' + currentSessions.length + '</span>' +
-                    '<span class="text-xs text-slate-500 uppercase tracking-wider">活跃会话</span>' +
-                '</div>' +
-            '</div>';
-
-            container.innerHTML = html;
-        }
-
         // --- Tab switching ---
         document.getElementById('tabNav').addEventListener('click', (e) => {
             const btn = e.target.closest('.tab-btn');
@@ -1675,16 +1426,7 @@
                     scroller.scrollTop = savedChatScrollTop;
                 }
             }
-            if (name === 'sessions') loadSessions();
         });
-
-        // --- Bottom stats panel ---
-        var panelOpen = false;
-        function toggleBottom() {
-            panelOpen = !panelOpen;
-            document.getElementById('bottomPanel').style.maxHeight = panelOpen ? '180px' : '36px';
-            document.getElementById('bottomArrow').style.transform = panelOpen ? 'rotate(180deg)' : '';
-        }
     </script>
 </body>
 </html>

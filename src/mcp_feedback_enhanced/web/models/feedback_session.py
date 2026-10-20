@@ -89,9 +89,7 @@ class WebFeedbackSession:
         self.images: list[dict] = []
         self.settings: dict[str, Any] = {}  # 图片设定
         self.feedback_completed = threading.Event()
-        self.user_messages: list[dict] = []  # 用户消息记录
         self._cleanup_done = False  # 防止重复清理
-        # 移除语言设定，改由前端处理
 
         # 新增：会话状态管理
         self.status = SessionStatus.WAITING
@@ -99,7 +97,6 @@ class WebFeedbackSession:
         # 统一使用 time.time() 以避免时间基准不一致
         self.created_at = time.time()
         self.last_activity = self.created_at
-        self.last_heartbeat = None  # 记录最后一次心跳时间
 
         # 新增：自动清理配置
         self.auto_cleanup_delay = auto_cleanup_delay  # 自动清理延迟时间（秒）
@@ -119,11 +116,6 @@ class WebFeedbackSession:
 
         # 新增：活跃标签页管理
         self.active_tabs: dict[str, Any] = {}
-
-        # 新增：用户设定的会话超时
-        self.user_timeout_enabled = False
-        self.user_timeout_seconds = 3600  # 默认 1 小时
-        self.user_timeout_timer: threading.Timer | None = None
 
         # 确保临时目录存在
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -146,7 +138,7 @@ class WebFeedbackSession:
             key: 消息 key
 
         Returns:
-            消息代码（用于前端 i18n）
+            消息代码（前端据此识别通知类型）
         """
         return get_message_code(key)
 
@@ -396,39 +388,6 @@ class WebFeedbackSession:
         )
         return stats
 
-    def update_timeout_settings(self, enabled: bool, timeout_seconds: int = 3600):
-        """
-        更新用户设定的会话超时
-
-        Args:
-            enabled: 是否启用超时
-            timeout_seconds: 超时秒数
-        """
-        debug_log(f"更新会话超时设定: enabled={enabled}, seconds={timeout_seconds}")
-
-        # 先停止现有的计时器
-        if self.user_timeout_timer:
-            self.user_timeout_timer.cancel()
-            self.user_timeout_timer = None
-
-        self.user_timeout_enabled = enabled
-        self.user_timeout_seconds = timeout_seconds
-
-        # 如果启用且会话还在等待中，启动计时器
-        if enabled and self.status == SessionStatus.WAITING:
-
-            def timeout_handler():
-                debug_log(f"用户设定的超时已到: {self.session_id}")
-                # 设置超时标志
-                self.status = SessionStatus.TIMEOUT
-                self.status_message = "用户设定的会话超时"
-                # 设置完成事件，让 wait_for_feedback 结束等待
-                self.feedback_completed.set()
-
-            self.user_timeout_timer = threading.Timer(timeout_seconds, timeout_handler)
-            self.user_timeout_timer.start()
-            debug_log(f"已启动用户超时计时器: {timeout_seconds}秒")
-
     async def wait_for_feedback(self, timeout: int = 600) -> dict[str, Any]:
         """
         等待用户反馈，包含图片，支援超时自动清理
@@ -458,12 +417,6 @@ class WebFeedbackSession:
             completed = await loop.run_in_executor(None, wait_in_thread)
 
             if completed:
-                # 检查是否是用户设定的超时
-                if self.status == SessionStatus.TIMEOUT and self.user_timeout_enabled:
-                    debug_log(f"会话 {self.session_id} 因用户设定超时而结束")
-                    await self._cleanup_resources_on_timeout()
-                    raise TimeoutError("会话已因用户设定的超时而关闭")
-
                 debug_log(f"会话 {self.session_id} 收到用户反馈")
                 return {
                     "interactive_feedback": self.feedback_result or "",
@@ -537,24 +490,6 @@ class WebFeedbackSession:
                 debug_log(f"发送反馈确认失败: {e}")
 
         # 重构：不再自动关闭 WebSocket，保持连接以支援页面持久性
-
-    def add_user_message(self, message_data: dict[str, Any]) -> None:
-        """添加用户消息记录"""
-        import time
-
-        # 创建用户消息记录
-        user_message = {
-            "timestamp": int(time.time() * 1000),  # 毫秒时间戳
-            "content": message_data.get("content", ""),
-            "images": message_data.get("images", []),
-            "submission_method": message_data.get("submission_method", "manual"),
-            "type": "feedback",
-        }
-
-        self.user_messages.append(user_message)
-        debug_log(
-            f"会话 {self.session_id} 添加用户消息，总数: {len(self.user_messages)}"
-        )
 
     @staticmethod
     def process_images(
@@ -680,12 +615,6 @@ class WebFeedbackSession:
             if self.cleanup_timer:
                 self.cleanup_timer.cancel()
                 self.cleanup_timer = None
-                resources_cleaned += 1
-
-            # 1.5. 取消用户超时计时器
-            if self.user_timeout_timer:
-                self.user_timeout_timer.cancel()
-                self.user_timeout_timer = None
                 resources_cleaned += 1
 
             # 2. 关闭 WebSocket 连接

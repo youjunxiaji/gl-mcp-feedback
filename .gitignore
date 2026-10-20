@@ -41,15 +41,10 @@ Desktop.ini
 *.swo
 
 # Others
-.mcp_feedback_settings.json
 test_reports/
 
 # Temporary test files
 test_*.py
-
-# User configuration files
-ui_settings.json
-.config/
 
 # Backup files
 *.bak

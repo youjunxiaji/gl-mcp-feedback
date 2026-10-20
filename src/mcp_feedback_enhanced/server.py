@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP Feedback Enhanced 服务器主模块
+gl-mcp-feedback 服务器主模块
 
 此模块提供 MCP (Model Context Protocol) 的增强反馈收集功能，
 支持智能环境检测，自动使用 Web UI 界面。
@@ -9,7 +9,6 @@ MCP Feedback Enhanced 服务器主模块
 - MCP 工具实现
 - 界面选择（Web UI）
 - 环境检测 (SSH Remote, WSL, Local)
-- 国际化支持
 - 图片处理与上传
 - 项目目录管理
 

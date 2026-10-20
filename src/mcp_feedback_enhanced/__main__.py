@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MCP Interactive Feedback Enhanced - 主程序入口
-==============================================
+gl-mcp-feedback - 主程序入口
+============================
 
 此档案允许包透过 `python -m mcp_feedback_enhanced` 执行。
 
@@ -42,7 +42,7 @@ if sys.platform == "win32":
 def main():
     """主程序入口点"""
     parser = argparse.ArgumentParser(
-        description="MCP Feedback Enhanced Enhanced - 互动式反馈收集 MCP 服务器"
+        description="gl-mcp-feedback - 互动式反馈收集 MCP 服务器"
     )
 
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
@@ -334,7 +334,7 @@ def process_feedback(data):
 4. 渲染内容
 
 #### 连结和引用
-- 专案连结：[MCP Feedback Enhanced](https://github.com/example/mcp-feedback-enhanced)
+- 专案连结：[gl-mcp-feedback](https://github.com/youjunxiaji/gl-mcp-feedback)
 - 文档连结：[Marked.js 官方文档](https://marked.js.org/)
 
 > **重要提示：** 所有 HTML 输出都经过 DOMPurify 清理，确保安全性。
@@ -460,9 +460,9 @@ def show_version():
     """显示版本信息"""
     from . import __author__, __version__
 
-    print(f"MCP Feedback Enhanced Enhanced v{__version__}")
+    print(f"gl-mcp-feedback v{__version__}")
     print(f"作者: {__author__}")
-    print("GitHub: https://github.com/Minidoracat/mcp-feedback-enhanced")
+    print("GitHub: https://github.com/youjunxiaji/gl-mcp-feedback")
 
 
 if __name__ == "__main__":

@@ -7,12 +7,10 @@
 - 用户友好错误信息
 - 错误上下文记录
 - 解决方案建议
-- 国际化支持
 
 注意：此模组不会影响 JSON RPC 通信，所有错误处理都在应用层进行。
 """
 
-import os
 import time
 import traceback
 from enum import Enum
@@ -49,175 +47,39 @@ class ErrorHandler:
     """统一错误处理器"""
 
     # 错误类型到用户友好信息的映射
-    _ERROR_MESSAGES = {
-        ErrorType.NETWORK: {
-            "zh-TW": "网络连接出现问题",
-            "zh-CN": "网络连接出现问题",
-            "en": "Network connection issue",
-        },
-        ErrorType.FILE_IO: {
-            "zh-TW": "文件读写出现问题",
-            "zh-CN": "文件读写出现问题",
-            "en": "File read/write issue",
-        },
-        ErrorType.PROCESS: {
-            "zh-TW": "进程执行出现问题",
-            "zh-CN": "进程执行出现问题",
-            "en": "Process execution issue",
-        },
-        ErrorType.TIMEOUT: {
-            "zh-TW": "操作超时",
-            "zh-CN": "操作超时",
-            "en": "Operation timeout",
-        },
-        ErrorType.USER_CANCEL: {
-            "zh-TW": "用户取消了操作",
-            "zh-CN": "用户取消了操作",
-            "en": "User cancelled the operation",
-        },
-        ErrorType.SYSTEM: {
-            "zh-TW": "系统出现问题",
-            "zh-CN": "系统出现问题",
-            "en": "System issue",
-        },
-        ErrorType.PERMISSION: {
-            "zh-TW": "权限不足",
-            "zh-CN": "权限不足",
-            "en": "Insufficient permissions",
-        },
-        ErrorType.VALIDATION: {
-            "zh-TW": "数据验证失败",
-            "zh-CN": "数据验证失败",
-            "en": "Data validation failed",
-        },
-        ErrorType.DEPENDENCY: {
-            "zh-TW": "依赖组件出现问题",
-            "zh-CN": "依赖组件出现问题",
-            "en": "Dependency issue",
-        },
-        ErrorType.CONFIGURATION: {
-            "zh-TW": "配置出现问题",
-            "zh-CN": "配置出现问题",
-            "en": "Configuration issue",
-        },
+    _ERROR_MESSAGES: dict[ErrorType, str] = {
+        ErrorType.NETWORK: "网络连接出现问题",
+        ErrorType.FILE_IO: "文件读写出现问题",
+        ErrorType.PROCESS: "进程执行出现问题",
+        ErrorType.TIMEOUT: "操作超时",
+        ErrorType.USER_CANCEL: "用户取消了操作",
+        ErrorType.SYSTEM: "系统出现问题",
+        ErrorType.PERMISSION: "权限不足",
+        ErrorType.VALIDATION: "数据验证失败",
+        ErrorType.DEPENDENCY: "依赖组件出现问题",
+        ErrorType.CONFIGURATION: "配置出现问题",
     }
 
     # 错误解决建议
-    _ERROR_SOLUTIONS = {
-        ErrorType.NETWORK: {
-            "zh-TW": ["检查网络连接是否正常", "确认防火墙设置", "尝试重新启动应用程序"],
-            "zh-CN": ["检查网络连接是否正常", "确认防火墙设置", "尝试重新启动应用程序"],
-            "en": [
-                "Check network connection",
-                "Verify firewall settings",
-                "Try restarting the application",
-            ],
-        },
-        ErrorType.FILE_IO: {
-            "zh-TW": ["检查文件是否存在", "确认文件权限", "检查磁盘空间是否足够"],
-            "zh-CN": ["检查文件是否存在", "确认文件权限", "检查磁盘空间是否足够"],
-            "en": [
-                "Check if file exists",
-                "Verify file permissions",
-                "Check available disk space",
-            ],
-        },
-        ErrorType.PROCESS: {
-            "zh-TW": [
-                "检查进程是否正在运行",
-                "确认系统资源是否足够",
-                "尝试重新启动相关服务",
-            ],
-            "zh-CN": [
-                "检查进程是否正在运行",
-                "确认系统资源是否足够",
-                "尝试重新启动相关服务",
-            ],
-            "en": [
-                "Check if process is running",
-                "Verify system resources",
-                "Try restarting related services",
-            ],
-        },
-        ErrorType.TIMEOUT: {
-            "zh-TW": ["增加超时时间设置", "检查网络延迟", "稍后重试操作"],
-            "zh-CN": ["增加超时时间设置", "检查网络延迟", "稍后重试操作"],
-            "en": [
-                "Increase timeout settings",
-                "Check network latency",
-                "Retry the operation later",
-            ],
-        },
-        ErrorType.PERMISSION: {
-            "zh-TW": ["以管理员身份运行", "检查文件/目录权限", "联系系统管理员"],
-            "zh-CN": ["以管理员身份运行", "检查文件/目录权限", "联系系统管理员"],
-            "en": [
-                "Run as administrator",
-                "Check file/directory permissions",
-                "Contact system administrator",
-            ],
-        },
+    _ERROR_SOLUTIONS: dict[ErrorType, list[str]] = {
+        ErrorType.NETWORK: [
+            "检查网络连接是否正常",
+            "确认防火墙设置",
+            "尝试重新启动应用程序",
+        ],
+        ErrorType.FILE_IO: ["检查文件是否存在", "确认文件权限", "检查磁盘空间是否足够"],
+        ErrorType.PROCESS: [
+            "检查进程是否正在运行",
+            "确认系统资源是否足够",
+            "尝试重新启动相关服务",
+        ],
+        ErrorType.TIMEOUT: ["增加超时时间设置", "检查网络延迟", "稍后重试操作"],
+        ErrorType.PERMISSION: [
+            "以管理员身份运行",
+            "检查文件/目录权限",
+            "联系系统管理员",
+        ],
     }
-
-    @staticmethod
-    def get_current_language() -> str:
-        """获取当前语言设置"""
-        try:
-            # 尝试从 i18n 模组获取当前语言
-            from ..i18n import get_i18n_manager
-
-            return get_i18n_manager().get_current_language()
-        except Exception:
-            # 回退到环境变数或默认语言
-            return os.getenv("MCP_LANGUAGE", "zh-TW")
-
-    @staticmethod
-    def get_i18n_error_message(error_type: ErrorType) -> str:
-        """从国际化系统获取错误信息"""
-        try:
-            from ..i18n import get_i18n_manager
-
-            i18n = get_i18n_manager()
-            key = f"errors.types.{error_type.value}"
-            message = i18n.t(key)
-            # 如果返回的是键本身，说明没有找到翻译，使用回退
-            if message == key:
-                raise Exception("Translation not found")
-            return message
-        except Exception:
-            # 回退到内建映射
-            language = ErrorHandler.get_current_language()
-            error_messages = ErrorHandler._ERROR_MESSAGES.get(error_type, {})
-            return error_messages.get(
-                language, error_messages.get("zh-TW", "发生未知错误")
-            )
-
-    @staticmethod
-    def get_i18n_error_solutions(error_type: ErrorType) -> list[str]:
-        """从国际化系统获取错误解决方案"""
-        try:
-            from ..i18n import get_i18n_manager
-
-            i18n = get_i18n_manager()
-            key = f"errors.solutions.{error_type.value}"
-            i18n_result = i18n.t(key)
-
-            # 修复类型推断问题 - 使用 Any 类型并明确检查
-            from typing import Any
-
-            result: Any = i18n_result
-
-            # 检查是否为列表类型且非空
-            if isinstance(result, list) and len(result) > 0:
-                return result
-
-            # 如果不是列表或为空，使用回退
-            raise Exception("Solutions not found or invalid format")
-        except Exception:
-            # 回退到内建映射
-            language = ErrorHandler.get_current_language()
-            solutions_dict = ErrorHandler._ERROR_SOLUTIONS.get(error_type, {})
-            return solutions_dict.get(language, solutions_dict.get("zh-TW", []))
 
     @staticmethod
     def classify_error(error: Exception) -> ErrorType:
@@ -314,11 +176,8 @@ class ErrorHandler:
         if error_type is None:
             error_type = ErrorHandler.classify_error(error)
 
-        # 获取当前语言
-        language = ErrorHandler.get_current_language()
-
-        # 获取用户友好的错误信息（优先使用国际化系统）
-        user_message = ErrorHandler.get_i18n_error_message(error_type)
+        # 获取用户友好的错误信息
+        user_message = ErrorHandler._ERROR_MESSAGES.get(error_type, "发生未知错误")
 
         # 构建完整的错误信息
         parts = [f"❌ {user_message}"]
@@ -326,23 +185,14 @@ class ErrorHandler:
         # 添加上下文信息
         if context:
             if context.get("operation"):
-                if language == "en":
-                    parts.append(f"Operation: {context['operation']}")
-                else:
-                    parts.append(f"操作：{context['operation']}")
+                parts.append(f"操作：{context['operation']}")
 
             if context.get("file_path"):
-                if language == "en":
-                    parts.append(f"File: {context['file_path']}")
-                else:
-                    parts.append(f"文件：{context['file_path']}")
+                parts.append(f"文件：{context['file_path']}")
 
         # 添加技术细节（如果需要）
         if include_technical:
-            if language == "en":
-                parts.append(f"Technical details: {type(error).__name__}: {error!s}")
-            else:
-                parts.append(f"技术细节：{type(error).__name__}: {error!s}")
+            parts.append(f"技术细节：{type(error).__name__}: {error!s}")
 
         return "\n".join(parts)
 
@@ -357,7 +207,7 @@ class ErrorHandler:
         Returns:
             List[str]: 解决建议列表
         """
-        return ErrorHandler.get_i18n_error_solutions(error_type)
+        return list(ErrorHandler._ERROR_SOLUTIONS.get(error_type, []))
 
     @staticmethod
     def log_error_with_context(

@@ -7,7 +7,6 @@ Web UI 主要管理类
 """
 
 import asyncio
-import concurrent.futures
 import os
 import threading
 import time
@@ -110,7 +109,7 @@ class WebUIManager:
             self.port = PortManager.find_free_port_enhanced(
                 preferred_port=preferred_port, auto_cleanup=auto_cleanup, host=self.host
             )
-        self.app = FastAPI(title="MCP Feedback Enhanced")
+        self.app = FastAPI(title="gl-mcp-feedback")
 
         # 设置压缩和缓存中间件
         self._setup_compression_middleware()
@@ -146,74 +145,17 @@ class WebUIManager:
         self.server_thread: threading.Thread | None = None
         self.server_process = None
 
-        # 初始化标记，用于追踪异步初始化状态
-        self._initialization_complete = False
-        self._initialization_lock = threading.Lock()
-
-        # 同步初始化基本组件
+        # 初始化基本组件
         self._init_basic_components()
 
         debug_log(f"WebUIManager 基本初始化完成，将在 {self.host}:{self.port} 启动")
         debug_log("反馈模式: web")
 
     def _init_basic_components(self):
-        """同步初始化基本组件"""
-        # 基本组件初始化（必须同步）
-        # 移除 i18n 管理器，因为翻译已移至前端
-
-        # 设置静态文件和模板（必须同步）
+        """初始化基本组件：静态文件、模板、路由"""
         self._setup_static_files()
         self._setup_templates()
-
-        # 设置路由（必须同步）
         setup_routes(self)
-
-    async def _init_async_components(self):
-        """异步初始化组件（并行执行）"""
-        with self._initialization_lock:
-            if self._initialization_complete:
-                return
-
-        debug_log("开始并行初始化组件...")
-        start_time = time.time()
-
-        # 创建并行任务
-        tasks = []
-
-        # 任务：I18N 预加载（如果需要）
-        tasks.append(self._preload_i18n_async())
-
-        # 并行执行所有任务
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # 检查结果
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    debug_log(f"并行初始化任务 {i} 失败: {result}")
-
-        with self._initialization_lock:
-            self._initialization_complete = True
-
-        elapsed = time.time() - start_time
-        debug_log(f"并行初始化完成，耗时: {elapsed:.2f}秒")
-
-    async def _preload_i18n_async(self):
-        """异步预加载 I18N 资源"""
-
-        def preload_i18n():
-            try:
-                # I18N 在前端处理，这里只记录预加载完成
-                debug_log("I18N 资源预加载完成（前端处理）")
-                return True
-            except Exception as e:
-                debug_log(f"I18N 资源预加载失败: {e}")
-                return False
-
-        # 在线程池中执行
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            await loop.run_in_executor(executor, preload_i18n)
 
     def _setup_compression_middleware(self):
         """设置压缩和缓存中间件"""
@@ -625,7 +567,7 @@ class WebUIManager:
             debug_log(f"广播消息失败: {e}")
 
     def start_server(self):
-        """启动 Web 服务器（优化版本，支援并行初始化）"""
+        """启动 Web 服务器"""
 
         def run_server_with_retry():
             max_retries = 5
@@ -687,17 +629,7 @@ class WebUIManager:
                     server_instance = uvicorn.Server(config)
 
                     # 创建事件循环并启动服务器
-                    async def serve_with_async_init(server=server_instance):
-                        # 在服务器启动的同时进行异步初始化
-                        server_task = asyncio.create_task(server.serve())
-                        init_task = asyncio.create_task(self._init_async_components())
-
-                        # 等待两个任务完成
-                        await asyncio.gather(
-                            server_task, init_task, return_exceptions=True
-                        )
-
-                    asyncio.run(serve_with_async_init())
+                    asyncio.run(server_instance.serve())
 
                     # 成功启动，显示最终使用的端口
                     if self.port != original_port:
@@ -884,17 +816,6 @@ class WebUIManager:
             if not self.current_session or not self.current_session.websocket:
                 debug_log("快速检测：没有当前会话或 WebSocket 连接")
                 return False
-
-            # 检查心跳（如果有心跳记录）
-            last_heartbeat = getattr(self.current_session, "last_heartbeat", None)
-            if last_heartbeat:
-                heartbeat_age = time.time() - last_heartbeat
-                if heartbeat_age > 10:  # 超过 10 秒没有心跳
-                    debug_log(f"快速检测：心跳超时 ({heartbeat_age:.1f}秒)")
-                    # 可能连接已死，需要进一步检测
-                else:
-                    debug_log(f"快速检测：心跳正常 ({heartbeat_age:.1f}秒前)")
-                    return True  # 心跳正常，认为连接活跃
 
             # 准确检测层：实际测试连接是否活着
             try:
@@ -1266,7 +1187,7 @@ if __name__ == "__main__":
 
 ## 🎯 任务完成摘要
 
-我已成功为 **mcp-feedback-enhanced** 专案实现了 Markdown 语法显示功能！
+我已成功为 **gl-mcp-feedback** 专案实现了 Markdown 语法显示功能！
 
 ### ✅ 完成的功能
 

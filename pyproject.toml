@@ -63,7 +63,6 @@ dev = [
     "pytest-timeout>=2.1.0",
     "twine>=6.1.0",
     "ruff>=0.11.0",
-    "pre-commit>=4.0.0",
     "pillow>=11.2.1",
     "pyright>=1.1.414",
 ]
@@ -202,14 +201,6 @@ mccabe.max-complexity = 10
     "F401",    # 允許未使用的導入
 ]
 
-# 腳本檔案的特殊規則
-"scripts/**/*.py" = [
-    "T201",    # 腳本中允許 print
-    "S602",    # 腳本中允許 shell 調用（腳本環境相對安全）
-    "S603",    # 腳本中允許 subprocess 調用
-    "S607",    # 腳本中允許部分路徑執行
-]
-
 # Web 模組的特殊規則（需要更嚴格的安全檢查）
 "src/mcp_feedback_enhanced/web/**/*.py" = [
     "S104",    # 允許綁定 127.0.0.1（本地開發安全）
@@ -242,3 +233,9 @@ pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "standard"
+
+# ===== Pytest 配置 =====
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+timeout = 60

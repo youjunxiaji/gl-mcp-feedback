@@ -2,7 +2,7 @@
 统一的消息代码定义
 
 这个模组定义了所有后端使用的消息代码常量。
-前端会根据这些代码显示对应的本地化消息。
+前端根据这些代码识别通知类型。
 
 使用方式：
     from ..constants import MessageCodes, get_message_code
@@ -29,7 +29,6 @@ class MessageCodes:
     SYSTEM_MEMORY_PRESSURE = "system.memoryPressure"
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_PROCESS_KILLED = "system.processKilled"
-    SYSTEM_HEARTBEAT_STOPPED = "system.heartbeatStopped"
     SYSTEM_CONNECTION_REPLACED = "system.connectionReplaced"
 
     # ========== 会话相关 ==========
@@ -40,9 +39,6 @@ class MessageCodes:
     SESSION_TIMEOUT = "session.timeout"
     SESSION_CLEANED = "session.cleaned"
     SESSION_FEEDBACK_SUBMITTED = "session.feedbackSubmitted"
-    SESSION_USER_MESSAGE_RECORDED = "session.userMessageRecorded"
-    SESSION_HISTORY_SAVED = "session.historySaved"
-    SESSION_HISTORY_LOADED = "session.historyLoaded"
     SESSION_MANUAL_CLEANUP = "session.manualCleanup"
     SESSION_ERROR_CLEANUP = "session.errorCleanup"
 
@@ -54,18 +50,6 @@ class MessageCodes:
     QUEUE_MESSAGE_NOT_PENDING = "queue.messageNotPending"
     QUEUE_MESSAGE_EMPTY = "queue.messageEmpty"
 
-    # ========== 设定相关 ==========
-    SETTINGS_SAVED = "settingsAPI.saved"
-    SETTINGS_LOADED = "settingsAPI.loaded"
-    SETTINGS_CLEARED = "settingsAPI.cleared"
-    SETTINGS_SAVE_FAILED = "settingsAPI.saveFailed"
-    SETTINGS_LOAD_FAILED = "settingsAPI.loadFailed"
-    SETTINGS_CLEAR_FAILED = "settingsAPI.clearFailed"
-    SETTINGS_SET_FAILED = "settingsAPI.setFailed"
-    SETTINGS_INVALID_VALUE = "settingsAPI.invalidValue"
-    SETTINGS_LOG_LEVEL_UPDATED = "settingsAPI.logLevelUpdated"
-    SETTINGS_INVALID_LOG_LEVEL = "settingsAPI.invalidLogLevel"
-
     # ========== 错误相关 ==========
     ERROR_GENERIC = "error.generic"
     ERROR_NETWORK = "error.network"
@@ -73,9 +57,7 @@ class MessageCodes:
     ERROR_TIMEOUT = "error.timeout"
     ERROR_INVALID_INPUT = "error.invalidInput"
     ERROR_OPERATION_FAILED = "error.operationFailed"
-    ERROR_USER_MESSAGE_FAILED = "error.userMessageFailed"
     ERROR_GET_SESSIONS_FAILED = "error.getSessionsFailed"
-    ERROR_GET_LOG_LEVEL_FAILED = "error.getLogLevelFailed"
     ERROR_RESOURCE_CLEANUP = "error.resourceCleanup"
     ERROR_PROCESSING = "error.processing"
 
@@ -110,26 +92,13 @@ LEGACY_KEY_MAPPING = {
     "SHUTDOWN_CLEANUP": "SYSTEM_SHUTDOWN",
     "PROCESS_KILLED": "SYSTEM_PROCESS_KILLED",
     "RESOURCE_CLEANUP_ERROR": "ERROR_RESOURCE_CLEANUP",
-    "HEARTBEAT_STOPPED": "SYSTEM_HEARTBEAT_STOPPED",
     "PROCESSING_ERROR": "ERROR_PROCESSING",
     "WEBSOCKET_READY": "SYSTEM_WEBSOCKET_READY",
     # main_routes.py 的旧 key
     "no_active_session": "SESSION_NO_ACTIVE",
     "websocket_connected": "SYSTEM_CONNECTION_ESTABLISHED",
     "new_session_created": "SESSION_CREATED",
-    "user_message_recorded": "SESSION_USER_MESSAGE_RECORDED",
-    "add_user_message_failed": "ERROR_USER_MESSAGE_FAILED",
-    "settings_saved": "SETTINGS_SAVED",
-    "save_failed": "SETTINGS_SAVE_FAILED",
-    "load_failed": "SETTINGS_LOAD_FAILED",
-    "settings_cleared": "SETTINGS_CLEARED",
-    "clear_failed": "SETTINGS_CLEAR_FAILED",
-    "session_history_saved": "SESSION_HISTORY_SAVED",
     "get_sessions_failed": "ERROR_GET_SESSIONS_FAILED",
-    "get_log_level_failed": "ERROR_GET_LOG_LEVEL_FAILED",
-    "invalid_log_level": "SETTINGS_INVALID_LOG_LEVEL",
-    "log_level_updated": "SETTINGS_LOG_LEVEL_UPDATED",
-    "set_failed": "SETTINGS_SET_FAILED",
     "connection_replaced": "SYSTEM_CONNECTION_REPLACED",
 }
 

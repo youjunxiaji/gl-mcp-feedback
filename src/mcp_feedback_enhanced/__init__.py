@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MCP Interactive Feedback Enhanced
-==================================
+gl-mcp-feedback
+===============
 
 互动式用户反馈 MCP 服务器，提供 AI 辅助开发中的反馈收集功能。
 

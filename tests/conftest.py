@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 # 使用正確的模組導入，不手動修改 sys.path
-from mcp_feedback_enhanced.i18n import get_i18n_manager
 from mcp_feedback_enhanced.web.main import WebUIManager
 
 
@@ -87,12 +86,6 @@ def web_ui_manager() -> Generator[WebUIManager, None, None]:
         if manager and manager.server_thread and manager.server_thread.is_alive():
             # 這裡可以添加服務器停止邏輯
             pass
-
-
-@pytest.fixture
-def i18n_manager():
-    """創建 I18N 管理器 fixture"""
-    return get_i18n_manager()
 
 
 @pytest.fixture

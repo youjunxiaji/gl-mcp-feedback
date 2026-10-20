@@ -54,11 +54,6 @@ def debug_log(message: Any, prefix: str = "DEBUG") -> None:
         pass
 
 
-def i18n_debug_log(message: Any) -> None:
-    """国际化模组专用的调试日志"""
-    debug_log(message, "I18N")
-
-
 def server_debug_log(message: Any) -> None:
     """服务器模组专用的调试日志"""
     debug_log(message, "SERVER")
