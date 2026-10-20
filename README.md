@@ -66,52 +66,35 @@
 
 ### Cursor 钩子
 
-仓库里的 `hooks/gl-feedback.sh` 是一个 Cursor 钩子脚本，管三件事：
+钩子是可选的。它是一个 Python 脚本（仓库里的 `hooks/gl-feedback.py`，随包发布），管三件事：
 
 - 给每次 `interactive_feedback` 填上 Cursor 的对话 ID，让每个对话用自己的页面
 - AI 调用完任意一次工具时，把用户排队的消息取走，附在那次工具结果后面交给 AI；消息带图片时，图片存成本地文件，路径写在文字里，AI 用 Read 查看；对话的房间销毁时这些图片一并删除，没被删掉的（比如服务异常退出）24 小时后清理
 - 对话正常结束时（`stop`），通知服务销毁这个对话的房间，页面随之关闭
 
-没装钩子，所有对话共用一个页面，排队的消息要等 AI 下次调用 `interactive_feedback` 才送达。脚本需要 bash、jq 和 curl，在用户级的 `~/.cursor/hooks.json` 里登记（`/path/to/gl-mcp-feedback` 换成仓库的位置）：
+没装钩子，所有对话共用一个页面，排队的消息要等 AI 下次调用 `interactive_feedback` 才送达。
 
-```json
-{
-    "version": 1,
-    "hooks": {
-        "preToolUse": [
-            {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh pre",
-                "matcher": ".*interactive_feedback.*",
-                "timeout": 10
-            }
-        ],
-        "postToolUse": [
-            {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh post",
-                "timeout": 10
-            }
-        ],
-        "postToolUseFailure": [
-            {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh post",
-                "timeout": 10
-            }
-        ],
-        "sessionStart": [
-            {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh log",
-                "timeout": 10
-            }
-        ],
-        "stop": [
-            {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh stop",
-                "timeout": 10
-            }
-        ]
-    }
-}
+#### 安装
+
+先确认 MCP 已经是新版：钩子会给 `interactive_feedback` 填 `conversation_id`，旧版服务端不认这个参数、会拒绝调用，所以先在 Cursor 里把这个 MCP 关掉再打开（`uvx` 会拉最新版）。然后执行一条命令：
+
+```bash
+uvx gl-mcp-feedback@latest hooks install
 ```
+
+它依次做三件事：
+
+1. 把脚本复制到用户目录下的 `.cursor/hooks/gl-feedback.py`（macOS / Linux 是 `~/.cursor`，Windows 是 `%USERPROFILE%\.cursor`）
+2. 用将要登记的命令试跑一次脚本，确认 uv 和 Python 都能用；试跑不通就停下，不改配置
+3. 把五项钩子合并登记进同一个目录的 `hooks.json`，别的钩子原样保留，改动前先把原文件备份成 `hooks.json.bak`
+
+登记的命令是 `uv run --quiet --no-project --script ./hooks/gl-feedback.py <模式>`，脚本路径是相对的（用户级钩子从 `.cursor` 目录运行），每个人登记的内容都一样。重复执行不会重复登记；已经登记了 `gl-feedback.py` 的条目（比如你自己指向仓库脚本的）默认不动，加 `--force` 才改成新位置。升级之后再执行一次，脚本就更新到新版。从源码运行时，在仓库里执行 `uv run gl-mcp-feedback hooks install`。卸载：`uvx gl-mcp-feedback@latest hooks uninstall`。
+
+脚本只依赖 uv（用 `uvx` 启动 MCP 的话已经有了），macOS、Linux 和 Windows 通用。
+
+Windows 上同样用这条命令，不过作者没有 Windows 环境，没有在真机上验证过。Cursor 在 Windows 上通过 PowerShell 执行钩子命令，官方论坛确认过一个问题：Git Bash 在启动进程的祖先里时（比如从 Git Bash 里启动 Cursor），Cursor 会把 PowerShell 写的命令交给 bash，所有钩子都失败，`interactive_feedback` 也会被拦住（`Hook blocked`）。从开始菜单或 PowerShell 启动就没有这个问题。遇到这种情况或别的问题，执行 `hooks uninstall` 卸掉钩子，MCP 照常能用。
+
+#### 各项钩子做什么
 
 `pre` 给所有项目的对话填对话 ID。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
 
@@ -140,11 +123,13 @@ gl-mcp-feedback 交互规范：
 
 **页面没有收到新的反馈**：多半是 WebSocket 断了，刷新浏览器页面即可。
 
-**排队的消息要等 AI 下次提问才送达**：钩子没生效。确认 `~/.cursor/hooks.json` 里登记了 `post`，脚本有可执行权限（`chmod +x`），jq 和 curl 能找到。
+**排队的消息要等 AI 下次提问才送达**：钩子没生效。重新执行 `uvx gl-mcp-feedback@latest hooks install`，它会试跑脚本，哪里不通会直接告诉你；也可以确认 `~/.cursor/hooks.json` 里登记了 `post`，以及 Cursor 的 PATH 里有 `uv`。
 
 **AI 等后台命令的时候发的消息，要等它等完才读到**：钩子只在工具调用结束时送达。AI 用 AwaitShell 等后台命令期间，Cursor 每秒会触发几次内部轮询，这些触发送出去的内容会被丢弃，所以钩子跳过它们，消息在等待结束后的第一次工具调用结束时送达。
 
-**对话结束了，页面没有自己关掉**：确认 `~/.cursor/hooks.json` 里 `stop` 登记的命令是 `... gl-feedback.sh stop`（不是 `log`）。房间销毁后页面会显示「对话已结束」，并在 3 秒后尝试关闭自己；浏览器只允许脚本关闭自己打开的标签页，从房间列表点进去的页面可能关不掉，手动关闭即可。
+**对话结束了，页面没有自己关掉**：确认 `~/.cursor/hooks.json` 里 `stop` 登记的命令是 `... gl-feedback.py stop`（不是 `log`）。房间销毁后页面会显示「对话已结束」，并在 3 秒后尝试关闭自己；浏览器只允许脚本关闭自己打开的标签页，从房间列表点进去的页面可能关不掉，手动关闭即可。
+
+**`interactive_feedback` 被拦住（提示 `Hook blocked` 或被拒绝）**：钩子脚本跑不起来时，Cursor 会拒绝 `preToolUse` 钩子管着的调用，比如 uv 出错，或 Windows 上被 Git Bash 搅乱。执行 `uvx gl-mcp-feedback@latest hooks uninstall` 卸掉钩子，MCP 照常能用，排除原因后再装。
 
 **AI 没有调用出 MCP**：确认 MCP 工具状态为绿灯，反复开关一次 MCP，等几秒让它重新连接。
 

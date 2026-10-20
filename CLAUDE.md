@@ -27,9 +27,10 @@
 - `src/mcp_feedback_enhanced/web/models/message_queue.py` — 用户消息队列（`MessageQueue`，AI 没在等回复时用户发的消息先排队，两种送达途径）
 - `src/mcp_feedback_enhanced/web/models/queue_files.py` — 钩子用的本地文件（`QueueMarker` 标记文件、`RoomRegistration` 登记文件、图片文件）
 - `src/mcp_feedback_enhanced/web/utils/` — 工具函数（浏览器、网络、端口、压缩配置）
+- `src/mcp_feedback_enhanced/hook_installer.py` — `gl-mcp-feedback hooks install / uninstall`（`HookInstaller`：复制钩子脚本、试跑、合并登记进 `~/.cursor/hooks.json`），见「Cursor 钩子」
 
 ### 其他
-- `hooks/gl-feedback.sh` — Cursor 钩子脚本（`pre` 填对话标识，`post` 送达排队消息，`stop` 报告对话回合结束，`log` 记录会话事件），见「Cursor 钩子」
+- `hooks/gl-feedback.py` — Cursor 钩子脚本（Python，只用标准库，由 `uv run --script` 运行；`pre` 填对话标识，`post` 送达排队消息，`stop` 报告对话回合结束，`log` 记录会话事件），见「Cursor 钩子」
 - `todo.md` — 待办（只列没做的事，做完就删）
 - `release.sh` + `.github/workflows/publish.yml` — 发布到 PyPI：脚本改版本号（`pyproject.toml`、`__init__.py`）、`uv lock`、提交、打 `v*` tag 并推送，工作流由 `v*` tag 触发
 
@@ -69,9 +70,9 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **分流规则**：WebSocket 收到 `submit_feedback` 时，`session.is_awaiting_feedback()`（状态为 `WAITING` 且 `feedback_completed` 未置位）为真，消息作为对当前提问的回复（`session.submit_feedback`）；否则交给 `Room.enqueue_user_message()` 进房间的队列。`/api/all-sessions` 的每个会话带 `awaiting_feedback`，前端用同一个口径决定输入框状态
 - **`MessageQueue`**：只放内存，服务重启即清空；线程安全（Web 线程写入、修改、撤回，随提问送达在 MCP 线程取走，钩子的请求在 Web 线程里取走）。排队中的消息最多 3 条（`MAX_PENDING_MESSAGES`，已送达的记录不占名额），满额抛 `QueueFullError`，前端收到 `queue.full` 通知。排队消息可以改文字（`update_text`，纯文字消息不能改成空）和撤回（`cancel`），已被取走的抛 `MessageNotPendingError`。取走有两个方法：`deliver_with_question(session_id)`（随提问）和 `deliver_with_tool_call()`（随工具调用），各自在锁里一次取走全部排队中的消息并标上 `DeliveryChannel`。排队中的消息数可能变了（加入、撤回、取走）之后调用 `on_pending_changed`，在锁之外执行、出错只记日志，房间用它同步标记文件。队列由房间持有（`Room.message_queue`），每个对话一个；没有对话标识的调用共用 `default` 房间的队列，不区分项目目录
 - **随提问送达（AI 再次调用时）**：`launch_web_feedback_ui()` 在 `Room.create_session()` 之后、启动服务和打开浏览器之前调用 `Room.deliver_queued_messages()`。房间的队列非空就取走所有排队消息，新会话 `close_with_queued_messages()`（状态 `WAITING` → `ACTIVE`、等待事件置位），已打开的页面收到 `silent: true` 的 `session_updated` 静默刷新，调用立刻返回，不等用户；队列为空则照常等用户回复
-- **随工具调用送达（钩子）**：`hooks/gl-feedback.sh post` 挂在所有工具的 `postToolUse` 和 `postToolUseFailure` 上（工具调用失败时 `additional_context` 同样会作为 `<system_reminder>` 附在失败结果后面，已实测），每次工具调用结束都会触发，所以热路径只做一件事：从输入开头取 `conversation_id`，看标记文件 `$GL_FEEDBACK_HOME/queue/<对话标识>` 在不在，不在就直接返回（几毫秒）。
+- **随工具调用送达（钩子）**：`hooks/gl-feedback.py post` 挂在所有工具的 `postToolUse` 和 `postToolUseFailure` 上（工具调用失败时 `additional_context` 同样会作为 `<system_reminder>` 附在失败结果后面，已实测），每次工具调用结束都会触发，所以热路径只做一件事：从输入开头取 `conversation_id`，看标记文件 `$GL_FEEDBACK_HOME/queue/<对话标识>` 在不在，不在就直接返回（Cursor 的钩子日志里实测 `uv run` 加脚本 31 到 71 毫秒，大头是 uv 和 Python 的启动；真要联网时才导入 `http.client`）。
     - 标记文件（`QueueMarker`，`queue_files.py`）：房间的队列里有排队中的消息时存在，没有时不存在；两行内容，房间的地址（`WebUIManager.get_hook_room_url()`，监听 `0.0.0.0` 时用 `127.0.0.1`）和写它的服务进程号。写入是原子的（临时文件加 `replace`），`sync()` 在自己的锁里重新读排队数量，几个线程同时同步时文件最终和队列一致；写入失败只记日志，不影响队列。`default` 房间没有对话标识，钩子找不到它，不写标记；房间销毁或服务停止时（`Room.release_files()`）删掉标记。钩子发现进程号对应的进程已经不在，就把这个过期的标记删掉
-    - 取走接口：钩子用 `curl --noproxy '*'` 调标记里的地址加 `/api/queue/take`（连接超时 1 秒、总超时 5 秒）。接口调 `Room.deliver_for_tool_call()` 取走全部排队消息，有消息返回 `{"additional_context": "..."}`，没有返回 `{}`；钩子只在收到 HTTP 成功且以 `{` 开头的回复时原样交给 Cursor，Cursor 把 `additional_context` 附在那次工具结果后面给 AI，其余情况输出 `{}`
+    - 取走接口：钩子用 `http.client` 直连标记里的地址加 `/api/queue/take`（只认 `http` 地址，不走代理，连接超时 1 秒、总超时 5 秒）。接口调 `Room.deliver_for_tool_call()` 取走全部排队消息，有消息返回 `{"additional_context": "..."}`，没有返回 `{}`；钩子只在收到 HTTP 2xx 且内容是 JSON 对象时把它交给 Cursor，Cursor 把 `additional_context` 附在那次工具结果后面给 AI，其余情况输出 `{}`
     - 跳过内部轮询：AwaitShell 等后台任务（带 `shell_id`）时，Cursor 每秒几次对终端输出文件（`.../terminals/<编号>.txt`）发起内部 `Read`，每次都触发 `postToolUse`（同一个 `tool_use_id`），这些事件返回的 `additional_context` 会被丢弃，这时取走消息就丢了。钩子认出工具是 `Read`、读的是 `/terminals/*.txt` 的事件就不取（`is_terminal_poll()`，只看输入开头 4096 个字符），消息留给下一次真正的工具调用；不带 `shell_id` 的 AwaitShell 是纯等待，不产生钩子事件，等待期间发的消息在之后第一次工具调用结束时送达。这是按 Cursor 3.25.9 实测的行为做的判断，没有官方说明
     - 图片：钩子送达只能传文字，图片先存成 `$GL_FEEDBACK_HOME/images/<消息标识>/<序号>.<扩展名>`（按文件头判断格式），路径写进说明里让 AI 用 Read 查看。房间销毁时（`Room.close()`）删掉这个房间送达过的图片目录：房间自己记着存过哪些（`_image_directories`），`delete_message_images()` 只删 `images/` 下的一级目录；服务停止时不删，对话可能还在继续。其余的（服务异常退出留下的、别的运行留下的）超过 24 小时的在下一次存图片时清掉（`IMAGE_RETENTION_SECONDS`）
     - 页面通知：消息已经标记送达之后，说明文字先备好，再通知页面（WebSocket `queue_delivered`，带 `count`），通知限时 2 秒（`Room.NOTIFY_TIMEOUT_SECONDS`），页面连接异常不会拖慢钩子的响应、也不会让取走的消息丢失
@@ -88,7 +89,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **地址**：`/c/{room_id}/` 是对话的页面，页面用到的 `/api/*` 和 `/ws` 都在这个前缀下；`/` 是房间列表，`/api/rooms` 是它的数据。房间不存在、或房间里已经没有会话时，`/c/{room_id}/` 跳回 `/`
 - **打开浏览器**：`WebUIManager.smart_open_browser(room, url)`：房间的页面还连着（`Room.check_active_tab()` 发 ping 探测）就只发刷新通知，否则新开标签页；每个对话第一次提问会新开自己的页面。页面是新连上来的，补发一次 `session_updated`（`Room.pending_session_update`）
 - **清理**：内存监控触发的清理（过期、内存压力）逐个房间执行（`Room.cleanup_expired_sessions()`、`Room.cleanup_sessions_by_memory_pressure()`），只清房间里的会话，房间本身按下面的规则销毁
-- **对话结束与销毁**：Cursor 的 `stop` 钩子在每个回合结束时触发，`hooks/gl-feedback.sh stop` 把 `status`（`completed`、`aborted`、`error`）报告给房间（`POST /c/{room_id}/api/turn-ended`）。`Room.end_turn()` 记下结束标记（`ended_at`、`ended_status`），`Room.due_for_destroy()` 判断房间是否到期：
+- **对话结束与销毁**：Cursor 的 `stop` 钩子在每个回合结束时触发，`hooks/gl-feedback.py stop` 把 `status`（`completed`、`aborted`、`error`）报告给房间（`POST /c/{room_id}/api/turn-ended`）。`Room.end_turn()` 记下结束标记（`ended_at`、`ended_status`），`Room.due_for_destroy()` 判断房间是否到期：
     - 登记文件：有对话标识的房间创建时写下 `$GL_FEEDBACK_HOME/rooms/<对话标识>`（`RoomRegistration`），格式同标记文件（房间的地址、服务进程号），房间存在期间一直在，`stop` 钩子靠它找到服务；服务启动完成后按实际端口重写一遍；`default` 房间没有对话标识，不登记
     - 报告被忽略：AI 的调用还在等回复（`is_awaiting_feedback()`）时对话明显还在继续，`end_turn()` 返回 `False`，接口响应 `{"ended": false}`；默认房间、已销毁的房间同样忽略，房间不存在返回 404
     - `completed`：房间标成已结束，`ENDED_DESTROY_DELAY_SECONDS`（3 秒）后销毁；这期间对话再提问（`Room.create_session()`），或者 AI 又调用了工具、钩子取走了排队的消息（`Room.deliver_for_tool_call()`），结束标记撤销，房间继续用。这时还有排队中的消息就不销毁，留着等对话下次提问或调用工具时送达
@@ -100,16 +101,22 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
     - 房间列表页：已结束的房间显示「已结束」，房间销毁后下一次轮询就看不到它
 
 ### Cursor 钩子
-`hooks/gl-feedback.sh` 是本项目的 Cursor 钩子，一个脚本四种模式，在用户级 `~/.cursor/hooks.json` 里登记（写法见 README）。只依赖 bash、jq 和 curl；任何异常都放行：输出合法 JSON、退出码 0（`preToolUse` 输出非法 JSON 会拦住调用）。
+`hooks/gl-feedback.py` 是本项目的 Cursor 钩子，一个脚本四种模式。只用 Python 标准库，由 `uv run --script` 运行（脚本头是 PEP 723 内联元数据，`requires-python` 和项目一致）；任何异常都放行：输出合法 JSON、退出码 0（`preToolUse` 输出非法 JSON 会拦住调用）。输出只含 ASCII（非 ASCII 字符写成 `\uXXXX` 转义），输入按 `utf-8-sig` 解码：Windows 上 PowerShell 按控制台代码页转码钩子的输出，传进来的 JSON 开头可能带 UTF-8 BOM。
+- 安装：`uvx gl-mcp-feedback@latest hooks install`（`hook_installer.py` 的 `HookInstaller`），README 只写这一种装法。`pyproject.toml` 的 `force-include` 把仓库的 `hooks/gl-feedback.py` 放进 wheel 的 `mcp_feedback_enhanced/hooks/`，安装时读这份（从源码运行时回退用仓库根目录的那份）复制到 `~/.cursor/hooks/gl-feedback.py`，再把五项登记（`HOOK_SPECS`）合并进用户级 `~/.cursor/hooks.json`。登记的命令是 `uv run --quiet --no-project --script ./hooks/gl-feedback.py <模式>`（`LAUNCHER`）：用户级钩子里的相对路径从 `~/.cursor/` 算起（带参数的相对路径在 Cursor 里实测可用），所以所有人登记的内容一样；命令只有 `uv` 加普通参数，没有引号和变量，bash、zsh、PowerShell 里都能执行
+ - 试跑：登记之前先用同样的命令（`uv` 加登记的参数，工作目录是配置目录，输入 `{}`）跑一次脚本，退出码 0 且输出 `{}` 才算通过（`_trial_run()`，限时 60 秒，uv 第一次运行要准备环境，没有合适的 Python 时还要下载）。uv 自己出错时退出码是 2，Cursor 把 `preToolUse` 钩子的退出码 2 当成拒绝，会拦住 `interactive_feedback`，所以试跑不通就不改 hooks.json，刚复制的脚本（和随之空出来的 `hooks/` 目录）也撤掉，报告失败；PATH 里没有 `uv` 时跳过试跑，只警告并附 uv 的安装地址
+ - 已经有 `gl-feedback.py <模式>` 登记的事件（`COMMAND_PATTERN`，脚本放哪、怎么启动都算，比如开发时指向仓库）默认不动，`--force` 才改成新位置；hooks.json 读不了或格式不对就什么都不改；改动前把原文件备份成 `hooks.json.bak`；重复执行不重复登记，已装的脚本和包里的不一样就更新
+ - `uninstall` 删掉 hooks.json 里所有 `gl-feedback.py` 的登记（路径不限）、复制出来的脚本和空出来的 `hooks/` 目录，别的钩子原样保留；`--cursor-dir` 指定配置目录（测试用）
+- 平台：macOS、Linux 和 Windows。Cursor 的用户级配置目录三个平台都是主目录下的 `.cursor`（Windows 是 `%USERPROFILE%\.cursor`）。Windows 上 Cursor 通过 PowerShell 执行钩子命令（官方人员在论坛确认），脚本按这个环境写：命令不带引号和变量，输入去 BOM，输出只含 ASCII，进程存活检查用 `ctypes` 调 `OpenProcess`（Windows 上 `os.kill(pid, 0)` 会结束进程）。**Windows 没有在真机上验证过**，README 如实写了。论坛确认的 Cursor 问题：Git Bash 在启动进程的祖先里时（环境里有 `MSYSTEM`），Cursor 会把 PowerShell 写的命令交给 bash 执行，所有钩子失败，`preToolUse` 拦住 `interactive_feedback`（论坛里报告的是命令行版 cursor-agent，桌面版没有验证过）；README 的常见问题里写了卸载办法。没有钩子时服务端照常工作，所有对话共用 `default` 房间
 - `pre`（`preToolUse`，matcher 限定 `interactive_feedback`）：删掉入参里的 `title` 和 AI 自己填的 `conversation_id`，再把 Cursor 给的对话标识写进 `conversation_id`，所有项目的对话都填。`preToolUse` 的输入里没有 MCP 服务器名，只能按工具名匹配：别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写
 - `post`（`postToolUse` 和 `postToolUseFailure`，不加 matcher，所有工具）：这个对话有排队的消息就取走（认出 AwaitShell 的内部轮询就跳过），见「消息队列」
-- `stop`（`stop`，agent 每个回合结束时触发，输入带 `status`）：先和 `log` 一样写事件日志，再看登记文件 `$GL_FEEDBACK_HOME/rooms/<对话标识>` 在不在（进程号对应的进程已不在就删掉），在就用 `curl --noproxy '*'`（连接超时 1 秒、总超时 5 秒）向登记的地址加 `/api/turn-ended` POST `{"status": "<状态>"}`；状态只认 1 到 32 位的字母和下划线，其余写成 `unknown`。没有登记文件说明这个对话没有房间（没提过问、已销毁、服务不在），什么也不做。房间据此销毁或标记，见「房间」
+- `stop`（`stop`，agent 每个回合结束时触发，输入带 `status`）：先和 `log` 一样写事件日志，再看登记文件 `$GL_FEEDBACK_HOME/rooms/<对话标识>` 在不在（进程号对应的进程已不在就删掉），在就用 `http.client`（不走代理，连接超时 1 秒、总超时 5 秒）向登记的地址加 `/api/turn-ended` POST `{"status": "<状态>"}`；状态只认 1 到 32 位的字母和下划线，其余写成 `unknown`。没有登记文件说明这个对话没有房间（没提过问、已销毁、服务不在），什么也不做。房间据此销毁或标记，见「房间」
 - `log`（`sessionStart`）：把事件的几个字段（不含用户输入、AI 的摘要、命令和文件内容）追加到 `$GL_FEEDBACK_HOME/hook-events.log`，超过 1 MB 换新文件、旧的留一份
 - 核对钩子：Cursor 自己的钩子日志在 `~/Library/Application Support/Cursor/logs/<启动时间>/window*/output_*/cursor.hooks.*.log`，每次钩子收到的完整输入和返回的输出都在里面，每个事件前有一行 `[时间戳] Hook step requested: <事件名>`；工具的输入输出也记在这份日志里，可能出现同样的文字，所以按行首的时间戳匹配（`rg '^\[[0-9T:.Z-]+\] Hook step requested: stop$'`）
-- 环境变量：`GL_FEEDBACK_HOME`（标记文件、登记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）、`GL_JQ`（jq 的位置）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
+- 环境变量：`GL_FEEDBACK_HOME`（标记文件、登记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
+- 测试：`tests/unit/test_queue_hook.py`（钩子脚本，用 `sys.executable` 直接运行，不依赖 uv；`TestHookRuntime` 里有一组用真的 `uv run --script` 跑，没有 uv 时跳过）、`tests/unit/test_hook_installer.py`（安装器，PATH 里放一个占位的 `uv` 脚本）
 
 ### 对话标识（conversation_id）字段
-- 数据流：Cursor 钩子（`hooks/gl-feedback.sh pre`，`preToolUse` 的 `updated_input`）把对话标识填进 `interactive_feedback(conversation_id=...)` → `WebFeedbackSession.conversation_id`。AI 不填这个参数，schema 的描述和 docstring 都写明了
+- 数据流：Cursor 钩子（`hooks/gl-feedback.py pre`，`preToolUse` 的 `updated_input`）把对话标识填进 `interactive_feedback(conversation_id=...)` → `WebFeedbackSession.conversation_id`。AI 不填这个参数，schema 的描述和 docstring 都写明了
 - 格式：只认字母、数字、下划线、连字符，最长 128 位（`WebFeedbackSession.normalize_conversation_id()`），其余一律当作没有；钩子没装或没生效时为空串
 - 服务端按 pydantic 校验入参，没有 `conversation_id` 的旧版本会拒绝带这个参数的调用，所以要先让服务端升级、重启所有 MCP 进程（见「房间」的「进程」），再让钩子注入
 - 钩子填入的 `conversation_id` 同时决定调用进哪个房间（见「房间」）

@@ -10,16 +10,21 @@
 
 import asyncio
 import base64
+import importlib.util
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Generator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import httpx
@@ -37,10 +42,12 @@ from mcp_feedback_enhanced.web.models import (
     Room,
     RoomRegistration,
 )
+from mcp_feedback_enhanced.web.models.feedback_session import CONVERSATION_ID_PATTERN
 from mcp_feedback_enhanced.web.models.message_queue import MAX_TOOL_CALL_RECORDS
 from mcp_feedback_enhanced.web.models.queue_files import (
     IMAGE_RETENTION_SECONDS,
     delete_message_images,
+    feedback_home,
     prune_message_images,
     save_message_images,
 )
@@ -57,13 +64,11 @@ JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 16
 GIF = b"GIF89a" + b"\x00" * 16
 WEBP = b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 16
 
-HOOK_SCRIPT = Path(__file__).resolve().parents[2] / "hooks" / "gl-feedback.sh"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+HOOK_SCRIPT = REPO_ROOT / "hooks" / "gl-feedback.py"
 PROJECT_ROOT = "/work/project"
 
-requires_hook_tools = pytest.mark.skipif(
-    shutil.which("jq") is None or shutil.which("curl") is None,
-    reason="钩子脚本需要 jq 和 curl",
-)
+requires_uv = pytest.mark.skipif(shutil.which("uv") is None, reason="需要 uv")
 
 
 def image(data: bytes, name: str = "图.png") -> dict[str, Any]:
@@ -805,20 +810,32 @@ class TestTakeRoute:
         assert response.status_code == 409
 
 
-def run_hook(mode: str, payload: dict[str, Any] | str, home: Path) -> dict[str, Any]:
-    """用给定的输入运行钩子脚本，要求它输出一个合法的 JSON 对象、退出码为 0"""
+def run_hook_raw(mode: str, payload: dict[str, Any] | str | bytes, home: Path) -> bytes:
+    """用给定的输入运行钩子脚本，要求退出码为 0，返回它的标准输出"""
     environment = {**os.environ, "GL_FEEDBACK_HOME": str(home)}
+    if isinstance(payload, bytes):
+        data = payload
+    elif isinstance(payload, str):
+        data = payload.encode()
+    else:
+        data = json.dumps(payload).encode()
     result = subprocess.run(
-        [str(HOOK_SCRIPT), mode],
-        input=payload if isinstance(payload, str) else json.dumps(payload),
+        [sys.executable, str(HOOK_SCRIPT), mode],
+        input=data,
         capture_output=True,
-        text=True,
         env=environment,
         timeout=30,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    output = json.loads(result.stdout)
+    return result.stdout
+
+
+def run_hook(
+    mode: str, payload: dict[str, Any] | str | bytes, home: Path
+) -> dict[str, Any]:
+    """用给定的输入运行钩子脚本，要求它输出一个只含 ASCII 的 JSON 对象、退出码为 0"""
+    output = json.loads(run_hook_raw(mode, payload, home).decode("ascii"))
     assert isinstance(output, dict)
     return output
 
@@ -887,7 +904,7 @@ def stop_payload(
 
 def dead_pid() -> int:
     """一个已经结束的进程的编号"""
-    process = subprocess.Popen(["true"])
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
     process.wait()
     return process.pid
 
@@ -939,7 +956,6 @@ def stub_server() -> Generator[StubQueueServer, None, None]:
     stub.server.server_close()
 
 
-@requires_hook_tools
 class TestHookPre:
     """preToolUse：给 interactive_feedback 的入参填对话标识"""
 
@@ -1024,6 +1040,27 @@ class TestHookPre:
 
         assert output == {"permission": "allow"}
 
+    @pytest.mark.parametrize(
+        "conversation_id", ["", "../etc/passwd", "has space", "a" * 129]
+    )
+    def test_still_cleans_the_input_without_a_valid_id(
+        self, tmp_path: Path, conversation_id: str
+    ):
+        output = run_hook(
+            "pre",
+            pre_payload(
+                {
+                    "summary": "摘要",
+                    "title": "标题",
+                    "conversation_id": "ai-made-this-up",
+                },
+                conversation_id=conversation_id,
+            ),
+            tmp_path,
+        )
+
+        assert output == {"permission": "allow", "updated_input": {"summary": "摘要"}}
+
     @pytest.mark.parametrize("payload", ["", "not json", "[]", '{"tool_input": 3}'])
     def test_lets_the_call_through_when_the_input_is_unusable(
         self, tmp_path: Path, payload: str
@@ -1031,7 +1068,6 @@ class TestHookPre:
         assert run_hook("pre", payload, tmp_path) == {"permission": "allow"}
 
 
-@requires_hook_tools
 class TestHookPost:
     """postToolUse：这个对话有排队的消息就取走，交给 AI"""
 
@@ -1051,13 +1087,22 @@ class TestHookPost:
         assert run_hook("post", payload, tmp_path) == {}
         assert marker.exists()
 
-    def test_ids_cannot_escape_the_queue_folder(self, tmp_path: Path):
-        (tmp_path / "queue").mkdir()
-        outside = tmp_path / "outside"
-        outside.write_text(f"http://127.0.0.1:1/x\n{dead_pid()}\n", encoding="utf-8")
+    @pytest.mark.parametrize(
+        "conversation_id", ["../outside", "a/../../outside", "a b", "a" * 129, "完成"]
+    )
+    def test_invalid_ids_never_reach_a_marker(
+        self, tmp_path: Path, stub_server: StubQueueServer, conversation_id: str
+    ):
+        # 这个标识若被当成文件名，指到的文件都在、内容也有效：钩子读了它，就会向服务端发请求
+        (tmp_path / "queue" / "a").mkdir(parents=True)
+        marker = write_marker(
+            tmp_path, conversation_id, stub_server.room_url("x"), os.getpid()
+        )
 
-        assert run_hook("post", post_payload("../outside"), tmp_path) == {}
-        assert outside.exists()
+        assert run_hook("post", post_payload(conversation_id), tmp_path) == {}
+
+        assert stub_server.requests == []
+        assert marker.exists()
 
     def test_a_marker_of_a_dead_server_is_removed(self, tmp_path: Path):
         marker = write_marker(
@@ -1127,8 +1172,10 @@ class TestHookPost:
                 f'{{"conversation_id" : "{CONVERSATION_A}", "tool_name" : "Read", '
                 '"tool_input" : {"file_path" : "/p/terminals/9.txt"}}'
             ),
+            # Windows 路径，JSON 里的反斜杠是转义过的
+            read_payload(r"C:\Users\dev\.cursor\projects\demo\terminals\1.txt"),
         ],
-        ids=["cursor-project", "other-home", "spaces"],
+        ids=["cursor-project", "other-home", "spaces", "windows"],
     )
     def test_internal_polls_of_terminal_files_leave_the_messages(
         self,
@@ -1150,7 +1197,7 @@ class TestHookPost:
     @pytest.mark.parametrize(
         "payload",
         [
-            read_payload("/Users/gulei/Documents/demo/hooks/gl-feedback.sh"),
+            read_payload("/Users/gulei/Documents/demo/hooks/gl-feedback.py"),
             # 路径里有 terminals，但不是终端输出文件
             read_payload("/Users/gulei/demo/terminals/notes.md"),
             read_payload("/Users/gulei/demo/terminals.txt"),
@@ -1160,8 +1207,15 @@ class TestHookPost:
                 "tool_name": "Shell",
                 "tool_input": {"command": "cat /p/terminals/1.txt"},
             },
+            read_payload(r"C:\Users\dev\demo\terminals\notes.md"),
         ],
-        ids=["real-read", "not-a-txt", "not-a-folder", "shell-command"],
+        ids=[
+            "real-read",
+            "not-a-txt",
+            "not-a-folder",
+            "shell-command",
+            "windows-not-a-txt",
+        ],
     )
     def test_other_tool_calls_still_deliver(
         self, tmp_path: Path, stub_server: StubQueueServer, payload: dict[str, Any]
@@ -1231,7 +1285,6 @@ class TestHookPost:
         assert lookalike.exists()
 
 
-@requires_hook_tools
 class TestHookLog:
     """sessionStart、stop：只记录事件"""
 
@@ -1269,7 +1322,6 @@ class TestHookLog:
         assert len(log.read_text(encoding="utf-8").splitlines()) == 1
 
 
-@requires_hook_tools
 class TestHookStop:
     """stop：向对话的房间报告回合结束"""
 
@@ -1340,17 +1392,21 @@ class TestHookStop:
         assert stub_server.requests == []
         assert registration.exists()
 
-    def test_ids_cannot_escape_the_rooms_folder(
-        self, tmp_path: Path, stub_server: StubQueueServer
+    @pytest.mark.parametrize(
+        "conversation_id", ["../outside", "a/../../outside", "a b", "a" * 129, "完成"]
+    )
+    def test_invalid_ids_never_reach_a_registration(
+        self, tmp_path: Path, stub_server: StubQueueServer, conversation_id: str
     ):
-        (tmp_path / "rooms").mkdir()
-        outside = tmp_path / "outside"
-        outside.write_text(f"{stub_server.room_url('x')}\n{os.getpid()}\n")
+        (tmp_path / "rooms" / "a").mkdir(parents=True)
+        registration = write_registration(
+            tmp_path, conversation_id, stub_server.room_url("x"), os.getpid()
+        )
 
-        assert run_hook("stop", stop_payload("../outside"), tmp_path) == {}
+        assert run_hook("stop", stop_payload(conversation_id), tmp_path) == {}
 
         assert stub_server.requests == []
-        assert outside.exists()
+        assert registration.exists()
 
     def test_a_registration_of_a_dead_server_is_removed(
         self, tmp_path: Path, stub_server: StubQueueServer
@@ -1392,14 +1448,15 @@ class TestHookStop:
         assert len(stub_server.requests) == 1
 
 
-@requires_hook_tools
 class TestHookScript:
     """不论什么输入，脚本都输出合法 JSON、退出码为 0"""
 
     @pytest.mark.parametrize("mode", ["pre", "post", "log", "stop", "unknown", ""])
-    @pytest.mark.parametrize("payload", ["", "not json", "{}", "[1, 2]"])
+    @pytest.mark.parametrize(
+        "payload", ["", "not json", "{}", "[1, 2]", b"\xff\xfe not utf-8"]
+    )
     def test_always_answers_with_valid_json(
-        self, tmp_path: Path, mode: str, payload: str
+        self, tmp_path: Path, mode: str, payload: str | bytes
     ):
         output = run_hook(mode, payload, tmp_path)
 
@@ -1410,8 +1467,224 @@ class TestHookScript:
 
         assert list(tmp_path.iterdir()) == []
 
-    def test_script_is_executable(self):
-        assert os.access(HOOK_SCRIPT, os.X_OK)
+
+@pytest.fixture(scope="module")
+def hook_module() -> ModuleType:
+    """把钩子脚本当模块加载，直接测里面的函数"""
+    spec = importlib.util.spec_from_file_location("gl_feedback_hook", HOOK_SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestHookRuntime:
+    """脚本在 Cursor 里的运行环境：编码、输出、uv、地址和进程检查"""
+
+    def test_input_with_a_utf8_bom_is_understood(self, tmp_path: Path):
+        # Windows 上经 PowerShell 管道传进来的输入开头可能带 BOM
+        bom = b"\xef\xbb\xbf"
+        pre = bom + json.dumps(pre_payload({"summary": "摘要"})).encode()
+        assert run_hook("pre", pre, tmp_path)["updated_input"] == {
+            "summary": "摘要",
+            "conversation_id": CONVERSATION_A,
+        }
+
+        marker = write_marker(
+            tmp_path, CONVERSATION_A, "http://127.0.0.1:1/c/x", dead_pid()
+        )
+        post = bom + json.dumps(post_payload()).encode()
+        assert run_hook("post", post, tmp_path) == {}
+        # 死进程的标记被删掉，说明钩子读懂了带 BOM 的输入、找到了对话标识
+        assert not marker.exists()
+
+    def test_output_is_ascii_only(self, tmp_path: Path, stub_server: StubQueueServer):
+        # Windows 上 PowerShell 按控制台代码页转码钩子的输出，非 ASCII 字符会被弄坏
+        stub_server.reply = (200, '{"additional_context": "来自服务端的说明 😀"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        post = run_hook_raw("post", post_payload(), tmp_path)
+        assert post.isascii()
+        assert json.loads(post) == {"additional_context": "来自服务端的说明 😀"}
+
+        pre = run_hook_raw("pre", pre_payload({"summary": "摘要 😀"}), tmp_path)
+        assert pre.isascii()
+        assert json.loads(pre)["updated_input"]["summary"] == "摘要 😀"
+
+    @requires_uv
+    def test_runs_through_uv_as_cursor_does(self, tmp_path: Path):
+        marker = write_marker(
+            tmp_path, CONVERSATION_A, "http://127.0.0.1:1/c/x", dead_pid()
+        )
+
+        result = subprocess.run(
+            ["uv", "run", "--quiet", "--no-project", "--script", str(HOOK_SCRIPT)]
+            + ["post"],
+            input=json.dumps(post_payload()).encode(),
+            capture_output=True,
+            env={**os.environ, "GL_FEEDBACK_HOME": str(tmp_path)},
+            timeout=60,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {}
+        assert not marker.exists()
+
+    def test_inline_metadata_asks_for_the_project_python(self):
+        source = HOOK_SCRIPT.read_text(encoding="utf-8")
+        match = re.search(
+            r"^# /// script\n(.*?)^# ///$", source, flags=re.DOTALL | re.MULTILINE
+        )
+        assert match is not None
+        block = "\n".join(
+            line.removeprefix("# ").removeprefix("#")
+            for line in match.group(1).splitlines()
+        )
+        metadata = tomllib.loads(block)
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text("utf-8"))
+
+        assert metadata["requires-python"] == project["project"]["requires-python"]
+        assert metadata["dependencies"] == []
+
+    def test_a_marker_with_a_garbage_process_id_is_removed(self, tmp_path: Path):
+        marker = tmp_path / "queue" / CONVERSATION_A
+        marker.parent.mkdir(parents=True)
+        marker.write_text("http://127.0.0.1:1/c/x\nnot-a-pid\n", encoding="utf-8")
+
+        assert run_hook("post", post_payload(), tmp_path) == {}
+        assert not marker.exists()
+
+    def test_a_marker_without_a_process_id_is_still_used(
+        self, tmp_path: Path, stub_server: StubQueueServer
+    ):
+        stub_server.reply = (200, '{"additional_context": "来自服务端的说明"}')
+        marker = tmp_path / "queue" / CONVERSATION_A
+        marker.parent.mkdir(parents=True)
+        marker.write_text(stub_server.room_url(CONVERSATION_A) + "\n", encoding="utf-8")
+
+        output = run_hook("post", post_payload(), tmp_path)
+
+        assert output == {"additional_context": "来自服务端的说明"}
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://127.0.0.1:1/c/x",
+            "file:///etc/hosts",
+            "ftp://127.0.0.1/x",
+            "127.0.0.1:8765/c/x",
+            "",
+        ],
+    )
+    def test_only_http_addresses_are_used(self, tmp_path: Path, url: str):
+        marker = write_marker(tmp_path, CONVERSATION_A, url, os.getpid())
+
+        assert run_hook("post", post_payload(), tmp_path) == {}
+        # 地址不可用不等于服务已经不在，标记留着
+        assert marker.exists()
+
+    @pytest.mark.parametrize("scheme", ["https", "ftp", "ws"])
+    def test_other_schemes_never_reach_a_live_server(
+        self, tmp_path: Path, stub_server: StubQueueServer, scheme: str
+    ):
+        url = stub_server.room_url(CONVERSATION_A).replace("http://", f"{scheme}://", 1)
+        marker = write_marker(tmp_path, CONVERSATION_A, url, os.getpid())
+        registration = write_registration(tmp_path, CONVERSATION_A, url, os.getpid())
+
+        assert run_hook("post", post_payload(), tmp_path) == {}
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+        assert stub_server.requests == []
+        assert marker.exists()
+        assert registration.exists()
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [("pre", {"permission": "allow"}), ("post", {}), ("stop", {})],
+    )
+    def test_an_unexpected_error_still_lets_the_call_through(
+        self, mode: str, expected: dict[str, Any]
+    ):
+        # 让这一种模式的处理函数抛异常：钩子照样以 0 退出，并输出放行的结果
+        code = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('hook', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "def explode(text):\n"
+            "    raise RuntimeError('boom')\n"
+            "module.HANDLERS[sys.argv[2]] = explode\n"
+            "sys.argv = ['gl-feedback.py', sys.argv[2]]\n"
+            "sys.exit(module.main())\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(HOOK_SCRIPT), mode],
+            input=b"{}",
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == expected
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows 没有 POSIX 权限位")
+    def test_the_event_log_is_private_to_the_user(self, tmp_path: Path):
+        home = tmp_path / "home"
+
+        run_hook("log", {"hook_event_name": "sessionStart"}, home)
+
+        assert home.stat().st_mode & 0o777 == 0o700
+        assert (home / "hook-events.log").stat().st_mode & 0o777 == 0o600
+
+    def test_the_id_is_taken_from_the_head_without_parsing_everything(
+        self, hook_module: ModuleType
+    ):
+        # 后面不是合法的 JSON：只靠开头这一段找到标识，没有解析整个输入
+        text = f'{{"conversation_id": "{CONVERSATION_A}", "tool_output": "' + "x" * 100
+
+        assert hook_module.extract_conversation_id(text) == CONVERSATION_A
+
+    def test_conversation_id_rule_matches_the_server(self, hook_module: ModuleType):
+        assert hook_module.CONVERSATION_ID.pattern == CONVERSATION_ID_PATTERN.pattern
+
+    def test_home_directory_matches_the_server(
+        self, hook_module: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.delenv("GL_FEEDBACK_HOME", raising=False)
+        assert hook_module.feedback_home() == feedback_home()
+
+        monkeypatch.setenv("GL_FEEDBACK_HOME", str(tmp_path))
+        assert hook_module.feedback_home() == feedback_home() == tmp_path
+
+        monkeypatch.setenv("GL_FEEDBACK_HOME", "")
+        assert hook_module.feedback_home() == feedback_home()
+
+    def test_a_running_process_is_alive(self, hook_module: ModuleType):
+        assert hook_module.process_is_alive(os.getpid())
+
+    def test_a_finished_process_is_not_alive(self, hook_module: ModuleType):
+        assert not hook_module.process_is_alive(dead_pid())
+
+    @pytest.mark.parametrize("pid", [0, -1, -4242])
+    def test_invalid_process_ids_are_not_alive(self, hook_module: ModuleType, pid: int):
+        # 0 和负数在 os.kill 里是进程组，不能拿去探测
+        assert not hook_module.process_is_alive(pid)
+
+    def test_a_process_of_another_user_counts_as_alive(
+        self, hook_module: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ):
+        def deny(pid: int, signal: int) -> None:
+            raise PermissionError
+
+        monkeypatch.setattr(hook_module.os, "kill", deny)
+
+        assert hook_module.process_is_alive(4242)
 
 
 async def run_hook_async(
@@ -1431,7 +1704,6 @@ async def receive_until(
                 return message
 
 
-@requires_hook_tools
 class TestHookEndToEnd:
     """真实的 Web 服务 + 页面 WebSocket + 钩子脚本"""
 

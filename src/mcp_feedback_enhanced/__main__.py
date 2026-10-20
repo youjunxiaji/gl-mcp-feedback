@@ -8,17 +8,23 @@ gl-mcp-feedback - 主程序入口
 使用方法:
   python -m mcp_feedback_enhanced        # 启动 MCP 服务器
   python -m mcp_feedback_enhanced test   # 执行测试
+  python -m mcp_feedback_enhanced hooks install    # 安装 Cursor 钩子
+  python -m mcp_feedback_enhanced hooks uninstall  # 卸载 Cursor 钩子
 """
 
 import argparse
 import asyncio
 import base64
+import io
 import os
 import sys
 import threading
 import time
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
+
+from .hook_installer import HookInstaller
 
 
 if TYPE_CHECKING:
@@ -63,18 +69,67 @@ def main():
     # 版本命令
     subparsers.add_parser("version", help="显示版本信息")
 
+    # 钩子命令
+    hooks_parser = subparsers.add_parser("hooks", help="安装或卸载 Cursor 钩子")
+    hooks_subparsers = hooks_parser.add_subparsers(
+        dest="hooks_command", required=True, help="钩子命令"
+    )
+    install_parser = hooks_subparsers.add_parser(
+        "install",
+        help="复制钩子脚本，试跑通过后登记到 ~/.cursor/hooks.json",
+    )
+    install_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="已经登记了 gl-feedback.py 的条目也改成新位置",
+    )
+    uninstall_parser = hooks_subparsers.add_parser(
+        "uninstall", help="删掉 hooks.json 里的登记和复制出来的脚本"
+    )
+    for hooks_command_parser in (install_parser, uninstall_parser):
+        hooks_command_parser.add_argument(
+            "--cursor-dir",
+            type=Path,
+            default=None,
+            help="Cursor 的配置目录，默认是 ~/.cursor",
+        )
+
     args = parser.parse_args()
 
     if args.command == "test":
         run_tests(args)
     elif args.command == "version":
         show_version()
+    elif args.command == "hooks":
+        sys.exit(run_hooks(args))
     elif args.command == "server" or args.command is None:
         run_server()
     else:
         # 不应该到达这里
         parser.print_help()
         sys.exit(1)
+
+
+def run_hooks(args) -> int:
+    """安装或卸载 Cursor 钩子
+
+    Args:
+        args: 命令行参数，`hooks_command` 是 `install` 或 `uninstall`
+
+    Returns:
+        进程退出码，成功为 0
+    """
+    installer = HookInstaller(args.cursor_dir)
+    if args.hooks_command == "install":
+        report = installer.install(force=args.force)
+    else:
+        report = installer.uninstall()
+    # 输出被重定向时，Windows 按本地代码页（比如 GBK）编码，「✔」这类符号编不出来，不能让命令因此报错
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="replace")
+    for line in report.lines:
+        print(line)
+    return 0 if report.ok else 1
 
 
 def run_server():
