@@ -280,14 +280,14 @@ class WebUIManager:
             raise RuntimeError(f"Templates directory not found: {web_templates_path}")
 
     def create_session(
-        self, project_directory: str, summary: str, *, title: str = ""
+        self, project_directory: str, summary: str, *, conversation_id: str = ""
     ) -> str:
         """创建新的反馈会话 - 重构为单一活跃会话模式，保留标签页状态。
 
         Args:
             project_directory: 专案目录路径。
             summary: AI 工作摘要（Markdown）。
-            title: 可选的反馈标题，显示在浏览器标签和 AI 消息气泡顶部。
+            conversation_id: 这次调用来自哪个 Cursor 对话，由钩子填入，没有钩子时为空。
 
         Returns:
             新会话的 session_id。
@@ -301,7 +301,12 @@ class WebUIManager:
 
         # 创建新会话
         session_id = str(uuid.uuid4())
-        session = WebFeedbackSession(session_id, project_directory, summary, title=title)
+        session = WebFeedbackSession(
+            session_id, project_directory, summary, conversation_id=conversation_id
+        )
+        debug_log(
+            f"新会话 {session_id} 的对话标识: {session.conversation_id or '(无)'}"
+        )
 
         # 如果有旧会话，处理状态转换和清理
         if old_session:
@@ -791,7 +796,6 @@ class WebUIManager:
                     "session_id": self.current_session.session_id,
                     "project_directory": self.current_session.project_directory,
                     "summary": self.current_session.summary,
-                    "title": self.current_session.title,
                     "status": self.current_session.status.value,
                 },
             }
@@ -1105,7 +1109,7 @@ async def launch_web_feedback_ui(
     summary: str,
     timeout: int = 600,
     *,
-    title: str = "",
+    conversation_id: str = "",
 ) -> dict:
     """启动 Web 反馈界面并等待用户反馈 - 重构为使用根路径。
 
@@ -1115,14 +1119,14 @@ async def launch_web_feedback_ui(
         project_directory: 专案目录路径。
         summary: AI 工作摘要（Markdown）。
         timeout: 超时时间（秒）。
-        title: 可选的反馈标题，显示在浏览器标签和 AI 消息气泡顶部。
+        conversation_id: 这次调用来自哪个 Cursor 对话，由钩子填入，没有钩子时为空。
 
     Returns:
         dict: 反馈结果，包含 logs、interactive_feedback 和 images。
     """
     manager = get_web_ui_manager()
 
-    manager.create_session(project_directory, summary, title=title)
+    manager.create_session(project_directory, summary, conversation_id=conversation_id)
     session = manager.get_current_session()
 
     if not session:

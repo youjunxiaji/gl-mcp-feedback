@@ -416,20 +416,18 @@ async def interactive_feedback(
             )
         ),
     ] = "",
-    title: Annotated[
-        str,
-        Field(
-            description=(
-                "Optional short headline (max ~30 chars) for this feedback "
-                "round, displayed in the browser tab and at the top of the "
-                "AI message bubble. Should be concise (e.g. \"需要你提供更多信息\", "
-                "\"修复完成，请验证\"). Leave empty when there's no good headline."
-            )
-        ),
-    ] = "",
     timeout: Annotated[
         int, Field(description="Seconds to wait for user feedback. Keep >= 600.")
     ] = 600,
+    conversation_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Filled in automatically by a Cursor hook to identify the "
+                "conversation. NEVER set this yourself; always leave it empty."
+            )
+        ),
+    ] = "",
 ) -> ToolResult:
     """Open a Web UI to collect interactive feedback from the user.
 
@@ -448,7 +446,8 @@ async def interactive_feedback(
           why; only stop on explicit termination
           (``结束`` / ``不用了`` / ``stop`` / ``done``).
         - Allowed parameters: ``project_directory``, ``summary``,
-          ``title``, ``timeout``. Names like ``question`` / ``choices`` /
+          ``timeout``, plus ``conversation_id``, which a Cursor hook fills
+          in: never set it yourself. Names like ``question`` / ``choices`` /
           ``options`` belong to ``AskQuestion`` and will fail schema
           validation here.
 
@@ -459,13 +458,6 @@ async def interactive_feedback(
         - NEVER pass an empty string or the placeholder phrase
           ``我已完成了您请求的任务。`` — runtime validation rejects them
           and you must re-call with a real summary.
-
-    ``title`` writing rules:
-        - Optional, ≤30 chars headline shown in the browser tab and at
-          the top of the AI message bubble. Leave empty when ``summary``
-          is self-explanatory.
-        - Examples: ``需要你提供更多信息`` / ``修复完成，请验证`` /
-          ``实现方案确认``.
 
     Queued messages:
         While you work between two calls, the user can keep typing in the
@@ -479,8 +471,8 @@ async def interactive_feedback(
     Args:
         project_directory: Absolute or relative project path. Defaults to cwd.
         summary: Required Markdown summary. No empty string, no placeholder.
-        title: Optional short headline for the Web UI tab and AI message bubble.
         timeout: Seconds to wait for user feedback. Keep ``>= 600``.
+        conversation_id: Filled in by a Cursor hook. Never set it yourself.
 
     Returns:
         ToolResult: TextContent with the user's text feedback plus
@@ -526,7 +518,7 @@ async def interactive_feedback(
         debug_log("反馈模式: web")
 
         result = await launch_web_feedback_ui(
-            project_directory, summary, timeout, title=title
+            project_directory, summary, timeout, conversation_id=conversation_id
         )
 
         # 处理取消情况
@@ -575,7 +567,7 @@ async def interactive_feedback(
 
 
 async def launch_web_feedback_ui(
-    project_dir: str, summary: str, timeout: int, *, title: str = ""
+    project_dir: str, summary: str, timeout: int, *, conversation_id: str = ""
 ) -> dict:
     """启动 Web UI 收集反馈，支持自定义超时时间。
 
@@ -583,7 +575,7 @@ async def launch_web_feedback_ui(
         project_dir: 项目目录路径。
         summary: AI 工作摘要（Markdown）。
         timeout: 超时时间（秒）。
-        title: 可选的反馈标题，显示在浏览器标签和 AI 消息气泡顶部。
+        conversation_id: 这次调用来自哪个 Cursor 对话，由钩子填入，没有钩子时为空。
 
     Returns:
         dict: 收集到的反馈数据。
@@ -593,7 +585,9 @@ async def launch_web_feedback_ui(
     try:
         from .web import launch_web_feedback_ui as web_launch
 
-        return await web_launch(project_dir, summary, timeout, title=title)
+        return await web_launch(
+            project_dir, summary, timeout, conversation_id=conversation_id
+        )
     except ImportError as e:
         error_id = ErrorHandler.log_error_with_context(
             e,

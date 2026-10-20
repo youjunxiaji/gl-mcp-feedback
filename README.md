@@ -16,7 +16,7 @@
 
 | 名称 | 说明 |
 |------|------|
-| `interactive_feedback` | 打开 Web UI 收集反馈。参数：`project_directory`、`summary`（Markdown，必填）、`title`（≤30 字，显示在浏览器标签页和气泡首行）、`timeout`（秒，建议 ≥ 600） |
+| `interactive_feedback` | 打开 Web UI 收集反馈。参数：`project_directory`、`summary`（Markdown，必填）、`timeout`（秒，建议 ≥ 600）、`conversation_id`（可选，由 Cursor 钩子填入，AI 不要填） |
 | `get_system_info` | 返回平台、Python 版本、是否远程 / WSL 等环境信息 |
 | prompt `chat` | 无参数，激活互动模式。在 Cursor 中输入 `/user-gl-mcp-feedback/chat`（前缀随 MCP 配置里的服务器名而定） |
 

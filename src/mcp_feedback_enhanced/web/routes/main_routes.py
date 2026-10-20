@@ -42,26 +42,16 @@ def setup_routes(manager: "WebUIManager"):
                 request,
                 "index.html",
                 {
-                    "title": "gl-mcp-feedback",
                     "has_session": False,
                     "version": __version__,
                 },
             )
-
-        feedback_title = current_session.title or ""
-        page_title = (
-            f"{feedback_title} · gl-mcp-feedback"
-            if feedback_title
-            else "gl-mcp-feedback"
-        )
 
         return manager.templates.TemplateResponse(
             request,
             "feedback.html",
             {
                 "project_directory": current_session.project_directory,
-                "session_id": current_session.session_id,
-                "title": page_title,
                 "version": __version__,
                 "has_session": True,
             },
@@ -88,7 +78,7 @@ def setup_routes(manager: "WebUIManager"):
                 "session_info": {
                     "project_directory": current_session.project_directory,
                     "summary": current_session.summary,
-                    "title": current_session.title,
+                    "conversation_id": current_session.conversation_id,
                     "feedback_completed": current_session.feedback_completed.is_set(),
                 },
             }
@@ -113,7 +103,7 @@ def setup_routes(manager: "WebUIManager"):
                 "session_id": current_session.session_id,
                 "project_directory": current_session.project_directory,
                 "summary": current_session.summary,
-                "title": current_session.title,
+                "conversation_id": current_session.conversation_id,
                 "feedback_completed": current_session.feedback_completed.is_set(),
                 "images_count": len(current_session.images),
             }
@@ -131,7 +121,7 @@ def setup_routes(manager: "WebUIManager"):
                     "session_id": session.session_id,
                     "project_directory": session.project_directory,
                     "summary": session.summary,
-                    "title": session.title,
+                    "conversation_id": session.conversation_id,
                     "status": session.status.value,
                     "status_message": session.status_message,
                     "created_at": int(session.created_at * 1000),
@@ -291,7 +281,6 @@ def setup_routes(manager: "WebUIManager"):
                         "session_info": {
                             "project_directory": session.project_directory,
                             "summary": session.summary,
-                            "title": session.title,
                             "session_id": session.session_id,
                         },
                     }

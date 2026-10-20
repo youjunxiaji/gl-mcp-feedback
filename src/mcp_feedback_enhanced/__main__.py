@@ -150,7 +150,6 @@ def _build_demo_image(label: str, start_color: str, end_color: str) -> dict:
 class _DemoRound(NamedTuple):
     """测试用的一轮历史对话：AI 的提问加上用户的回复"""
 
-    title: str
     summary: str
     feedback: str
     images: list[dict]
@@ -170,7 +169,6 @@ def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
     now = time.time()
     demo_rounds = [
         _DemoRound(
-            title="确认方案",
             summary=(
                 "我打算把工作区改成**聊天对话**的样式：\n\n"
                 "- AI 的消息靠左，你的回复靠右\n"
@@ -184,7 +182,6 @@ def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
             reply_after_seconds=90,
         ),
         _DemoRound(
-            title="样式预览",
             summary=(
                 "第一版已经做好了，主要改动：\n\n"
                 "1. 工作区改成消息流 + 底部输入框\n"
@@ -207,9 +204,7 @@ def _seed_demo_rounds(manager: "WebUIManager", project_directory: str) -> None:
     ]
 
     for demo in demo_rounds:
-        session_id = manager.create_session(
-            project_directory, demo.summary, title=demo.title
-        )
+        session_id = manager.create_session(project_directory, demo.summary)
         session = manager.get_session(session_id)
         if session is None:
             continue
@@ -249,14 +244,13 @@ def _simulate_ai_followups(
         )
         time.sleep(work_seconds)
 
-        title = f"模拟 AI 的第 {round_number} 次提问"
         summary = (
-            f"这是**{title}**。\n\n"
+            f"这是**模拟 AI 的第 {round_number} 次提问**。\n\n"
             "- 你在「AI 干活」期间排队的消息，会随这次调用一并送达\n"
             "- 队列是空的话，这一轮就等你回复"
         )
         new_session = manager.get_session(
-            manager.create_session(project_directory, summary, title=title)
+            manager.create_session(project_directory, summary)
         )
         if new_session is None:
             return
@@ -359,9 +353,7 @@ def process_feedback(data):
 
             # 先灌入两轮历史对话，最后一轮才是等待回复的当前会话
             _seed_demo_rounds(manager, temp_dir)
-            created_session_id = manager.create_session(
-                temp_dir, markdown_test_content, title="Markdown 渲染测试"
-            )
+            created_session_id = manager.create_session(temp_dir, markdown_test_content)
 
             if created_session_id:
                 print("✅ 会话创建成功")

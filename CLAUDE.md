@@ -46,11 +46,11 @@
 - 自定义字体：`sans`（DM Sans）、`mono`（JetBrains Mono）
 
 ### feedback.html 功能
-- **顶栏**：Logo、项目路径、会话 ID、连接状态
+- **顶栏**：Logo、项目路径、对话 ID（最新一轮带了 `conversation_id` 才显示，取前 8 位，悬停看完整值）、连接状态
 - **Tab 导航**：工作区、关于
 - **工作区**：微信聊天式的对话流 + 底部固定输入框。AI 消息靠左、用户回复靠右，每条气泡最宽占 2/3（窄屏 90%），带头像、小尾巴，相邻消息间隔 ≥ 5 分钟时插入居中的时间分隔
     - 对话记录由 `loadHistory()` 从 `/api/all-sessions` 拉取，`buildTimeline()` 把 AI 消息（按会话 `created_at`）、用户对提问的回复（按 `feedback_submitted_at`）、用户排队发送的消息合成一条时间线：已送达的排队消息是那次 AI 调用带回来的结果，按发送顺序紧跟在 `delivered_session_id` 对应的 AI 消息（及其下方说明）之后，位置按那条 AI 消息的 `created_at` 算（对应会话已不在记录里时按 `delivered_at` 兜底），排队中的消息按 `submitted_at` 排在最后，其余按时间升序（同一时刻 AI 消息排前）；时间线条目的 `at` 是排序位置，`sentAt` 是排队消息的真实发送时间，悬停提示用它。`renderChat()` 整体重绘，只给新出现的消息加入场动画（`prefers-reduced-motion` 下关闭）
-    - AI 气泡：Markdown 渲染（`.md` 样式 + 代码块复制按钮：`enhanceCodeBlocks()` 给每个 `<pre>` 包一层 `.code-block`，按钮挂在这层上，代码横向滚动时按钮不跟着跑），`title` 显示在气泡首行；AI 的调用仍在等回复（`round.is_current && round.awaiting_feedback`）的最新一条带 `NEW` 标记（`data-awaiting`）
+    - AI 气泡：Markdown 渲染（`.md` 样式 + 代码块复制按钮：`enhanceCodeBlocks()` 给每个 `<pre>` 包一层 `.code-block`，按钮挂在这层上，代码横向滚动时按钮不跟着跑）；AI 的调用仍在等回复（`round.is_current && round.awaiting_feedback`）的最新一条在气泡首行带 `NEW` 标记（`data-awaiting`）
     - 用户气泡：纯文本（`textContent`）+ 图片缩略图；没有收到回复的 AI 消息下方显示一行灰字说明：随这次调用送达了排队消息（「已随这次调用送达你排队的 N 条消息」，说明下面紧跟这 N 条消息）、超时、过期、出错、这次提问已结束、被新提问替代
     - 排队消息气泡（`role: 'queued'`）：用户气泡下方一行状态——排队中（琥珀色「排队中 · AI 下次提问时送达」+「编辑」「撤回」）或灰色的「✓ 已送达 AI · HH:MM 发送」（HH:MM 是真实发送时间，`formatChatTime()` 格式）。「编辑」就地展开文字编辑框（`startQueuedEdit()`，Ctrl/⌘+Enter 保存、Esc 取消，只改文字、图片不变），保存走 `PUT /api/queue/{id}`；「撤回」走 `DELETE /api/queue/{id}`；编辑期间其他消息不显示操作按钮，重绘时保持编辑框内容、焦点和光标。保存或撤回遇到 409（已被 AI 取走）时提示用户，编辑中的草稿放回主输入框；编辑中的消息被取走时（`releaseDeliveredEditor()`）同样放回
     - 本地先行显示：发出排队消息后立刻插入 `local: true` 的临时气泡（key 为 `local-N`，没有编辑/撤回），收到 `queue.messageQueued`（带 `message_id`）后去掉本地副本，`queuedKeyAlias` 让气泡的 key 沿用本地的，不重复播放入场动画；`loadHistory()` 重新拉取时保留尚未确认的本地气泡
@@ -70,11 +70,12 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **AI 收到的内容**（`MessageQueue.build_result()`）：先是一段说明（「你工作期间，用户追加了 N 条消息，按发送顺序列出。它们不是对你本次 summary 的回答，请按顺序当作新指令处理」），再按发送顺序列出每条 `[序号] HH:MM` 加文字（没有文字写「（无文字）」），带图片的消息标注图片张数和它们在返回图片里的位置；图片按消息顺序汇总，不含缩略图
 - **WebSocket 通知**：每条排队消息都有回应——`queue.messageQueued`（成功，带 `message_id`）、`queue.full`（`severity: warning`，队列已满）、`queue.messageEmpty`（`severity: warning`，没有文字且图片都被过滤掉）；`session_updated` 增加 `silent` 字段。通知码定义在 `MessageCodes`（`QUEUE_*`）
 
-### 反馈 title（headline）字段
-- 数据流：`interactive_feedback(title=...)` → `WebFeedbackSession.title` → 路由 `index()` 把浏览器 `<title>`（`title · gl-mcp-feedback`）作为 `title` 传给 Jinja 模板
-- API：`/api/session-status`、`/api/current-session`、`/api/all-sessions` 的 session_info 都包含 `title` 字段
-- WebSocket：`session_updated` 触发重新拉取对话记录，前端按最新一轮的 `title` 更新 `document.title`，不用刷新页面
-- 前端渲染位置：AI 气泡首行 + 浏览器 tab `<title>`
+### 对话标识（conversation_id）字段
+- 数据流：Cursor 钩子（`preToolUse` 的 `updated_input`，用户级配置，不在本仓库里）把对话标识填进 `interactive_feedback(conversation_id=...)` → `WebFeedbackSession.conversation_id`。AI 不填这个参数，schema 的描述和 docstring 都写明了
+- 格式：只认字母、数字、下划线、连字符，最长 128 位（`WebFeedbackSession.normalize_conversation_id()`），其余一律当作没有；钩子没装或没生效时为空串
+- 服务端按 pydantic 校验入参，没有 `conversation_id` 的旧版本会拒绝带这个参数的调用，所以要先让服务端升级、重启 MCP，再让钩子注入
+- API：`/api/session-status`、`/api/current-session`、`/api/all-sessions` 的会话信息都包含 `conversation_id`
+- 前端渲染位置：顶栏的对话 ID 徽标（`updateConversationBadge()`，由 `renderChat()` 按最新一轮更新）
 
 ### MCP 交互规则去哪儿了
 `interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题 / 收到排队消息怎么处理」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本文件不重复这些内容。
@@ -97,13 +98,13 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 3. WebSocket 连接、提交、图片处理等均在 `feedback.html` 内实现
 
 ### Jinja 变量
-- `feedback.html` 使用：`{{ title }}`、`{{ project_directory }}`、`{{ session_id }}`、`{{ version }}`（AI 摘要等对话内容不走 Jinja，由前端从 `/api/all-sessions` 渲染）
-- `index.html` 使用：`{{ title }}`、`{{ version }}`
+- `feedback.html` 使用：`{{ project_directory }}`、`{{ version }}`（AI 摘要等对话内容不走 Jinja，由前端从 `/api/all-sessions` 渲染）
+- `index.html` 使用：`{{ version }}`
 
 ### 后端 API
 - `GET /` — 根据是否有活跃会话返回 index.html 或 feedback.html
 - `GET /api/session-status` — 返回当前会话状态（含 `has_session`、`session_info`）
-- `GET /api/all-sessions` — 返回 `{ sessions, queued_messages, queue_limit }`。`sessions` 是内存里所有会话（最多 10 个），每项含 AI 侧的 `summary`、`title`、`created_at`、`awaiting_feedback`（AI 的调用是否还在等这一轮的回复），以及用户回复的 `feedback`、`feedback_submitted_at`（毫秒时间戳，未回复为 `null`）、`feedback_images`（缩略图列表，每项含 `name` 和 `thumbnail`）；`queued_messages` 是用户排队发送的消息，每项含 `id`、`feedback`、`feedback_images`（缩略图）、`submitted_at`、`delivered_at`（毫秒时间戳，排队中为 `null`）、`delivered_session_id`；`queue_limit` 是排队上限。对话流用的就是这个接口
+- `GET /api/all-sessions` — 返回 `{ sessions, queued_messages, queue_limit }`。`sessions` 是内存里所有会话（最多 10 个），每项含 AI 侧的 `summary`、`conversation_id`、`created_at`、`awaiting_feedback`（AI 的调用是否还在等这一轮的回复），以及用户回复的 `feedback`、`feedback_submitted_at`（毫秒时间戳，未回复为 `null`）、`feedback_images`（缩略图列表，每项含 `name` 和 `thumbnail`）；`queued_messages` 是用户排队发送的消息，每项含 `id`、`feedback`、`feedback_images`（缩略图）、`submitted_at`、`delivered_at`（毫秒时间戳，排队中为 `null`）、`delivered_session_id`；`queue_limit` 是排队上限。对话流用的就是这个接口
 - `PUT /api/queue/{id}` — 修改排队中消息的文字，请求体 `{ "feedback": "..." }`；消息不在排队中返回 409，内容为空且没有图片返回 400
 - `DELETE /api/queue/{id}` — 撤回排队中的消息；消息不在排队中返回 409
 - `GET /api/current-session` — 返回当前会话详情

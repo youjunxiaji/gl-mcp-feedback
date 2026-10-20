@@ -8,6 +8,7 @@ Web 反馈会话模型
 
 import asyncio
 import base64
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -59,6 +60,8 @@ SUPPORTED_IMAGE_TYPES = {
     "image/webp",
 }
 TEMP_DIR = Path.home() / ".cache" / "interactive-feedback-mcp-web"
+# Cursor 钩子填入的对话标识只认 UUID 一类的字符，其他内容一律当作没有
+CONVERSATION_ID_PATTERN = re.compile(r"[0-9A-Za-z_-]{1,128}")
 
 # 消息代码现在从统一的常量文件导入
 # 使用 get_message_code 函数来获取消息代码
@@ -75,12 +78,13 @@ class WebFeedbackSession:
         auto_cleanup_delay: int = 3600,
         max_idle_time: int = 1800,
         *,
-        title: str = "",
+        conversation_id: str = "",
     ):
         self.session_id = session_id
         self.project_directory = project_directory
         self.summary = summary
-        self.title = title or ""
+        # 这次调用来自哪个 Cursor 对话，由钩子填入；没有钩子或格式不对时为空串
+        self.conversation_id = self.normalize_conversation_id(conversation_id)
         self.websocket: WebSocket | None = None
         self.feedback_result: str | None = None
         self.feedback_submitted_at: float | None = None  # 用户提交反馈的时间
@@ -226,6 +230,19 @@ class WebFeedbackSession:
             SessionStatus.EXPIRED,
         ]
 
+    @staticmethod
+    def normalize_conversation_id(raw: str | None) -> str:
+        """整理 Cursor 钩子填入的对话标识
+
+        Args:
+            raw: 调用方传入的原始值，没有钩子时为空，AI 自己乱填时可能带空白或奇怪的字符。
+
+        Returns:
+            去掉首尾空白后，由字母、数字、下划线和连字符组成（最长 128 位）的标识；不符合时为空串。
+        """
+        value = (raw or "").strip()
+        return value if CONVERSATION_ID_PATTERN.fullmatch(value) else ""
+
     def get_status_info(self) -> dict[str, Any]:
         """获取会话状态信息"""
         return {
@@ -237,7 +254,6 @@ class WebFeedbackSession:
             "last_activity": self.last_activity,
             "project_directory": self.project_directory,
             "summary": self.summary,
-            "title": self.title,
             "session_id": self.session_id,
         }
 
