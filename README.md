@@ -103,12 +103,6 @@
                 "timeout": 10
             }
         ],
-        "sessionEnd": [
-            {
-                "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh log",
-                "timeout": 10
-            }
-        ],
         "stop": [
             {
                 "command": "/path/to/gl-mcp-feedback/hooks/gl-feedback.sh stop",
@@ -119,7 +113,7 @@
 }
 ```
 
-`pre` 默认只给脚本所在仓库的项目里的对话填对话 ID，用环境变量 `GL_INJECT_ROOT` 换成别的项目目录。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
+`pre` 给所有项目的对话填对话 ID。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
 
 `stop` 在 AI 的每个回合结束时触发：先记一条事件，再把回合的结束状态报告给这个对话的房间。状态是 `completed`（正常结束）时，房间 3 秒后销毁（它送达过的图片文件一并删除），页面收到「对话已结束」并关闭；这 3 秒里对话再提问，房间就留下。房间里还有排队中的消息时也留下，等对话下次提问或调用工具时送达。状态是 `aborted`（被中断）或 `error`（出错）时，房间只标成「已结束」，不销毁。不管有没有收到 `stop`，闲置超过 2 小时的房间都会销毁。
 

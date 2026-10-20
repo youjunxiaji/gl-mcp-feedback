@@ -3,11 +3,12 @@
 #
 #   pre   preToolUse，只挂在 interactive_feedback 上：
 #         先删掉入参里的 title 和 conversation_id（服务端不认 title，对话标识只认钩子填的），
-#         再把本次对话的标识写进 conversation_id。
-#         只给 GL_INJECT_ROOT（默认是本仓库）项目里的对话填，其他项目只做删除。
+#         再把本次对话的标识写进 conversation_id，所有项目的对话都填。
+#         preToolUse 的输入里没有 MCP 服务器名，只能按工具名匹配：
+#         别的 MCP 服务器如果也有叫 interactive_feedback 的工具，它的调用同样会被改写。
 #   post  postToolUse 和 postToolUseFailure，挂在所有工具上：
 #         这个对话有排队的消息就向服务端取走，用 additional_context 附在工具结果后面交给 AI。
-#   log   sessionStart、sessionEnd：只把事件写进 hook-events.log。
+#   log   sessionStart：只把事件写进 hook-events.log。
 #   stop  stop（agent 每个回合结束时触发）：先写进 hook-events.log，
 #         再看这个对话有没有房间，有就向服务端报告回合结束（带上 status：completed、aborted、error）。
 #         正常结束（completed）的房间几秒后销毁，页面随之关闭；其他状态只给房间标上已结束。
@@ -24,7 +25,6 @@
 #
 # 环境变量：
 #   GL_FEEDBACK_HOME  标记文件、登记文件、图片和事件日志所在目录，默认 ~/.cache/gl-mcp-feedback，服务端读的是同一个变量
-#   GL_INJECT_ROOT    pre 要填对话标识的项目目录，默认是本脚本所在的仓库
 #   GL_JQ             jq 的位置，默认 PATH 里的 jq，找不到用 /usr/bin/jq
 
 umask 077
@@ -53,30 +53,17 @@ find_jq() {
     fi
 }
 
-inject_root() {
-    if [ -n "${GL_INJECT_ROOT:-}" ]; then
-        printf '%s' "$GL_INJECT_ROOT"
-    else
-        local script_dir=.
-        case "$0" in
-            */*) script_dir=${0%/*} ;;
-        esac
-        (cd "$script_dir/.." 2>/dev/null && pwd)
-    fi
-}
-
 run_pre() {
     response='{"permission":"allow"}'
-    local jq_bin root rewritten
+    local jq_bin rewritten
     jq_bin=$(find_jq)
-    root=$(inject_root)
-    rewritten=$(printf '%s' "$input" | "$jq_bin" -c --arg root "$root" '
+    rewritten=$(printf '%s' "$input" | "$jq_bin" -c '
         (if (.tool_input | type) == "string" then (.tool_input | try fromjson catch null) else .tool_input end) as $ti
         | (.conversation_id // "") as $cid
         | if ($ti | type) != "object" then empty
           else
               ($ti | del(.title, .conversation_id)) as $clean
-              | if ($cid | test("^[0-9A-Za-z_-]{1,128}$")) and ((.workspace_roots // []) | any(. == $root))
+              | if ($cid | test("^[0-9A-Za-z_-]{1,128}$"))
                 then {permission: "allow", updated_input: ($clean + {conversation_id: $cid})}
                 elif $clean != $ti then {permission: "allow", updated_input: $clean}
                 else empty
@@ -155,10 +142,7 @@ run_log() {
             session_id,
             generation_id,
             status,
-            reason,
-            final_status,
             loop_count,
-            duration_ms,
             is_background_agent,
             composer_mode,
             cursor_version,

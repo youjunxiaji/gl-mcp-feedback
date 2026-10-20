@@ -805,19 +805,9 @@ class TestTakeRoute:
         assert response.status_code == 409
 
 
-def run_hook(
-    mode: str,
-    payload: dict[str, Any] | str,
-    home: Path,
-    *,
-    inject_root: str = PROJECT_ROOT,
-) -> dict[str, Any]:
+def run_hook(mode: str, payload: dict[str, Any] | str, home: Path) -> dict[str, Any]:
     """用给定的输入运行钩子脚本，要求它输出一个合法的 JSON 对象、退出码为 0"""
-    environment = {
-        **os.environ,
-        "GL_FEEDBACK_HOME": str(home),
-        "GL_INJECT_ROOT": inject_root,
-    }
+    environment = {**os.environ, "GL_FEEDBACK_HOME": str(home)}
     result = subprocess.run(
         [str(HOOK_SCRIPT), mode],
         input=payload if isinstance(payload, str) else json.dumps(payload),
@@ -990,26 +980,37 @@ class TestHookPre:
             "conversation_id": CONVERSATION_A,
         }
 
-    def test_other_projects_only_get_the_stray_fields_removed(self, tmp_path: Path):
+    @pytest.mark.parametrize(
+        "workspace_roots",
+        [(PROJECT_ROOT,), ("/work/other",), ("/work/other", PROJECT_ROOT), ()],
+    )
+    def test_fills_in_the_id_for_every_project(
+        self, tmp_path: Path, workspace_roots: tuple[str, ...]
+    ):
         output = run_hook(
             "pre",
             pre_payload(
                 {"summary": "摘要", "title": "t", "conversation_id": "ai-made-this-up"},
-                workspace_roots=("/work/other",),
+                workspace_roots=workspace_roots,
             ),
             tmp_path,
         )
 
-        assert output == {"permission": "allow", "updated_input": {"summary": "摘要"}}
+        assert output == {
+            "permission": "allow",
+            "updated_input": {"summary": "摘要", "conversation_id": CONVERSATION_A},
+        }
 
-    def test_clean_calls_of_other_projects_are_left_alone(self, tmp_path: Path):
-        output = run_hook(
-            "pre",
-            pre_payload({"summary": "摘要"}, workspace_roots=("/work/other",)),
-            tmp_path,
-        )
+    def test_does_not_need_the_workspace_roots_field(self, tmp_path: Path):
+        payload = pre_payload({"summary": "摘要"})
+        del payload["workspace_roots"]
 
-        assert output == {"permission": "allow"}
+        output = run_hook("pre", payload, tmp_path)
+
+        assert output == {
+            "permission": "allow",
+            "updated_input": {"summary": "摘要", "conversation_id": CONVERSATION_A},
+        }
 
     @pytest.mark.parametrize(
         "conversation_id", ["", "../etc/passwd", "has space", "a" * 129]
@@ -1086,6 +1087,30 @@ class TestHookPost:
         )
 
         output = run_hook("post", post_payload(), tmp_path)
+
+        assert output == {"additional_context": "来自服务端的说明"}
+        assert stub_server.requests == [("POST", f"/c/{CONVERSATION_A}/api/queue/take")]
+
+    def test_failed_tool_calls_deliver_too(
+        self, tmp_path: Path, stub_server: StubQueueServer
+    ):
+        stub_server.reply = (200, '{"additional_context": "来自服务端的说明"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+        # postToolUseFailure 的输入多了失败信息，对话标识的位置不变
+        payload = {
+            "hook_event_name": "postToolUseFailure",
+            "conversation_id": CONVERSATION_A,
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/不存在.txt"},
+            "error_message": "File not found: /tmp/不存在.txt",
+            "failure_type": "error",
+            "is_interrupt": False,
+            "duration": 12,
+        }
+
+        output = run_hook("post", payload, tmp_path)
 
         assert output == {"additional_context": "来自服务端的说明"}
         assert stub_server.requests == [("POST", f"/c/{CONVERSATION_A}/api/queue/take")]
@@ -1208,7 +1233,7 @@ class TestHookPost:
 
 @requires_hook_tools
 class TestHookLog:
-    """sessionStart、sessionEnd、stop：只记录事件"""
+    """sessionStart、stop：只记录事件"""
 
     def test_records_only_whitelisted_fields(self, tmp_path: Path):
         output = run_hook(

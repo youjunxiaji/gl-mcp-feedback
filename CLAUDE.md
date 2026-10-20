@@ -69,7 +69,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **分流规则**：WebSocket 收到 `submit_feedback` 时，`session.is_awaiting_feedback()`（状态为 `WAITING` 且 `feedback_completed` 未置位）为真，消息作为对当前提问的回复（`session.submit_feedback`）；否则交给 `Room.enqueue_user_message()` 进房间的队列。`/api/all-sessions` 的每个会话带 `awaiting_feedback`，前端用同一个口径决定输入框状态
 - **`MessageQueue`**：只放内存，服务重启即清空；线程安全（Web 线程写入、修改、撤回，随提问送达在 MCP 线程取走，钩子的请求在 Web 线程里取走）。排队中的消息最多 3 条（`MAX_PENDING_MESSAGES`，已送达的记录不占名额），满额抛 `QueueFullError`，前端收到 `queue.full` 通知。排队消息可以改文字（`update_text`，纯文字消息不能改成空）和撤回（`cancel`），已被取走的抛 `MessageNotPendingError`。取走有两个方法：`deliver_with_question(session_id)`（随提问）和 `deliver_with_tool_call()`（随工具调用），各自在锁里一次取走全部排队中的消息并标上 `DeliveryChannel`。排队中的消息数可能变了（加入、撤回、取走）之后调用 `on_pending_changed`，在锁之外执行、出错只记日志，房间用它同步标记文件。队列由房间持有（`Room.message_queue`），每个对话一个；没有对话标识的调用共用 `default` 房间的队列，不区分项目目录
 - **随提问送达（AI 再次调用时）**：`launch_web_feedback_ui()` 在 `Room.create_session()` 之后、启动服务和打开浏览器之前调用 `Room.deliver_queued_messages()`。房间的队列非空就取走所有排队消息，新会话 `close_with_queued_messages()`（状态 `WAITING` → `ACTIVE`、等待事件置位），已打开的页面收到 `silent: true` 的 `session_updated` 静默刷新，调用立刻返回，不等用户；队列为空则照常等用户回复
-- **随工具调用送达（钩子）**：`hooks/gl-feedback.sh post` 挂在所有工具的 `postToolUse` 和 `postToolUseFailure` 上，每次工具调用结束都会触发，所以热路径只做一件事：从输入开头取 `conversation_id`，看标记文件 `$GL_FEEDBACK_HOME/queue/<对话标识>` 在不在，不在就直接返回（几毫秒）。
+- **随工具调用送达（钩子）**：`hooks/gl-feedback.sh post` 挂在所有工具的 `postToolUse` 和 `postToolUseFailure` 上（工具调用失败时 `additional_context` 同样会作为 `<system_reminder>` 附在失败结果后面，已实测），每次工具调用结束都会触发，所以热路径只做一件事：从输入开头取 `conversation_id`，看标记文件 `$GL_FEEDBACK_HOME/queue/<对话标识>` 在不在，不在就直接返回（几毫秒）。
     - 标记文件（`QueueMarker`，`queue_files.py`）：房间的队列里有排队中的消息时存在，没有时不存在；两行内容，房间的地址（`WebUIManager.get_hook_room_url()`，监听 `0.0.0.0` 时用 `127.0.0.1`）和写它的服务进程号。写入是原子的（临时文件加 `replace`），`sync()` 在自己的锁里重新读排队数量，几个线程同时同步时文件最终和队列一致；写入失败只记日志，不影响队列。`default` 房间没有对话标识，钩子找不到它，不写标记；房间销毁或服务停止时（`Room.release_files()`）删掉标记。钩子发现进程号对应的进程已经不在，就把这个过期的标记删掉
     - 取走接口：钩子用 `curl --noproxy '*'` 调标记里的地址加 `/api/queue/take`（连接超时 1 秒、总超时 5 秒）。接口调 `Room.deliver_for_tool_call()` 取走全部排队消息，有消息返回 `{"additional_context": "..."}`，没有返回 `{}`；钩子只在收到 HTTP 成功且以 `{` 开头的回复时原样交给 Cursor，Cursor 把 `additional_context` 附在那次工具结果后面给 AI，其余情况输出 `{}`
     - 跳过内部轮询：AwaitShell 等后台任务（带 `shell_id`）时，Cursor 每秒几次对终端输出文件（`.../terminals/<编号>.txt`）发起内部 `Read`，每次都触发 `postToolUse`（同一个 `tool_use_id`），这些事件返回的 `additional_context` 会被丢弃，这时取走消息就丢了。钩子认出工具是 `Read`、读的是 `/terminals/*.txt` 的事件就不取（`is_terminal_poll()`，只看输入开头 4096 个字符），消息留给下一次真正的工具调用；不带 `shell_id` 的 AwaitShell 是纯等待，不产生钩子事件，等待期间发的消息在之后第一次工具调用结束时送达。这是按 Cursor 3.25.9 实测的行为做的判断，没有官方说明
@@ -83,6 +83,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 ### 房间（对话隔离）
 一个服务（端口 8765），每个 Cursor 对话一个房间（`Room`，`web/models/room.py`）：房间持有这个对话自己的会话（最多 10 个）、排队消息（`MessageQueue`）和页面连接，对话之间互不影响。
 - **房间标识**：钩子填入的 `conversation_id`（`Room.room_id_for()`）；没有或格式不对的调用共用 `default` 房间。`WebUIManager.rooms` 是房间表，`get_or_create_room()` 加锁创建（MCP 线程创建、Web 线程查询）
+- **进程**：一个 MCP 进程一个服务（`WebUIManager`）。端口只在 8765 被别的进程占用时才会换，同一个进程里永远复用 8765。一台机器上可以有多个 MCP 进程：Cursor 的 `mcp-process` 里一个，每个 `cursor-agent` worker 另带一个，各有各的房间表。房间都销毁后服务和端口留着，等下一次提问，MCP 进程退出时服务才停
 - **新提问只替换自己房间的上一轮**：`Room.create_session()` 把房间里还没结束的旧会话标成 `COMPLETED`（「被新会话替代，自动完成」），页面的 WebSocket 转给新会话；别的房间不受影响。`current_session` 是房间里最新一轮的会话，页面的回复和排队都交给它
 - **地址**：`/c/{room_id}/` 是对话的页面，页面用到的 `/api/*` 和 `/ws` 都在这个前缀下；`/` 是房间列表，`/api/rooms` 是它的数据。房间不存在、或房间里已经没有会话时，`/c/{room_id}/` 跳回 `/`
 - **打开浏览器**：`WebUIManager.smart_open_browser(room, url)`：房间的页面还连着（`Room.check_active_tab()` 发 ping 探测）就只发刷新通知，否则新开标签页；每个对话第一次提问会新开自己的页面。页面是新连上来的，补发一次 `session_updated`（`Room.pending_session_update`）
@@ -100,16 +101,17 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 
 ### Cursor 钩子
 `hooks/gl-feedback.sh` 是本项目的 Cursor 钩子，一个脚本四种模式，在用户级 `~/.cursor/hooks.json` 里登记（写法见 README）。只依赖 bash、jq 和 curl；任何异常都放行：输出合法 JSON、退出码 0（`preToolUse` 输出非法 JSON 会拦住调用）。
-- `pre`（`preToolUse`，matcher 限定 `interactive_feedback`）：删掉入参里的 `title` 和 AI 自己填的 `conversation_id`，再把 Cursor 给的对话标识写进 `conversation_id`。只给 `GL_INJECT_ROOT`（默认是脚本所在的仓库）项目里的对话填，其他项目只做删除
+- `pre`（`preToolUse`，matcher 限定 `interactive_feedback`）：删掉入参里的 `title` 和 AI 自己填的 `conversation_id`，再把 Cursor 给的对话标识写进 `conversation_id`，所有项目的对话都填。`preToolUse` 的输入里没有 MCP 服务器名，只能按工具名匹配：别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写
 - `post`（`postToolUse` 和 `postToolUseFailure`，不加 matcher，所有工具）：这个对话有排队的消息就取走（认出 AwaitShell 的内部轮询就跳过），见「消息队列」
 - `stop`（`stop`，agent 每个回合结束时触发，输入带 `status`）：先和 `log` 一样写事件日志，再看登记文件 `$GL_FEEDBACK_HOME/rooms/<对话标识>` 在不在（进程号对应的进程已不在就删掉），在就用 `curl --noproxy '*'`（连接超时 1 秒、总超时 5 秒）向登记的地址加 `/api/turn-ended` POST `{"status": "<状态>"}`；状态只认 1 到 32 位的字母和下划线，其余写成 `unknown`。没有登记文件说明这个对话没有房间（没提过问、已销毁、服务不在），什么也不做。房间据此销毁或标记，见「房间」
-- `log`（`sessionStart`、`sessionEnd`）：把事件的几个字段（不含用户输入、AI 的摘要、命令和文件内容）追加到 `$GL_FEEDBACK_HOME/hook-events.log`，超过 1 MB 换新文件、旧的留一份
-- 环境变量：`GL_FEEDBACK_HOME`（标记文件、登记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）、`GL_INJECT_ROOT`、`GL_JQ`（jq 的位置）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
+- `log`（`sessionStart`）：把事件的几个字段（不含用户输入、AI 的摘要、命令和文件内容）追加到 `$GL_FEEDBACK_HOME/hook-events.log`，超过 1 MB 换新文件、旧的留一份
+- 核对钩子：Cursor 自己的钩子日志在 `~/Library/Application Support/Cursor/logs/<启动时间>/window*/output_*/cursor.hooks.*.log`，每次钩子收到的完整输入和返回的输出都在里面，每个事件前有一行 `[时间戳] Hook step requested: <事件名>`；工具的输入输出也记在这份日志里，可能出现同样的文字，所以按行首的时间戳匹配（`rg '^\[[0-9T:.Z-]+\] Hook step requested: stop$'`）
+- 环境变量：`GL_FEEDBACK_HOME`（标记文件、登记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）、`GL_JQ`（jq 的位置）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
 
 ### 对话标识（conversation_id）字段
 - 数据流：Cursor 钩子（`hooks/gl-feedback.sh pre`，`preToolUse` 的 `updated_input`）把对话标识填进 `interactive_feedback(conversation_id=...)` → `WebFeedbackSession.conversation_id`。AI 不填这个参数，schema 的描述和 docstring 都写明了
 - 格式：只认字母、数字、下划线、连字符，最长 128 位（`WebFeedbackSession.normalize_conversation_id()`），其余一律当作没有；钩子没装或没生效时为空串
-- 服务端按 pydantic 校验入参，没有 `conversation_id` 的旧版本会拒绝带这个参数的调用，所以要先让服务端升级、重启 MCP，再让钩子注入
+- 服务端按 pydantic 校验入参，没有 `conversation_id` 的旧版本会拒绝带这个参数的调用，所以要先让服务端升级、重启所有 MCP 进程（见「房间」的「进程」），再让钩子注入
 - 钩子填入的 `conversation_id` 同时决定调用进哪个房间（见「房间」）
 - API：`/c/{room_id}/api/session-status`、`/c/{room_id}/api/current-session`、`/c/{room_id}/api/all-sessions` 的会话信息都包含 `conversation_id`
 - 前端渲染位置：顶栏的对话 ID 徽标（`updateConversationBadge()`，由 `renderChat()` 按最新一轮更新）、浏览器标签页标题的后缀（对话 ID 前 4 位）
