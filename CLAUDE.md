@@ -58,7 +58,7 @@
     - 用户气泡：纯文本（`textContent`）+ 图片缩略图；没有收到回复的 AI 消息下方显示一行灰字说明：随这次调用送达了排队消息（「已随这次调用送达你排队的 N 条消息」，说明下面紧跟这 N 条消息）、超时、过期、出错、这次提问已结束、被新提问替代
     - 排队消息气泡（`role: 'queued'`）：用户气泡下方一行状态——排队中（琥珀色「排队中 · AI 下次调用工具或提问时送达」+「编辑」「撤回」）或灰色的「✓ 已随hook送达 AI · HH:MM 发送」（钩子取走）/「✓ 已随提问送达 AI · HH:MM 发送」（HH:MM 是真实发送时间，`formatChatTime()` 格式）。「编辑」就地展开文字编辑框（`startQueuedEdit()`，Ctrl/⌘+Enter 保存、Esc 取消，只改文字、图片不变），保存走 `PUT {ROOM_BASE}/api/queue/{id}`；「撤回」走 `DELETE {ROOM_BASE}/api/queue/{id}`；编辑期间其他消息不显示操作按钮，重绘时保持编辑框内容、焦点和光标。保存或撤回遇到 409（已被 AI 取走）时提示用户，编辑中的草稿放回主输入框；编辑中的消息被取走时（`releaseDeliveredEditor()`）同样放回
     - 本地先行显示：发出排队消息后立刻插入 `local: true` 的临时气泡（key 为 `local-N`，没有编辑/撤回），收到 `queue.messageQueued`（带 `message_id`）后去掉本地副本，`queuedKeyAlias` 让气泡的 key 沿用本地的，不重复播放入场动画；`loadHistory()` 重新拉取时保留尚未确认的本地气泡
-    - 滚动：首次加载与新一轮到达时，若最新 AI 消息一屏放不下就对齐到它的开头，否则停在底部；自己发送后滚到底部；切到其他标签页再切回会恢复滚动位置
+    - 滚动：首次加载与新一轮到达时，若最新 AI 消息一屏放不下就对齐到它的开头，否则停在底部；自己发送后立刻滚到底部（不做动画，免得被发送后马上到来的服务端确认重绘打断）；重绘前视图离底部不到 80px（`NEAR_BOTTOM_PX`）的话，重绘后继续贴着底部，服务端确认、状态行、图片让内容变高时最新的消息不会落到输入框后面；切到其他标签页再切回会恢复滚动位置
     - 输入框（`applyComposerState()`）：只有连接被其他窗口接管时才禁用（`getComposerLock()`）。AI 在等回复时按钮为「发送」、提示快捷键；AI 没在等时按钮为「排队发送」、提示「AI 正在处理，消息会排队（n/3），AI 下次调用工具或提问时一并读取」；排队满额（`isQueueFull()`，上限取自 `/api/all-sessions` 的 `queue_limit`）时按钮禁用并显示「队列已满」。拉取记录之前保持常规状态。临时提示（`setComposerNotice()`：队列已满、消息已被取走、编辑内容为空等）用琥珀色显示 6 秒并同步给读屏；「队列已满」的提示在队列不再满时（撤回、被取走）立即清除
 - **反馈提交**：WebSocket 发送 `submit_feedback` 消息，支持 Ctrl/⌘+Enter 快捷键。前端按 `isAwaitingReply()` 决定本地显示成回复还是排队气泡，实际分流以服务端为准（见「消息队列」）。每条消息服务端都回应一条 `notification`，前端按发送顺序对账（`inflightSends`，回复记空串、排队消息记本地气泡的 key，`settleSend()` 逐条销账），再重新拉取记录校正：`code` 为 `session.feedbackSubmitted`（作为回复）、`queue.messageQueued`（进了队列）、`queue.full`（队列已满）或 `queue.messageEmpty`（没有文字且图片都被过滤掉，例如过大），后两种都是被拒绝：撤掉本地气泡，发送的文字和图片放回输入框，不丢。WebSocket 断线重连后（`ws.onopen`），没收到回应的本地气泡一律撤掉（`dropUnconfirmedSends()`），以重新拉取的服务端记录为准
 - **新反馈提醒**：收到 WebSocket `session_updated` 时调用 `notifyNewFeedback()`，用 Web Audio 合成「叮咚」提示音（`playAlertSound`）+ 桌面通知（`showDesktopNotification`，仅 `document.hidden` 时弹、点击聚焦窗口），同时重新拉取对话记录并滚到新消息。`silent: true` 的 `session_updated`（AI 的新一轮调用直接取走了排队消息，没有要用户回复的提问）不响不弹，只重新拉取并读屏提示「AI 已读取你排队的消息」；收到 `queue_delivered`（AI 调用完一次工具，钩子取走了排队的消息）同样不响不弹，重新拉取记录，把「排队中」翻成「已送达」。默认始终开启、无设置开关；首次用户手势由 `setupAlertOnFirstGesture()` 解锁音频播放并请求 `Notification` 授权
@@ -72,6 +72,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **随工具调用送达（钩子）**：`hooks/gl-feedback.sh post` 挂在所有工具的 `postToolUse` 和 `postToolUseFailure` 上，每次工具调用结束都会触发，所以热路径只做一件事：从输入开头取 `conversation_id`，看标记文件 `$GL_FEEDBACK_HOME/queue/<对话标识>` 在不在，不在就直接返回（几毫秒）。
     - 标记文件（`QueueMarker`，`queue_files.py`）：房间的队列里有排队中的消息时存在，没有时不存在；两行内容，房间的地址（`WebUIManager.get_hook_room_url()`，监听 `0.0.0.0` 时用 `127.0.0.1`）和写它的服务进程号。写入是原子的（临时文件加 `replace`），`sync()` 在自己的锁里重新读排队数量，几个线程同时同步时文件最终和队列一致；写入失败只记日志，不影响队列。`default` 房间没有对话标识，钩子找不到它，不写标记；房间清理时（`cleanup_all_sessions()`）删掉标记。钩子发现进程号对应的进程已经不在，就把这个过期的标记删掉
     - 取走接口：钩子用 `curl --noproxy '*'` 调标记里的地址加 `/api/queue/take`（连接超时 1 秒、总超时 5 秒）。接口调 `Room.deliver_for_tool_call()` 取走全部排队消息，有消息返回 `{"additional_context": "..."}`，没有返回 `{}`；钩子只在收到 HTTP 成功且以 `{` 开头的回复时原样交给 Cursor，Cursor 把 `additional_context` 附在那次工具结果后面给 AI，其余情况输出 `{}`
+    - 跳过内部轮询：AwaitShell 等后台任务（带 `shell_id`）时，Cursor 每秒几次对终端输出文件（`.../terminals/<编号>.txt`）发起内部 `Read`，每次都触发 `postToolUse`（同一个 `tool_use_id`），这些事件返回的 `additional_context` 会被丢弃，这时取走消息就丢了。钩子认出工具是 `Read`、读的是 `/terminals/*.txt` 的事件就不取（`is_terminal_poll()`，只看输入开头 4096 个字符），消息留给下一次真正的工具调用；不带 `shell_id` 的 AwaitShell 是纯等待，不产生钩子事件，等待期间发的消息在之后第一次工具调用结束时送达。这是按 Cursor 3.25.9 实测的行为做的判断，没有官方说明
     - 图片：钩子送达只能传文字，图片先存成 `$GL_FEEDBACK_HOME/images/<消息标识>/<序号>.<扩展名>`（按文件头判断格式），路径写进说明里让 AI 用 Read 查看；超过 24 小时的图片目录在下一次存图片时清掉（`IMAGE_RETENTION_SECONDS`）
     - 页面通知：消息已经标记送达之后，说明文字先备好，再通知页面（WebSocket `queue_delivered`，带 `count`），通知限时 2 秒（`Room.NOTIFY_TIMEOUT_SECONDS`），页面连接异常不会拖慢钩子的响应、也不会让取走的消息丢失
 - **送达后的记录**：消息标记 `delivered_at` 和 `delivered_via`（`question` 或 `tool_call`），随提问送达的再带 `delivered_session_id`；原图释放、只留缩略图。随提问送达的记录对话记录里继续显示（排在送达它的那条 AI 消息之后），直到它随之送达的会话被淘汰出内存（`visible_messages()` 同时清理）；随工具调用送达的记录没有对应的会话，只保留最近 20 条（`MAX_TOOL_CALL_RECORDS`）
@@ -90,7 +91,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 ### Cursor 钩子
 `hooks/gl-feedback.sh` 是本项目的 Cursor 钩子，一个脚本三种模式，在用户级 `~/.cursor/hooks.json` 里登记（写法见 README）。只依赖 bash、jq 和 curl；任何异常都放行：输出合法 JSON、退出码 0（`preToolUse` 输出非法 JSON 会拦住调用）。
 - `pre`（`preToolUse`，matcher 限定 `interactive_feedback`）：删掉入参里的 `title` 和 AI 自己填的 `conversation_id`，再把 Cursor 给的对话标识写进 `conversation_id`。只给 `GL_INJECT_ROOT`（默认是脚本所在的仓库）项目里的对话填，其他项目只做删除
-- `post`（`postToolUse` 和 `postToolUseFailure`，不加 matcher，所有工具）：这个对话有排队的消息就取走，见「消息队列」
+- `post`（`postToolUse` 和 `postToolUseFailure`，不加 matcher，所有工具）：这个对话有排队的消息就取走（认出 AwaitShell 的内部轮询就跳过），见「消息队列」
 - `log`（`sessionStart`、`sessionEnd`、`stop`）：把事件的几个字段（不含用户输入、AI 的摘要、命令和文件内容）追加到 `$GL_FEEDBACK_HOME/hook-events.log`，超过 1 MB 换新文件、旧的留一份
 - 环境变量：`GL_FEEDBACK_HOME`（标记文件、图片和事件日志所在目录，默认 `~/.cache/gl-mcp-feedback`，服务端读的是同一个变量）、`GL_INJECT_ROOT`、`GL_JQ`（jq 的位置）。测试用 `GL_FEEDBACK_HOME` 指向临时目录（`tests/conftest.py` 的 `isolated_feedback_home` 对所有测试生效）
 

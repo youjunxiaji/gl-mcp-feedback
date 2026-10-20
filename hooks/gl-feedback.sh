@@ -13,6 +13,9 @@
 # 只从输入开头取对话标识，看标记文件 $GL_FEEDBACK_HOME/queue/<对话标识> 在不在，不在就直接返回。
 # 标记文件两行：房间的地址、写它的服务进程号；进程已经不在了，说明标记是过期的，删掉。
 #
+# AwaitShell 等后台任务时，Cursor 每秒几次对终端输出文件发起内部 Read，每次都触发 postToolUse，
+# 这些事件返回的 additional_context 会被丢弃；这时取走消息，消息就丢了，所以认出它们、不取，留给下一次真正的工具调用。
+#
 # 任何异常都放行：输出合法 JSON，退出码 0（preToolUse 输出非法 JSON 会拦住调用）。
 #
 # 环境变量：
@@ -29,6 +32,8 @@ MODE="${1:-}"
 LOG_MAX_BYTES=1048576
 # 对话标识一般在输入开头，工具输出特别大时不必整段扫描
 HEAD_CHARS=65536
+# 工具名和入参紧跟在对话标识后面，认内部轮询只看开头这一小段
+POLL_SCAN_CHARS=4096
 # 对话标识的合法格式，和服务端房间标识的规则一致
 ID_PATTERN='[0-9A-Za-z_-]{1,128}'
 
@@ -94,12 +99,21 @@ extract_conversation_id() {
     printf '%s' "$parsed"
 }
 
+# 是不是 AwaitShell 轮询终端输出文件产生的事件：工具是 Read，读的是 .../terminals/<编号>.txt
+is_terminal_poll() {
+    local head_part=${input:0:$POLL_SCAN_CHARS}
+    local name_pattern='"tool_name"[[:space:]]*:[[:space:]]*"Read"'
+    local path_pattern='"file_path"[[:space:]]*:[[:space:]]*"[^"]*/terminals/[^"/]*\.txt"'
+    [[ $head_part =~ $name_pattern ]] && [[ $head_part =~ $path_pattern ]]
+}
+
 run_post() {
     local conversation_id marker url pid result
     conversation_id=$(extract_conversation_id) || return 0
 
     marker="$FEEDBACK_HOME/queue/$conversation_id"
     [ -f "$marker" ] || return 0
+    is_terminal_poll && return 0
     { read -r url && read -r pid; } 2>/dev/null <"$marker"
     [ -n "$url" ] || return 0
     if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then

@@ -575,6 +575,8 @@
         // 对话记录来自 <房间前缀>/api/all-sessions：AI 的消息、用户对提问的回复、用户在 AI 干活期间排队发送的消息，
         // 排成一条时间线：随提问送达的排队消息跟在送达它们的那条 AI 消息之后，其余按发生时间从旧到新。
         const SEPARATOR_GAP_MS = 5 * 60 * 1000;
+        // 重绘前视图离底部不到这个距离，就当作贴着底部
+        const NEAR_BOTTOM_PX = 80;
         const UNANSWERED_NOTES = {
             timeout: '该轮对话已超时，未收到回复',
             expired: '该轮对话已过期，未收到回复',
@@ -1004,7 +1006,9 @@
                     top = Math.max(0, scroller.scrollTop + offset - 16);
                 }
             }
-            scroller.scrollTo({ top, behavior: instant || prefersReducedMotion() ? 'auto' : 'smooth' });
+            // 自己发送之后立刻到底，不做动画：发送后服务端的确认会马上重绘一次，动画会被它打断、停在半路
+            const smooth = !instant && mode !== 'bottom' && !prefersReducedMotion();
+            scroller.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
         };
 
         // mode: 'keep' 不动；'auto' 新一轮提问到达或首次加载；'bottom' 自己发送之后
@@ -1026,6 +1030,8 @@
             if (!scroller || !list) return;
 
             const previousTop = scroller.scrollTop;
+            // 重绘前贴着底部的话，重绘后继续贴着：服务端确认、状态行、图片让内容变高，最新的消息不会落到输入框后面
+            const wasNearBottom = scroller.scrollHeight - scroller.clientHeight - previousTop < NEAR_BOTTOM_PX;
             // 正在编辑排队消息时，重绘后要把光标放回原处
             const caret = editorTextarea && document.activeElement === editorTextarea
                 ? [editorTextarea.selectionStart, editorTextarea.selectionEnd]
@@ -1053,7 +1059,7 @@
             });
             if (timeline.length === 0) fragment.append(createNote('暂无对话记录'));
             list.replaceChildren(fragment);
-            scroller.scrollTop = previousTop;
+            scroller.scrollTop = scrollMode === 'keep' && wasNearBottom ? scroller.scrollHeight : previousTop;
 
             if (editorTextarea) {
                 autoGrowTextarea(editorTextarea);

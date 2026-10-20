@@ -700,6 +700,17 @@ def post_payload(conversation_id: str = CONVERSATION_A) -> dict[str, Any]:
     }
 
 
+def read_payload(
+    file_path: str, conversation_id: str = CONVERSATION_A
+) -> dict[str, Any]:
+    return {
+        "conversation_id": conversation_id,
+        "tool_name": "Read",
+        "tool_input": {"file_path": file_path},
+        "hook_event_name": "postToolUse",
+    }
+
+
 def write_marker(home: Path, room_id: str, url: str, pid: int) -> Path:
     marker = home / "queue" / room_id
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -898,6 +909,67 @@ class TestHookPost:
 
         assert output == {"additional_context": "来自服务端的说明"}
         assert stub_server.requests == [("POST", f"/c/{CONVERSATION_A}/api/queue/take")]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            read_payload(
+                "/Users/gulei/.cursor/projects/Users-gulei-Documents-demo/terminals/369082.txt"
+            ),
+            read_payload("/home/dev/.cursor/projects/demo/terminals/1.txt"),
+            # 冒号两边带空格
+            (
+                f'{{"conversation_id" : "{CONVERSATION_A}", "tool_name" : "Read", '
+                '"tool_input" : {"file_path" : "/p/terminals/9.txt"}}'
+            ),
+        ],
+        ids=["cursor-project", "other-home", "spaces"],
+    )
+    def test_internal_polls_of_terminal_files_leave_the_messages(
+        self,
+        tmp_path: Path,
+        stub_server: StubQueueServer,
+        payload: dict[str, Any] | str,
+    ):
+        # AwaitShell 轮询终端输出文件产生的事件，送出去的内容会被丢弃，不能在这时取走
+        stub_server.reply = (200, '{"additional_context": "不该被取走"}')
+        marker = write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        assert run_hook("post", payload, tmp_path) == {}
+
+        assert stub_server.requests == []
+        assert marker.exists()
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            read_payload("/Users/gulei/Documents/demo/hooks/gl-feedback.sh"),
+            # 路径里有 terminals，但不是终端输出文件
+            read_payload("/Users/gulei/demo/terminals/notes.md"),
+            read_payload("/Users/gulei/demo/terminals.txt"),
+            # 不是 Read，只是命令里提到了终端输出文件
+            {
+                "conversation_id": CONVERSATION_A,
+                "tool_name": "Shell",
+                "tool_input": {"command": "cat /p/terminals/1.txt"},
+            },
+        ],
+        ids=["real-read", "not-a-txt", "not-a-folder", "shell-command"],
+    )
+    def test_other_tool_calls_still_deliver(
+        self, tmp_path: Path, stub_server: StubQueueServer, payload: dict[str, Any]
+    ):
+        stub_server.reply = (200, '{"additional_context": "来自服务端的说明"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        output = run_hook("post", payload, tmp_path)
+
+        assert output == {"additional_context": "来自服务端的说明"}
+        assert len(stub_server.requests) == 1
 
     @pytest.mark.parametrize(
         "reply",
