@@ -617,7 +617,7 @@ wheels = [
 
 [[package]]
 name = "gl-mcp-feedback"
-version = "2.2.3"
+version = "3.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
