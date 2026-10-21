@@ -212,6 +212,10 @@
 
         <!-- WORKSPACE: chat stream (AI left, user right) + composer docked at the bottom -->
         <div id="page-workspace" class="page flex-1 min-h-0 flex flex-col overflow-hidden">
+            <!-- 连接断开提示：重连失败后显示，页面和已有的记录保留 -->
+            <div id="connLostBanner" class="hidden shrink-0 px-4 sm:px-6 py-2.5 text-[13px] leading-relaxed text-amber-200 bg-amber-500/10 border-b border-amber-500/20">
+                MCP 服务已断开（可能被 Cursor 重启了）。页面上的记录还在；AI 下次提问时会新开页面。
+            </div>
             <!-- Message stream -->
             <div id="chatScroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-5" role="region" aria-label="对话记录" tabindex="0">
                 <div id="chatList" class="flex flex-col gap-4"></div>
@@ -473,6 +477,8 @@
         let wsRetried = false;
         // 服务端销毁了这个房间（对话已结束）
         let roomClosed = false;
+        // 断线后重连一次仍然失败（服务进程已经不在，比如被 Cursor 重启）：页面不关，已有的记录留着
+        let connectionLost = false;
         const ROOM_CLOSE_DELAY_MS = 3000;
 
         // 房间被销毁：不再重连，几秒后尝试关掉页面。
@@ -484,6 +490,18 @@
             applyComposerState();
             announceToScreenReader('对话已结束，页面即将关闭');
             setTimeout(() => window.close(), ROOM_CLOSE_DELAY_MS);
+        };
+
+        // 重连失败：不关页面，用提示说明原因，输入框锁定。AI 下次提问时服务端会新开一个页面
+        const handleConnectionLost = () => {
+            connectionLost = true;
+            wsReady = false;
+            setConnStatus('disconnected');
+            document.getElementById('connLostBanner').classList.remove('hidden');
+            // 重绘一次：排队中的消息改显示「未确认送达」，同时刷新输入框状态；记录还没加载出来时没有气泡可改
+            if (hasRendered) renderChat('keep');
+            else applyComposerState();
+            announceToScreenReader('与服务的连接已断开，页面上的记录还在');
         };
 
         const connectWebSocket = () => {
@@ -577,8 +595,8 @@
                 }
                 setConnStatus('disconnected');
                 if (wsRetried) {
-                    console.log('WebSocket reconnect failed, attempting to close tab');
-                    window.close();
+                    console.log('WebSocket reconnect failed, keeping the page open');
+                    handleConnectionLost();
                     return;
                 }
                 wsRetried = true;
@@ -606,7 +624,8 @@
         const UNANSWERED_NOTE_CURRENT = '这次提问已结束，未收到回复';
         const COMPOSER_LOCKS = {
             replaced: { label: '连接已转移', hint: '连接已转移到其他窗口，请在新窗口继续' },
-            closed: { label: '对话已结束', hint: '对话已结束，这个页面可以关闭了' }
+            closed: { label: '对话已结束', hint: '对话已结束，这个页面可以关闭了' },
+            lost: { label: '连接已断开', hint: '连接已断开，页面上的记录还在；AI 下次提问时会新开页面' }
         };
         const COMPOSER_NOTICE_MS = 6000;
         const EMPTY_MESSAGE_TEXT = '这条消息没有可发送的内容（图片过大会被忽略），请检查后重发';
@@ -683,7 +702,8 @@
         // 返回输入框的锁定原因，空字符串表示可以输入
         const getComposerLock = () => {
             if (wsReplaced) return 'replaced';
-            return roomClosed ? 'closed' : '';
+            if (roomClosed) return 'closed';
+            return connectionLost ? 'lost' : '';
         };
 
         const clearComposerNotice = () => {
@@ -914,6 +934,13 @@
             if (message.delivered_at) {
                 const via = message.delivered_via === 'tool_call' ? '随hook' : '随提问';
                 label.textContent = '✓ 已' + via + '送达 AI';
+                line.append(label);
+                return;
+            }
+            // 连接断开后页面不再知道这条消息有没有送达，也不再提供编辑、撤回
+            if (connectionLost) {
+                label.className = 'text-red-300';
+                label.textContent = '未确认送达 · 连接已断开';
                 line.append(label);
                 return;
             }
