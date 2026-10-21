@@ -86,7 +86,7 @@ Cursor 对每次 MCP 工具调用有 120 秒的空闲超时：120 秒内收不�
 - **心跳**：`WebFeedbackSession.wait_for_feedback()` 把一次长等拆成每段 `HEARTBEAT_INTERVAL_SECONDS`（30 秒），每段没等到回复就调一次 `on_heartbeat(已等秒数, 总秒数)`。`server.build_heartbeat()` 把它接到 FastMCP 的 `ctx.report_progress()`，`interactive_feedback` 的 `ctx: Context | None` 参数由 FastMCP 注入，不出现在工具参数里。回调从 `interactive_feedback` 经 `server.launch_web_feedback_ui()`、`web.launch_web_feedback_ui()` 一路传到 `wait_for_feedback()`。客户端没给进度令牌（请求里没有 `progressToken`）时 `report_progress()` 什么也不做；心跳出错只记日志，不影响等待
 - **等待时限**：`timeout` 默认 600 秒，也是上限（`MAX_FEEDBACK_TIMEOUT_SECONDS`），更大的值按 600 处理，远在 Cursor 的 60 分钟总时限之内。实际等待比 `timeout` 少 5 秒（不超过 30 秒的少 1 秒、最少 5 秒，`effective_wait_seconds()`），免得和客户端自己的时限撞在边界上
 - **用户没回复**：时限到了，会话标成 `TIMEOUT` 并清理资源，抛 `FeedbackTimeoutError`（`utils/error_handler.py`，`TimeoutError` 的子类，带 `waited_seconds`）。`interactive_feedback` 单独接住它，返回以 `[interactive_feedback TIMEOUT]` 开头的提示（`build_timeout_guidance()`）：这不是用户的答复，让 AI 立即再次调用，`summary` 用一两句话重述问题即可，页面上留着上一轮的完整内容。别的 `TimeoutError`（套接字等）不会被当成「用户没回复」，走通用的错误提示
-- **核对**：心跳不起作用时，Cursor 的 MCP 日志（`mcp-server-user-gl-mcp-feedback.log`）里会出现 `MCP tool call timed out (idle)`，钩子日志里对应调用的 `duration` 是 120.0 秒；超过总时限的是 `(max_total)`
+- **核对**：心跳在 Cursor 3.26.13 上实测有效（一次提问等了 174 秒没有超时）。心跳不起作用时，Cursor 的 MCP 日志（`mcp-server-user-gl-mcp-feedback.log`）里会出现 `MCP tool call timed out (idle)`，钩子日志里对应调用的 `duration` 是 120.0 秒；超过总时限的是 `(max_total)`
 - 测试：`tests/unit/test_feedback_wait.py`（会话的等待与心跳、用 FastMCP 内存客户端验证进度通知、`timeout` 上限、用户没回复时的提示）
 
 ### 房间（对话隔离）
