@@ -427,15 +427,22 @@ _CHAT_PROMPT = """\
 请遵循本项目的 gl-mcp-feedback 用户规则。补充约束：
 
 1. **立即调用 `interactive_feedback`**：把当前的理解/计划写入
-   `summary`（Markdown），然后等待用户反馈。
+   `summary`（Markdown），然后等待用户反馈。`summary` 为空字符串、
+   或填占位套话（如"我已完成了您请求的任务。"）会被运行时校验拒绝，
+   必须重新调用并写入真实内容。
 2. **不要用纯文本结束对话**：所有给用户看的实质内容（分析、方案、
    代码改动总结、需要确认的问题）都必须走 `summary`，因为 Web UI
    对 Markdown 的渲染效果远好于 Cursor 聊天面板。
 3. **此工具可用时不要使用 `AskQuestion`**：所有要问用户的问题，
    写成 `summary` 里的有序列表。
-4. **只在用户明确终止时停止**（`结束` / `不用了` / `stop` / `done`）。
-   `summary` 为空字符串、或填占位套话（如"我已完成了您请求的任务。"）
-   会被运行时校验拒绝，必须重新调用并写入真实内容。
+4. **只在用户明确终止时停止**（`结束` / `不用了` / `stop` / `done`），
+   停止之前先清点后台任务：对这次对话里放到后台的 `Shell`
+   （`block_until_ms: 0`，或超时被转到后台的）逐个 `AwaitShell`
+   （传 `shell_id`，`block_until_ms: 0`）看一眼。
+   一次性任务没跑完就等完；dev server、watcher 这类常驻进程不要擅自停，
+   告诉用户它们还在跑。跑完了却没被看过的任务，Cursor 会在回合结束后
+   补发完成通知，把已经结束的对话重新叫醒。万一结束后还是被这类通知叫醒，
+   一句话说明结果即可，不要再调用本工具（会重新开一个页面）。
 5. **处理排队消息**：用户在你干活时发的消息会排队，有两种方式送到你手里：
    某个工具的结果后面多出一段以「（你工作期间，用户追加了 N 条消息」开头的说明，
    或者你下次调用本工具时，返回内容以同样的话开头。
@@ -506,7 +513,18 @@ async def interactive_feedback(
           substantive content for the user to read. Put it in ``summary``.
         - When the user skips without feedback, re-call this tool to ask
           why; only stop on explicit termination
-          (``结束`` / ``不用了`` / ``stop`` / ``done``).
+          (``结束`` / ``不用了`` / ``stop`` / ``done``). Before stopping,
+          check the background jobs you started in this conversation
+          (``Shell`` with ``block_until_ms: 0``, or commands Cursor moved
+          to the background after the timeout): call ``AwaitShell`` with
+          each ``shell_id`` and ``block_until_ms: 0``. Wait for one-off
+          jobs (tests, builds) that are still running; do not stop
+          long-lived processes (dev servers, watchers) on your own, tell
+          the user they are still running. A finished job you never
+          observed makes Cursor wake you up with a "task completed"
+          notification after the conversation has ended. If that happens
+          anyway, reply with one plain sentence and do NOT call this tool
+          again (it would open a new page).
         - Allowed parameters: ``project_directory``, ``summary``,
           ``timeout``, plus ``conversation_id``, which a Cursor hook fills
           in: never set it yourself. Names like ``question`` / ``choices`` /

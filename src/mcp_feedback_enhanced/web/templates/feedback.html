@@ -382,7 +382,7 @@
             badge.classList.toggle('hidden', !id);
         };
 
-        // --- Alert / 提醒（声音 + 桌面通知 + 标签页绿点） ---
+        // --- Alert / 提醒（声音 + 桌面通知 + 标签页未读标记） ---
         // 新反馈请求到达时把在后台标签/最小化窗口的用户「叫」回来。默认始终开启，无开关。
         var alertAudioCtx = null;
 
@@ -414,32 +414,52 @@
             requestNotifyPermission();
         }
 
-        // 用 Web Audio 合成「叮咚」两声提示音，无需音频文件
-        function playAlertSound() {
+        // 提示音是电话铃式的「嘀铃铃」：1400Hz 与 1100Hz 的方波按段交替成颤音，整段响两遍，用 Web Audio 合成，无需音频文件
+        const ALERT_RING_FREQS = [1400, 1100];
+        const ALERT_RING_SEGMENTS = 10;
+        const ALERT_RING_SEGMENT_SECONDS = 0.055;
+        const ALERT_RING_REPEATS = 2;
+        // 两遍起点的间隔
+        const ALERT_RING_REPEAT_GAP_SECONDS = 0.75;
+        const ALERT_RING_PEAK = 0.3;
+        // 方波的高次谐波很刺耳，每一段都过一遍低通
+        const ALERT_RING_LOWPASS_HZ = 3500;
+        // 每一段 4 毫秒升到峰值、保持到段尾前 6 毫秒再收掉：段与段之间不留缝，听起来是连着的颤音
+        const ALERT_RING_ATTACK_SECONDS = 0.004;
+        const ALERT_RING_RELEASE_SECONDS = 0.006;
+
+        const playAlertSound = () => {
             try {
-                var AC = window.AudioContext || window.webkitAudioContext;
+                const AC = window.AudioContext || window.webkitAudioContext;
                 if (!AC) return;
                 if (!alertAudioCtx) alertAudioCtx = new AC();
                 if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume();
-                var now = alertAudioCtx.currentTime;
-                [880, 1175].forEach(function(freq, i) {
-                    var osc = alertAudioCtx.createOscillator();
-                    var gain = alertAudioCtx.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.value = freq;
-                    var t = now + i * 0.18;
-                    gain.gain.setValueAtTime(0.0001, t);
-                    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.02);
-                    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-                    osc.connect(gain);
-                    gain.connect(alertAudioCtx.destination);
-                    osc.start(t);
-                    osc.stop(t + 0.18);
-                });
+                const base = alertAudioCtx.currentTime + 0.02;
+                for (let ring = 0; ring < ALERT_RING_REPEATS; ring++) {
+                    for (let i = 0; i < ALERT_RING_SEGMENTS; i++) {
+                        const t = base + ring * ALERT_RING_REPEAT_GAP_SECONDS + i * ALERT_RING_SEGMENT_SECONDS;
+                        const osc = alertAudioCtx.createOscillator();
+                        const filter = alertAudioCtx.createBiquadFilter();
+                        const gain = alertAudioCtx.createGain();
+                        osc.type = 'square';
+                        osc.frequency.value = ALERT_RING_FREQS[i % ALERT_RING_FREQS.length];
+                        filter.type = 'lowpass';
+                        filter.frequency.value = ALERT_RING_LOWPASS_HZ;
+                        gain.gain.setValueAtTime(0.0001, t);
+                        gain.gain.exponentialRampToValueAtTime(ALERT_RING_PEAK, t + ALERT_RING_ATTACK_SECONDS);
+                        gain.gain.setValueAtTime(ALERT_RING_PEAK, t + ALERT_RING_SEGMENT_SECONDS - ALERT_RING_RELEASE_SECONDS);
+                        gain.gain.exponentialRampToValueAtTime(0.0001, t + ALERT_RING_SEGMENT_SECONDS);
+                        osc.connect(filter);
+                        filter.connect(gain);
+                        gain.connect(alertAudioCtx.destination);
+                        osc.start(t);
+                        osc.stop(t + ALERT_RING_SEGMENT_SECONDS + 0.02);
+                    }
+                }
             } catch (e) {
                 console.warn('playAlertSound failed', e);
             }
-        }
+        };
 
         // 仅在页面不可见（后台标签/最小化）时弹系统通知，前台靠声音即可
         function showDesktopNotification(title, body) {
@@ -471,15 +491,20 @@
             if (!isViewing()) markUnread();
         }
 
-        // --- 未读标记（标签页标题和图标） ---
-        // 页面没在被看（标签页在后台，或浏览器窗口没焦点）时有新问题到达：标题前加绿点，图标右上角也加一个绿点，
+        // --- 未读标记（标签页图标） ---
+        // 页面没在被看（标签页在后台，或浏览器窗口没焦点）时有新问题到达：图标换成绿色的 NEW 字样，
         // 标签页很多、标题被挤没了也分得清哪个有新消息；切回来并且窗口有焦点时还原
-        const BASE_TITLE = document.title;
-        const UNREAD_TITLE_PREFIX = '🟢 ';
         const FAVICON_URL = '/static/icon.svg';
-        const UNREAD_BADGE_SVG = '<circle cx="24" cy="8" r="6" fill="#22c55e" stroke="#ffffff" stroke-width="2"/>';
+        // 标签页图标只有十几个像素：三个字母用粗线条的路径画，不依赖字体，绿色在深色和浅色的标签栏上都看得清
+        const UNREAD_FAVICON_SVG =
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+            '<g fill="none" stroke="#16a34a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M1.7 21.8V10.2L6.3 21.8V10.2"/>' +
+            '<path d="M14.05 10.2H10.95V21.8H14.05M10.95 16H13.5"/>' +
+            '<path d="M18.7 10.2L21.6 21.8L24.5 12.6L27.4 21.8L30.3 10.2"/>' +
+            '</g></svg>';
+        const UNREAD_FAVICON_HREF = 'data:image/svg+xml,' + encodeURIComponent(UNREAD_FAVICON_SVG);
         let unread = false;
-        let unreadFaviconHref = '';
 
         const isViewing = () => !document.hidden && document.hasFocus();
 
@@ -495,33 +520,15 @@
             else document.head.appendChild(link);
         };
 
-        // 取现有图标，在右上角加一个绿点，转成 data URL；取不到时返回空串，只换标题
-        const buildUnreadFavicon = async () => {
-            if (unreadFaviconHref) return unreadFaviconHref;
-            try {
-                const response = await fetch(FAVICON_URL);
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                const svg = (await response.text()).replace('</svg>', UNREAD_BADGE_SVG + '</svg>');
-                unreadFaviconHref = 'data:image/svg+xml,' + encodeURIComponent(svg);
-            } catch (err) {
-                console.warn('buildUnreadFavicon failed', err);
-            }
-            return unreadFaviconHref;
-        };
-
-        const markUnread = async () => {
+        const markUnread = () => {
             if (unread) return;
             unread = true;
-            document.title = UNREAD_TITLE_PREFIX + BASE_TITLE;
-            const href = await buildUnreadFavicon();
-            // 取图标期间已经被看到了（标记已还原）就不再换图标
-            if (href && unread) setFavicon(href);
+            setFavicon(UNREAD_FAVICON_HREF);
         };
 
         const clearUnread = () => {
             if (!unread) return;
             unread = false;
-            document.title = BASE_TITLE;
             setFavicon(FAVICON_URL);
         };
 
