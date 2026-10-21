@@ -11,7 +11,7 @@ import base64
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import WebSocket
 
 from ...debug import web_debug_log as debug_log
-from ...utils.error_handler import ErrorHandler, ErrorType
+from ...utils.error_handler import ErrorHandler, ErrorType, FeedbackTimeoutError
 from ...utils.resource_manager import get_resource_manager
 from ..constants import get_message_code
 
@@ -66,9 +66,15 @@ CONVERSATION_ID_PATTERN = re.compile(r"[0-9A-Za-z_-]{1,128}")
 # 消息代码现在从统一的常量文件导入
 # 使用 get_message_code 函数来获取消息代码
 
+# 等用户回复期间定时调用的心跳回调，参数是已等待的秒数和总共要等的秒数
+HeartbeatCallback = Callable[[float, float], Awaitable[None]]
+
 
 class WebFeedbackSession:
     """Web 反馈会话管理"""
+
+    # 等用户回复期间，每隔这么多秒向调用方发一次心跳，让调用方知道这次调用还活着
+    HEARTBEAT_INTERVAL_SECONDS = 30
 
     def __init__(
         self,
@@ -401,33 +407,67 @@ class WebFeedbackSession:
         )
         return stats
 
-    async def wait_for_feedback(self, timeout: int = 600) -> dict[str, Any]:
+    @staticmethod
+    def effective_wait_seconds(timeout: int) -> float:
+        """把调用方给的超时时间换算成实际等待的秒数
+
+        比调用方的时限稍短，提前处理，避免和调用方自己的超时撞在边界上：
+        短超时（不超过 30 秒）提前 1 秒、最少等 5 秒，长超时提前 5 秒。
+
+        Args:
+            timeout: 调用方给的超时时间（秒）
+
+        Returns:
+            实际等待的秒数
+        """
+        if timeout <= 30:
+            return max(timeout - 1, 5)
+        return timeout - 5
+
+    async def wait_for_feedback(
+        self, timeout: int = 600, on_heartbeat: HeartbeatCallback | None = None
+    ) -> dict[str, Any]:
         """
         等待用户反馈，包含图片，支援超时自动清理
 
+        等待期间每 HEARTBEAT_INTERVAL_SECONDS 秒调一次 on_heartbeat，
+        调用方（MCP 客户端）靠它得知这次调用还活着，不会因为太久没有任何消息而判定超时。
+
         Args:
             timeout: 超时时间（秒）
+            on_heartbeat: 心跳回调，参数是已等待的秒数和总共要等的秒数；出错只记日志，不影响等待
 
         Returns:
             dict: 反馈结果
+
+        Raises:
+            FeedbackTimeoutError: 用户在时限内没有回复
         """
         try:
-            # 使用比 MCP 超时稍短的时间（提前处理，避免边界竞争）
-            # 对于短超时（<30秒），提前1秒；对于长超时，提前5秒
-            if timeout <= 30:
-                actual_timeout = max(timeout - 1, 5)  # 短超时提前1秒，最少5秒
-            else:
-                actual_timeout = timeout - 5  # 长超时提前5秒
+            actual_timeout = self.effective_wait_seconds(timeout)
             debug_log(
                 f"会话 {self.session_id} 开始等待反馈，超时时间: {actual_timeout} 秒（原始: {timeout} 秒）"
             )
 
-            loop = asyncio.get_event_loop()
-
-            def wait_in_thread():
-                return self.feedback_completed.wait(actual_timeout)
-
-            completed = await loop.run_in_executor(None, wait_in_thread)
+            # 把一次长等拆成一段一段，每段之间发一次心跳
+            loop = asyncio.get_running_loop()
+            started = time.monotonic()
+            deadline = started + actual_timeout
+            completed = False
+            while time.monotonic() < deadline:
+                slice_seconds = min(
+                    self.HEARTBEAT_INTERVAL_SECONDS, deadline - time.monotonic()
+                )
+                completed = await loop.run_in_executor(
+                    None, self.feedback_completed.wait, slice_seconds
+                )
+                if completed:
+                    break
+                if time.monotonic() < deadline:
+                    await self._send_heartbeat(
+                        on_heartbeat, time.monotonic() - started, actual_timeout
+                    )
+            completed = completed or self.feedback_completed.is_set()
 
             if completed:
                 debug_log(f"会话 {self.session_id} 收到用户反馈")
@@ -441,9 +481,7 @@ class WebFeedbackSession:
                 f"会话 {self.session_id} 在 {actual_timeout} 秒后超时，开始清理资源..."
             )
             await self._cleanup_resources_on_timeout()
-            raise TimeoutError(
-                f"等待用户反馈超时（{actual_timeout}秒），界面已自动关闭"
-            )
+            raise FeedbackTimeoutError(actual_timeout)
 
         except asyncio.CancelledError:
             # AI 取消了这次调用，没有人再等回复：标记为已结束，之后用户发的消息改走队列
@@ -458,6 +496,23 @@ class WebFeedbackSession:
             debug_log(f"会话 {self.session_id} 发生异常: {e}")
             await self._cleanup_resources_on_timeout()
             raise
+
+    async def _send_heartbeat(
+        self, on_heartbeat: HeartbeatCallback | None, elapsed: float, total: float
+    ) -> None:
+        """向调用方发一次心跳，出错只记日志，不影响等待
+
+        Args:
+            on_heartbeat: 心跳回调，没有时不做事
+            elapsed: 已等待的秒数
+            total: 总共要等的秒数
+        """
+        if on_heartbeat is None:
+            return
+        try:
+            await on_heartbeat(elapsed, total)
+        except Exception as e:
+            debug_log(f"会话 {self.session_id} 发送心跳失败: {e}")
 
     async def submit_feedback(
         self,

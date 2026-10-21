@@ -81,6 +81,14 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - **AI 收到的内容**：随提问送达时是 `interactive_feedback` 的返回值（`MessageQueue.build_result()`）：先是一段说明（「你工作期间，用户追加了 N 条消息，按发送顺序列出。它们不是对你本次 summary 的回答，请按顺序当作新指令处理」），再按发送顺序列出每条 `[序号] HH:MM` 加文字（没有文字写「（无文字）」），带图片的消息标注图片张数和它们在返回图片里的位置；图片按消息顺序汇总，不含缩略图。随工具调用送达时是附在工具结果后面的文字（`MessageQueue.build_tool_call_context()`）：说明改成「请按顺序当作新指令处理，处理完再调用 interactive_feedback 汇报」，每条消息同样是 `[序号] HH:MM` 加文字，带图片的在文字下面逐行列出「图片：<本地路径>」
 - **WebSocket 通知**：每条排队消息都有回应——`queue.messageQueued`（成功，带 `message_id`）、`queue.full`（`severity: warning`，队列已满）、`queue.messageEmpty`（`severity: warning`，没有文字且图片都被过滤掉）；`session_updated` 增加 `silent` 字段；钩子取走消息后发 `{"type": "queue_delivered", "count": N}`。通知码定义在 `MessageCodes`（`QUEUE_*`）
 
+### 等待回复与心跳
+Cursor 对每次 MCP 工具调用有 120 秒的空闲超时：120 秒内收不到这次调用的任何消息，调用就以 `MCP error -32001: Request timed out` 失败（Cursor 的 MCP 日志里是 `MCP tool call timed out (idle)`，钩子日志里 `postToolUse` 的 `duration` 恰好 120.0 秒，AI 拿到的是 `{"error":"MCP error -32001: Request timed out"}` 这段文字）。每收到这次调用的一条进度通知，空闲计时就重置（`resetTimeoutOnProgress`），总时限默认 60 分钟。这两个值来自 Cursor 远程下发的动态配置（`mcp_reconnect_config` 的 `toolCallIdleTimeoutMs`、`toolCallMaxTotalTimeoutMs`），调用工具时不读按服务器的配置，所以 MCP 配置里的 `timeout` 对 Cursor 无效。这些是按 Cursor 3.26.13 的日志和打包代码（`mcpProcessMain.js`）得出的，Cursor 没有文档说明。
+- **心跳**：`WebFeedbackSession.wait_for_feedback()` 把一次长等拆成每段 `HEARTBEAT_INTERVAL_SECONDS`（30 秒），每段没等到回复就调一次 `on_heartbeat(已等秒数, 总秒数)`。`server.build_heartbeat()` 把它接到 FastMCP 的 `ctx.report_progress()`，`interactive_feedback` 的 `ctx: Context | None` 参数由 FastMCP 注入，不出现在工具参数里。回调从 `interactive_feedback` 经 `server.launch_web_feedback_ui()`、`web.launch_web_feedback_ui()` 一路传到 `wait_for_feedback()`。客户端没给进度令牌（请求里没有 `progressToken`）时 `report_progress()` 什么也不做；心跳出错只记日志，不影响等待
+- **等待时限**：`timeout` 默认 600 秒，也是上限（`MAX_FEEDBACK_TIMEOUT_SECONDS`），更大的值按 600 处理，远在 Cursor 的 60 分钟总时限之内。实际等待比 `timeout` 少 5 秒（不超过 30 秒的少 1 秒、最少 5 秒，`effective_wait_seconds()`），免得和客户端自己的时限撞在边界上
+- **用户没回复**：时限到了，会话标成 `TIMEOUT` 并清理资源，抛 `FeedbackTimeoutError`（`utils/error_handler.py`，`TimeoutError` 的子类，带 `waited_seconds`）。`interactive_feedback` 单独接住它，返回以 `[interactive_feedback TIMEOUT]` 开头的提示（`build_timeout_guidance()`）：这不是用户的答复，让 AI 立即再次调用，`summary` 用一两句话重述问题即可，页面上留着上一轮的完整内容。别的 `TimeoutError`（套接字等）不会被当成「用户没回复」，走通用的错误提示
+- **核对**：心跳不起作用时，Cursor 的 MCP 日志（`mcp-server-user-gl-mcp-feedback.log`）里会出现 `MCP tool call timed out (idle)`，钩子日志里对应调用的 `duration` 是 120.0 秒；超过总时限的是 `(max_total)`
+- 测试：`tests/unit/test_feedback_wait.py`（会话的等待与心跳、用 FastMCP 内存客户端验证进度通知、`timeout` 上限、用户没回复时的提示）
+
 ### 房间（对话隔离）
 一个服务（端口 8765），每个 Cursor 对话一个房间（`Room`，`web/models/room.py`）：房间持有这个对话自己的会话（最多 10 个）、排队消息（`MessageQueue`）和页面连接，对话之间互不影响。
 - **房间标识**：钩子填入的 `conversation_id`（`Room.room_id_for()`）；没有或格式不对的调用共用 `default` 房间。`WebUIManager.rooms` 是房间表，`get_or_create_room()` 加锁创建（MCP 线程创建、Web 线程查询）
@@ -125,7 +133,7 @@ AI 没在等回复时（正在干活，或上一次调用已经结束），用�
 - 前端渲染位置：顶栏的对话 ID 徽标（`updateConversationBadge()`，由 `renderChat()` 按最新一轮更新）、浏览器标签页标题的后缀（对话 ID 前 4 位）
 
 ### MCP 交互规则去哪儿了
-`interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题 / 收到排队消息怎么处理」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本文件不重复这些内容。
+`interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题 / 收到排队消息怎么处理」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本文件不重复这些内容；`timeout` 的上限和用户没回复时的提示见「等待回复与心跳」。
 
 ### index.html 功能
 - 房间列表页（`/`）：每个对话一张卡片，显示标题（`Room.page_title()`）、项目目录、「等你回复」、「AI 处理中」或「已结束」（`stop` 钩子报告过回合结束，对话再动起来之前）、排队消息数、最近活动时间，点击进入 `/c/{room_id}/`；没有房间时显示「等待 MCP 服务调用」提示

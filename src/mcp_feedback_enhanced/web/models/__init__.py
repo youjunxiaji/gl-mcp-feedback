@@ -7,7 +7,12 @@ Web UI 数据模型模组
 """
 
 from .feedback_result import FeedbackResult
-from .feedback_session import CleanupReason, SessionStatus, WebFeedbackSession
+from .feedback_session import (
+    CleanupReason,
+    HeartbeatCallback,
+    SessionStatus,
+    WebFeedbackSession,
+)
 from .message_queue import (
     DeliveryChannel,
     MessageNotPendingError,
@@ -24,6 +29,7 @@ __all__ = [
     "CleanupReason",
     "DeliveryChannel",
     "FeedbackResult",
+    "HeartbeatCallback",
     "MessageNotPendingError",
     "MessageQueue",
     "QueueFullError",

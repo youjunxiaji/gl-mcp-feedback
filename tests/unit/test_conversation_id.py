@@ -99,7 +99,7 @@ class TestInteractiveFeedbackTool:
     async def test_conversation_id_is_passed_to_web_ui(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        captured: dict[str, str] = {}
+        captured: dict[str, object] = {}
 
         async def fake_launch(project_dir: str, summary: str, timeout: int, **kwargs):
             captured.update(kwargs)
@@ -116,7 +116,7 @@ class TestInteractiveFeedbackTool:
                 {"summary": "摘要", "conversation_id": CONVERSATION_ID},
             )
 
-        assert captured == {"conversation_id": CONVERSATION_ID}
+        assert captured["conversation_id"] == CONVERSATION_ID
 
     async def test_unknown_parameter_is_rejected(self):
         async with Client(server.mcp) as client:

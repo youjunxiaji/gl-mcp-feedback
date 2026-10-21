@@ -25,6 +25,7 @@ from ..utils.error_handler import ErrorHandler, ErrorType
 from ..utils.memory_monitor import get_memory_monitor
 from .models import (
     DEFAULT_ROOM_ID,
+    HeartbeatCallback,
     QueueMarker,
     Room,
     RoomRegistration,
@@ -674,6 +675,7 @@ async def launch_web_feedback_ui(
     timeout: int = 600,
     *,
     conversation_id: str = "",
+    on_heartbeat: HeartbeatCallback | None = None,
 ) -> dict:
     """启动 Web 反馈界面并等待用户反馈。
 
@@ -685,9 +687,13 @@ async def launch_web_feedback_ui(
         summary: AI 工作摘要（Markdown）。
         timeout: 超时时间（秒）。
         conversation_id: 这次调用来自哪个 Cursor 对话，由钩子填入，没有钩子时为空。
+        on_heartbeat: 等用户回复期间定时调用的心跳回调，见 `WebFeedbackSession.wait_for_feedback()`。
 
     Returns:
         dict: 反馈结果，包含 logs、interactive_feedback 和 images。
+
+    Raises:
+        FeedbackTimeoutError: 用户在时限内没有回复。
     """
     manager = get_web_ui_manager()
 
@@ -718,7 +724,7 @@ async def launch_web_feedback_ui(
 
     try:
         # 等待用户反馈，传递 timeout 参数
-        result = await session.wait_for_feedback(timeout)
+        result = await session.wait_for_feedback(timeout, on_heartbeat=on_heartbeat)
         debug_log("收到用户反馈")
         return result
     except TimeoutError:

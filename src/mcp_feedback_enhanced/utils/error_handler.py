@@ -43,6 +43,20 @@ class ErrorSeverity(Enum):
     CRITICAL = "critical"  # 严重：系统无法正常运行
 
 
+class FeedbackTimeoutError(TimeoutError):
+    """用户在等待时限内没有回复。
+
+    不是故障，和网络、套接字这类系统超时区分开：AI 收到的是一条让它再次提问的提示。
+
+    Args:
+        waited_seconds: 实际等待的秒数。
+    """
+
+    def __init__(self, waited_seconds: float) -> None:
+        super().__init__(f"等待用户反馈超时（{waited_seconds:g}秒）")
+        self.waited_seconds = waited_seconds
+
+
 class ErrorHandler:
     """统一错误处理器"""
 

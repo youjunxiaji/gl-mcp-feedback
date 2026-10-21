@@ -26,9 +26,10 @@ import io
 import json
 import os
 import sys
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.tools.tool import ToolResult
 from fastmcp.utilities.types import Image as MCPImage
 from mcp.types import TextContent
@@ -38,7 +39,7 @@ from pydantic import Field
 from .debug import server_debug_log as debug_log
 
 # 导入错误处理框架
-from .utils.error_handler import ErrorHandler, ErrorType
+from .utils.error_handler import ErrorHandler, ErrorType, FeedbackTimeoutError
 
 # 导入资源管理器
 from .utils.resource_manager import create_temp_file
@@ -125,6 +126,9 @@ _encoding_initialized = init_encoding()
 SERVER_NAME = "互动式反馈收集 MCP"
 SSH_ENV_VARS = ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
 REMOTE_ENV_VARS = ["REMOTE_CONTAINERS", "CODESPACES"]
+# 等用户回复的时限（秒），默认值和上限相同，调用方给的更大也只等这么久。
+# Cursor 对每次 MCP 工具调用有 120 秒的空闲超时，等待期间靠心跳（进度通知）重新计时，总时限 60 分钟，这里远在其内
+MAX_FEEDBACK_TIMEOUT_SECONDS = 600
 
 
 # 初始化 MCP 服务器
@@ -364,6 +368,54 @@ def process_images(images_data: list[dict]) -> list[MCPImage]:
     return mcp_images
 
 
+def build_heartbeat(
+    ctx: Context | None,
+) -> Callable[[float, float], Awaitable[None]] | None:
+    """把 MCP 进度通知包成等用户回复期间的心跳回调
+
+    Cursor 对每次工具调用有 120 秒的空闲超时，每收到这次调用的一条进度通知就重新计时，
+    所以等待期间定时发一条，调用就不会被掐掉。客户端没有给进度令牌时，发送什么也不做。
+
+    Args:
+        ctx: FastMCP 注入的请求上下文，没有时不发心跳
+
+    Returns:
+        心跳回调，参数是已等待的秒数和总共要等的秒数；没有上下文时为 None
+    """
+    if ctx is None:
+        return None
+
+    async def send_heartbeat(elapsed: float, total: float) -> None:
+        await ctx.report_progress(
+            progress=elapsed,
+            total=total,
+            message=f"等待用户回复，已等 {int(elapsed)} 秒",
+        )
+
+    return send_heartbeat
+
+
+def build_timeout_guidance(waited_seconds: float) -> str:
+    """用户在时限内没有回复时给 AI 的提示
+
+    Args:
+        waited_seconds: 实际等待的秒数
+
+    Returns:
+        提示文字，让 AI 再次调用 interactive_feedback 继续等
+    """
+    return (
+        "[interactive_feedback TIMEOUT]\n"
+        f"用户在 {waited_seconds:g} 秒内没有回复，这一轮提问已作废，页面上标为超时。"
+        "这不是用户的答复，也不代表对话结束。\n"
+        "请立即再次调用 interactive_feedback 继续等待：\n"
+        "1. summary 用一两句话重述你在等用户回答的问题即可，"
+        "页面上还留着上一轮的完整内容，不必重复整段。\n"
+        f"2. timeout 照旧传 {MAX_FEEDBACK_TIMEOUT_SECONDS}。\n"
+        "3. 只有用户明确说结束（结束 / 不用了 / stop / done）才停止。"
+    )
+
+
 # ===== MCP Prompt 定义 =====
 # Ultra-minimal activation prompt. The full interaction contract lives in
 # the user's project rules (gl-mcp-feedback 交互规范) and in
@@ -419,8 +471,15 @@ async def interactive_feedback(
         ),
     ] = "",
     timeout: Annotated[
-        int, Field(description="Seconds to wait for user feedback. Keep >= 600.")
-    ] = 600,
+        int,
+        Field(
+            description=(
+                "Seconds to wait for user feedback. Values above "
+                f"{MAX_FEEDBACK_TIMEOUT_SECONDS} are capped, so always pass "
+                f"{MAX_FEEDBACK_TIMEOUT_SECONDS}."
+            )
+        ),
+    ] = MAX_FEEDBACK_TIMEOUT_SECONDS,
     conversation_id: Annotated[
         str,
         Field(
@@ -430,6 +489,7 @@ async def interactive_feedback(
             )
         ),
     ] = "",
+    ctx: Context | None = None,
 ) -> ToolResult:
     """Open a Web UI to collect interactive feedback from the user.
 
@@ -480,13 +540,16 @@ async def interactive_feedback(
     Args:
         project_directory: Absolute or relative project path. Defaults to cwd.
         summary: Required Markdown summary. No empty string, no placeholder.
-        timeout: Seconds to wait for user feedback. Keep ``>= 600``.
+        timeout: Seconds to wait for user feedback. Values above ``600`` are
+            capped, so always pass ``600``.
         conversation_id: Filled in by a Cursor hook. Never set it yourself.
 
     Returns:
         ToolResult: TextContent with the user's text feedback plus
             MCPImage objects for any uploaded images. An empty result
-            means the user skipped — re-call to ask why.
+            means the user skipped — re-call to ask why. A result starting
+            with ``[interactive_feedback TIMEOUT]`` means the user has not
+            replied within the wait limit — re-call to keep waiting.
     """
     # summary 运行时校验：阻止 AI 使用空串或占位套话偷懒
     # 规范化：去首尾空白 + 去末尾中英文标点，让“我已完成了您请求的任务”“…。”“… .”都能命中
@@ -517,6 +580,12 @@ async def interactive_feedback(
     debug_log(f"环境检测结果 - 远程: {is_remote}, WSL: {is_wsl}")
     debug_log("使用界面: Web UI")
 
+    if timeout > MAX_FEEDBACK_TIMEOUT_SECONDS:
+        debug_log(
+            f"timeout {timeout} 秒超过上限，按 {MAX_FEEDBACK_TIMEOUT_SECONDS} 秒等待"
+        )
+        timeout = MAX_FEEDBACK_TIMEOUT_SECONDS
+
     try:
         # 确保项目目录存在
         if not os.path.exists(project_directory):
@@ -527,7 +596,11 @@ async def interactive_feedback(
         debug_log("反馈模式: web")
 
         result = await launch_web_feedback_ui(
-            project_directory, summary, timeout, conversation_id=conversation_id
+            project_directory,
+            summary,
+            timeout,
+            conversation_id=conversation_id,
+            on_heartbeat=build_heartbeat(ctx),
         )
 
         # 处理取消情况
@@ -561,6 +634,14 @@ async def interactive_feedback(
         debug_log(f"反馈收集完成，共 {len(feedback_items)} 个项目")
         return ToolResult(content=feedback_items)
 
+    except FeedbackTimeoutError as e:
+        debug_log(f"用户 {e.waited_seconds:g} 秒内没有回复")
+        return ToolResult(
+            content=[
+                TextContent(type="text", text=build_timeout_guidance(e.waited_seconds))
+            ]
+        )
+
     except Exception as e:
         error_id = ErrorHandler.log_error_with_context(
             e,
@@ -576,7 +657,12 @@ async def interactive_feedback(
 
 
 async def launch_web_feedback_ui(
-    project_dir: str, summary: str, timeout: int, *, conversation_id: str = ""
+    project_dir: str,
+    summary: str,
+    timeout: int,
+    *,
+    conversation_id: str = "",
+    on_heartbeat: Callable[[float, float], Awaitable[None]] | None = None,
 ) -> dict:
     """启动 Web UI 收集反馈，支持自定义超时时间。
 
@@ -585,9 +671,13 @@ async def launch_web_feedback_ui(
         summary: AI 工作摘要（Markdown）。
         timeout: 超时时间（秒）。
         conversation_id: 这次调用来自哪个 Cursor 对话，由钩子填入，没有钩子时为空。
+        on_heartbeat: 等用户回复期间定时调用的心跳回调，参数是已等待的秒数和总共要等的秒数。
 
     Returns:
         dict: 收集到的反馈数据。
+
+    Raises:
+        FeedbackTimeoutError: 用户在时限内没有回复。
     """
     debug_log(f"启动 Web UI 界面，超时时间: {timeout} 秒")
 
@@ -595,7 +685,11 @@ async def launch_web_feedback_ui(
         from .web import launch_web_feedback_ui as web_launch
 
         return await web_launch(
-            project_dir, summary, timeout, conversation_id=conversation_id
+            project_dir,
+            summary,
+            timeout,
+            conversation_id=conversation_id,
+            on_heartbeat=on_heartbeat,
         )
     except ImportError as e:
         error_id = ErrorHandler.log_error_with_context(

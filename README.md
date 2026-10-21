@@ -17,7 +17,7 @@
 
 | 名称 | 说明 |
 |------|------|
-| `interactive_feedback` | 打开 Web UI 收集反馈。参数：`project_directory`、`summary`（Markdown，必填）、`timeout`（秒，建议 ≥ 600）、`conversation_id`（可选，由 Cursor 钩子填入，AI 不要填） |
+| `interactive_feedback` | 打开 Web UI 收集反馈。参数：`project_directory`、`summary`（Markdown，必填）、`timeout`（秒，默认 600，也是上限，更大的值按 600 处理）、`conversation_id`（可选，由 Cursor 钩子填入，AI 不要填） |
 | `get_system_info` | 返回平台、Python 版本、是否远程 / WSL 等环境信息 |
 | prompt `chat` | 无参数，激活互动模式。在 Cursor 中输入 `/user-gl-mcp-feedback/chat`（前缀随 MCP 配置里的服务器名而定） |
 
@@ -51,6 +51,8 @@
     }
 }
 ```
+
+配置里的 `timeout` 只有读它的客户端（比如 Cline）才用得上，Cursor 不读：Cursor 对每次 MCP 工具调用有 120 秒的空闲超时，调用期间每收到一条进度通知就重新计时。所以等用户回复期间，服务端每 30 秒发一条进度通知，一次提问最长能等 10 分钟（`timeout` 的上限）。
 
 ### 环境变量
 
@@ -112,7 +114,7 @@ gl-mcp-feedback 交互规范：
 1. 代码修改完成后，必须调用 interactive_feedback，在 summary 中说明已完成的修改，等待用户测试反馈。
 2. 用户提出新需求时，先调用 interactive_feedback 阐述理解和实现思路，等用户确认后再写代码。
 3. 工具调用被中断/取消时，立即调用 interactive_feedback 询问用户。
-4. MCP 调用超时时，立即重新调用等待反馈（timeout 建议 600 秒以上）。
+4. 收到「用户没有回复」的提示、或 MCP 调用超时时，立即重新调用等待反馈（timeout 传 600）。
 5. summary 参数使用 Markdown 格式，按需使用标题、列表、文件路径等结构化信息。
 6. summary 用 Markdown 时尽量保持简洁：减少代码块嵌套、长串双引号、复杂转义，能用纯文本叙述就用纯文本，能用列表就不要堆段落。代码块仅在贴具体代码/命令时使用。
 ```
@@ -124,6 +126,8 @@ gl-mcp-feedback 交互规范：
 **页面没有收到新的反馈**：多半是 WebSocket 断了，刷新浏览器页面即可。
 
 **对话进行到一半，页面显示「已断开」，并提示 MCP 服务已断开**：MCP 进程被重启了，多半是 Cursor 自己重启的（按日志观察，它每次启动后会把 MCP 重启一次，多数在几秒内，偶尔晚到几分钟；在设置里手动重载 MCP 也一样）。房间和记录都在进程内存里，刷新页面恢复不了；AI 下次提问时会在新进程里新开一个页面，旧页面上的记录还留着，直接关掉即可。
+
+**AI 在我没回复时又发来一条很短的提问**：用户在 10 分钟（`timeout` 的上限）内没有回复，这一轮提问就标为超时，页面上显示「该轮对话已超时，未收到回复」，AI 收到一条让它再次提问的提示，于是用一两句话重新发起；上一轮的完整内容还留在页面上。如果两三分钟就报 `MCP error -32001: Request timed out`，说明进度通知没起作用：先确认 MCP 是最新版本并且重启过（`uvx` 用 `@latest`，从源码运行的在 Cursor 设置里把 gl-mcp-feedback 关掉再打开）。
 
 **排队的消息要等 AI 下次提问才送达**：钩子没生效。重新执行 `uvx gl-mcp-feedback@latest hooks install`，它会试跑脚本，哪里不通会直接告诉你；也可以确认 `~/.cursor/hooks.json` 里登记了 `post`，以及 Cursor 的 PATH 里有 `uv`。
 
