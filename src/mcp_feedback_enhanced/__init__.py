@@ -16,7 +16,7 @@ gl-mcp-feedback
 - 重构的模组化架构
 """
 
-__version__ = "3.0.1"
+__version__ = "3.0.2"
 __author__ = "鼬君夏纪"
 
 import os
