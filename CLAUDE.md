@@ -134,7 +134,7 @@ Cursor 对每次 MCP 工具调用有 120 秒的空闲超时：120 秒内收不�
 - 前端渲染位置：顶栏的对话 ID 徽标（`updateConversationBadge()`，由 `renderChat()` 按最新一轮更新）、浏览器标签页标题的后缀（对话 ID 前 4 位）
 
 ### MCP 交互规则去哪儿了
-`interactive_feedback` 工具的「何时调用 / `summary` 怎么写 / 何时该问『可以收尾了吗』选择题 / 何时停止、停止前清点后台任务 / 收到排队消息怎么处理」全部在 `src/mcp_feedback_enhanced/server.py` 里 —— 由 `_CHAT_PROMPT`（`@mcp.prompt(name="chat")` 返回）和 `interactive_feedback` 函数自身的 docstring/Field description 承载。本文件不重复这些内容；`timeout` 的上限和用户没回复时的提示见「等待回复与心跳」。
+`interactive_feedback` 的使用约束（`summary` 怎么写、不用 `AskQuestion`、何时停止、停止前清点后台任务、收到排队消息怎么处理、参数怎么填）只写在 `src/mcp_feedback_enhanced/server.py` 里 `interactive_feedback` 函数自身的 docstring 和 Field description 上，这是工具说明，每个对话首次调用前都会读到，改规则只改这一处。`@mcp.prompt(name="chat")` 返回的 `_CHAT_PROMPT` 只是激活信号（立即调用 `interactive_feedback`），不重复这些约束。「何时调用」写在用户自己的 gl-mcp-feedback 规则里（README 的「推荐的 AI 规则」）。本文件不重复这些内容；`timeout` 的上限和用户没回复时的提示见「等待回复与心跳」。
 - **停止前清点后台任务的原因**：Cursor 在回合结束时，对放到后台、没被 `AwaitShell` 看过的已完成命令补发完成通知，并起一个新回合（用户消息是 `Briefly inform the user about the task result and perform any follow-up actions (if needed).`）。`interactive_feedback` 让整个对话停在同一个回合里，通知要等用户说结束、回合结束时才到，那时房间已被销毁（见「房间」的「对话结束与销毁」），AI 被叫醒后再调用本工具就会新开一个页面。所以规则要求停止前对每个后台命令用 `AwaitShell`（`shell_id`、`block_until_ms: 0`）看一眼，万一仍被叫醒就一句话说明结果、不再调用本工具。「看一眼就能压住通知」是按 Cursor 自己的 `AwaitShell` 说明（观察过的任务可以跳过通知）和一次实际对话（被 `AwaitShell` 看过的两个命令没有补发通知，没看过的补发了）得出的，没有官方文档，也没有针对 `block_until_ms: 0` 实测；按 Cursor 3.26.13 的日志和打包代码得出
 
 ### index.html 功能
