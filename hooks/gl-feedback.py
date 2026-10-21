@@ -16,7 +16,7 @@ gl-mcp-feedback 的 Cursor 钩子，用法：gl-feedback.py <模式>
     log   sessionStart：只把事件写进 hook-events.log。
     stop  stop（agent 每个回合结束时触发）：先写进 hook-events.log，
           再看这个对话有没有房间，有就向服务端报告回合结束（带上 status：completed、aborted、error）。
-          正常结束（completed）的房间几秒后销毁，页面随之关闭；其他状态只给房间标上已结束。
+          正常结束（completed）的房间几秒后销毁，页面显示「对话已结束」；其他状态只给房间标上已结束。
 
 post 在每次工具调用结束时都会触发，没有排队消息时要尽快返回：
 只从输入开头取对话标识，看标记文件 $GL_FEEDBACK_HOME/queue/<对话标识> 在不在，不在就直接返回；

@@ -6,7 +6,7 @@
     <title>{{ page_title }}</title>
 
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+    <link id="favicon" rel="icon" type="image/svg+xml" href="/static/icon.svg">
     <link rel="apple-touch-icon" href="/static/icon.svg">
 
     <!-- Tailwind CSS (local) -->
@@ -382,7 +382,7 @@
             badge.classList.toggle('hidden', !id);
         };
 
-        // --- Alert / 提醒（声音 + 桌面通知） ---
+        // --- Alert / 提醒（声音 + 桌面通知 + 标签页绿点） ---
         // 新反馈请求到达时把在后台标签/最小化窗口的用户「叫」回来。默认始终开启，无开关。
         var alertAudioCtx = null;
 
@@ -468,7 +468,69 @@
                 '新的反馈请求',
                 '点击切回反馈页面进行回复'
             );
+            if (!isViewing()) markUnread();
         }
+
+        // --- 未读标记（标签页标题和图标） ---
+        // 页面没在被看（标签页在后台，或浏览器窗口没焦点）时有新问题到达：标题前加绿点，图标右上角也加一个绿点，
+        // 标签页很多、标题被挤没了也分得清哪个有新消息；切回来并且窗口有焦点时还原
+        const BASE_TITLE = document.title;
+        const UNREAD_TITLE_PREFIX = '🟢 ';
+        const FAVICON_URL = '/static/icon.svg';
+        const UNREAD_BADGE_SVG = '<circle cx="24" cy="8" r="6" fill="#22c55e" stroke="#ffffff" stroke-width="2"/>';
+        let unread = false;
+        let unreadFaviconHref = '';
+
+        const isViewing = () => !document.hidden && document.hasFocus();
+
+        // 换掉整个 <link>：只改 href，部分浏览器不会刷新图标
+        const setFavicon = (href) => {
+            const link = document.createElement('link');
+            link.id = 'favicon';
+            link.rel = 'icon';
+            link.type = 'image/svg+xml';
+            link.href = href;
+            const old = document.getElementById('favicon');
+            if (old) old.replaceWith(link);
+            else document.head.appendChild(link);
+        };
+
+        // 取现有图标，在右上角加一个绿点，转成 data URL；取不到时返回空串，只换标题
+        const buildUnreadFavicon = async () => {
+            if (unreadFaviconHref) return unreadFaviconHref;
+            try {
+                const response = await fetch(FAVICON_URL);
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const svg = (await response.text()).replace('</svg>', UNREAD_BADGE_SVG + '</svg>');
+                unreadFaviconHref = 'data:image/svg+xml,' + encodeURIComponent(svg);
+            } catch (err) {
+                console.warn('buildUnreadFavicon failed', err);
+            }
+            return unreadFaviconHref;
+        };
+
+        const markUnread = async () => {
+            if (unread) return;
+            unread = true;
+            document.title = UNREAD_TITLE_PREFIX + BASE_TITLE;
+            const href = await buildUnreadFavicon();
+            // 取图标期间已经被看到了（标记已还原）就不再换图标
+            if (href && unread) setFavicon(href);
+        };
+
+        const clearUnread = () => {
+            if (!unread) return;
+            unread = false;
+            document.title = BASE_TITLE;
+            setFavicon(FAVICON_URL);
+        };
+
+        const clearUnreadIfViewing = () => {
+            if (isViewing()) clearUnread();
+        };
+
+        document.addEventListener('visibilitychange', clearUnreadIfViewing);
+        window.addEventListener('focus', clearUnreadIfViewing);
 
         // --- WebSocket ---
         let ws = null;
@@ -479,17 +541,14 @@
         let roomClosed = false;
         // 断线后重连一次仍然失败（服务进程已经不在，比如被 Cursor 重启）：页面不关，已有的记录留着
         let connectionLost = false;
-        const ROOM_CLOSE_DELAY_MS = 3000;
 
-        // 房间被销毁：不再重连，几秒后尝试关掉页面。
-        // 浏览器只允许脚本关闭自己打开的标签页（或只有一条历史记录的标签页），关不掉时页面留着，显示「对话已结束」
+        // 房间被销毁：不再重连，页面不自己关闭，已有的记录留着，显示「对话已结束」
         const handleRoomClosed = () => {
             roomClosed = true;
             wsReady = false;
             setConnStatus('closed');
             applyComposerState();
-            announceToScreenReader('对话已结束，页面即将关闭');
-            setTimeout(() => window.close(), ROOM_CLOSE_DELAY_MS);
+            announceToScreenReader('对话已结束，这个页面可以关闭了');
         };
 
         // 重连失败：不关页面，用提示说明原因，输入框锁定。AI 下次提问时服务端会新开一个页面
@@ -535,9 +594,8 @@
                     wsReplaced = true;
                     wsReady = false;
                     setConnStatus('disconnected');
-                    console.log('Connection replaced by another tab/window, attempting to close tab');
+                    console.log('Connection replaced by another tab/window, will not reconnect');
                     applyComposerState();
-                    window.close();
                     return;
                 }
                 if (data.type === 'session_updated' && data.session_info) {
