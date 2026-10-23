@@ -12,15 +12,21 @@ gl-mcp-feedback 的 Cursor 钩子，用法：gl-feedback.py <模式>
           preToolUse 的输入里没有 MCP 服务器名，只能按工具名匹配：
           别的 MCP 服务器如果也有叫 interactive_feedback 的工具，它的调用同样会被改写。
     post  postToolUse 和 postToolUseFailure，挂在所有工具上：
-          这个对话有排队的消息就向服务端取走，用 additional_context 附在工具结果后面交给 AI。
+          Shell 返回后台任务的 ID 时，按对话记下来；
+          这个对话有排队的消息就向服务端取走，用 additional_context 附在工具结果后面交给 AI；
+          interactive_feedback 返回（用户回复了）时，再附上本对话已记录的后台任务 ID，
+          提醒结束对话前对每个 ID 用 AwaitShell 看一眼。
     log   sessionStart：只把事件写进 hook-events.log。
     stop  stop（agent 每个回合结束时触发）：先写进 hook-events.log，
           再看这个对话有没有房间，有就向服务端报告回合结束（带上 status：completed、aborted、error）。
           正常结束（completed）的房间几秒后销毁，页面显示「对话已结束」；其他状态只给房间标上已结束。
 
-post 在每次工具调用结束时都会触发，没有排队消息时要尽快返回：
-只从输入开头取对话标识，看标记文件 $GL_FEEDBACK_HOME/queue/<对话标识> 在不在，不在就直接返回；
+post 在每次工具调用结束时都会触发，要尽快返回：
+只从输入开头取对话标识和工具名，工具不是 Shell、也不是 interactive_feedback 时不解析整段输入；
+看标记文件 $GL_FEEDBACK_HOME/queue/<对话标识> 在不在，不在就不取排队消息；
 真的要联网时才导入 http.client（导入它要 9 毫秒左右，是整个脚本最大的一笔启动开销）。
+后台任务 ID 按对话存在 $GL_FEEDBACK_HOME/background-jobs/<对话标识>/<shell_id>，每个 ID 一个空文件，重复记录去重；
+记录只增不减，不判断任务是否已经看过（钩子分不清 AwaitShell 的内部读取和 AI 自己读终端输出文件）。
 stop 靠登记文件 $GL_FEEDBACK_HOME/rooms/<对话标识> 找到房间，房间存在期间一直在，不在说明这个对话没有房间。
 两种文件都是两行：房间的地址、写它的服务进程号；进程已经不在了，说明文件是过期的，删掉。
 
@@ -34,7 +40,7 @@ AwaitShell 等后台任务时，Cursor 每秒几次对终端输出文件发起�
 只依赖 Python 标准库，由 `uv run --script` 运行。脚本头里的 requires-python 和项目一致，uv 选的就是运行 MCP 服务的那个解释器。
 
 环境变量：
-    GL_FEEDBACK_HOME  标记文件、登记文件、图片和事件日志所在目录，默认 ~/.cache/gl-mcp-feedback，服务端读的是同一个变量
+    GL_FEEDBACK_HOME  标记文件、登记文件、后台任务 ID、图片和事件日志所在目录，默认 ~/.cache/gl-mcp-feedback，服务端读的是同一个变量
 """
 
 import contextlib
@@ -52,7 +58,7 @@ from urllib.parse import urlsplit
 LOG_MAX_BYTES = 1024 * 1024
 # 对话标识一般在输入开头，工具输出特别大时不必整段扫描
 HEAD_CHARS = 65536
-# 工具名和入参紧跟在对话标识后面，认内部轮询只看开头这一小段
+# 工具名和入参紧跟在对话标识后面，认内部轮询、取工具名只看开头这一小段
 POLL_SCAN_CHARS = 4096
 # 连接房间的超时，以及连上之后等回复的超时（秒）
 CONNECT_TIMEOUT_SECONDS = 1
@@ -66,10 +72,24 @@ CONVERSATION_ID = re.compile(r"[0-9A-Za-z_-]{1,128}")
 CONVERSATION_ID_FIELD = re.compile(r'"conversation_id"\s*:\s*"([0-9A-Za-z_-]{1,128})"')
 # stop 报告的状态只认字母和下划线，其余写成 unknown
 STATUS = re.compile(r"[A-Za-z_]{1,32}")
+# 输入开头一段里的 "tool_name": "<工具名>"，它排在工具的入参和输出之前
+TOOL_NAME_FIELD = re.compile(r'"tool_name"\s*:\s*"([^"]*)"')
 # 内部轮询：工具是 Read，读的是 .../terminals/<编号>.txt。JSON 里 Windows 路径的反斜杠写成两个
 TOOL_IS_READ = re.compile(r'"tool_name"\s*:\s*"Read"')
 TERMINAL_FILE = re.compile(
     r'"file_path"\s*:\s*"[^"]*(?:/|\\\\)terminals(?:/|\\\\)[^"/\\]*\.txt"'
+)
+# 后台任务 ID 是 Cursor 给的正整数，只认这个格式，它会被用作文件名
+BACKGROUND_SHELL_ID = re.compile(r"[1-9][0-9]{0,19}")
+# 用户在页面上回复后返回的工具；工具名在 MCP 服务器名后面，比如 MCP:interactive_feedback
+FEEDBACK_TOOL = "interactive_feedback"
+# 清单是累计的，看过的任务也一直列着；说明这一点，免得 AI 看到已结束的任务还在清单里觉得奇怪
+BACKGROUND_LIST_NOTE = "累计清单，已经看过的也会一直列在这里，再看一眼无妨"
+# 附在后台任务 ID 后面的清点要求：Cursor 记的是任务，不是进程，进程没了任务也算数
+BACKGROUND_REMINDER = (
+    "不管你觉得对应的进程是否已经结束或被杀掉，"
+    "结束对话前都要对每个 ID 调用 AwaitShell（shell_id 填 ID，block_until_ms 填 0）看一眼，"
+    "再按工具说明处理。"
 )
 
 # 事件日志只记这几个字段：（日志里的名字，输入里的名字）。不含用户输入、AI 的摘要、命令和文件内容
@@ -126,6 +146,19 @@ def extract_conversation_id(text: str) -> str | None:
     if isinstance(conversation_id, str) and CONVERSATION_ID.fullmatch(conversation_id):
         return conversation_id
     return None
+
+
+def extract_tool_name(text: str) -> str | None:
+    """从输入开头一段里取工具名
+
+    Args:
+        text: 钩子的输入
+
+    Returns:
+        工具名；开头一段里找不到时为 None
+    """
+    match = TOOL_NAME_FIELD.search(text[:POLL_SCAN_CHARS])
+    return match.group(1) if match else None
 
 
 def is_terminal_poll(text: str) -> bool:
@@ -279,13 +312,16 @@ def run_pre(text: str) -> dict[str, Any]:
     return allow
 
 
-def run_post(text: str) -> dict[str, Any]:
-    """postToolUse：这个对话有排队的消息就向服务端取走，交给 AI"""
-    conversation_id = extract_conversation_id(text)
-    if conversation_id is None:
-        return {}
-    marker = feedback_home() / "queue" / conversation_id
-    if not marker.is_file() or is_terminal_poll(text):
+def take_queued_context(marker: Path) -> dict[str, Any]:
+    """向服务端取走标记文件对应的排队消息
+
+    Args:
+        marker: 这个对话的标记文件
+
+    Returns:
+        服务端的回复；没有标记文件、连不上服务端、回复不是成功的 JSON 对象时为空字典
+    """
+    if not marker.is_file():
         return {}
     url = read_hook_file(marker)
     if url is None:
@@ -297,6 +333,79 @@ def run_post(text: str) -> dict[str, Any]:
     if not 200 <= status < 300:
         return {}
     return parse_object(body.decode("utf-8", errors="replace")) or {}
+
+
+def record_background_shell(data: dict[str, Any], directory: Path) -> None:
+    """Shell 成功返回后台任务的 ID 时，在这个对话的目录里为它落一个空文件
+
+    Args:
+        data: 解析后的钩子输入
+        directory: 这个对话保存后台任务 ID 的目录
+    """
+    output = data.get("tool_output")
+    if isinstance(output, str):
+        output = parse_object(output)
+    shell_id = str(output.get("shell_id")) if isinstance(output, dict) else ""
+    if BACKGROUND_SHELL_ID.fullmatch(shell_id):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / shell_id).touch(mode=0o600, exist_ok=True)
+
+
+def background_reminder(directory: Path) -> str:
+    """本对话已记录的后台任务 ID 和清点要求
+
+    Args:
+        directory: 这个对话保存后台任务 ID 的目录
+
+    Returns:
+        提醒文字；没有记录时为空串
+    """
+    identifiers = sorted(
+        (
+            path.name
+            for path in directory.glob("*")
+            if BACKGROUND_SHELL_ID.fullmatch(path.name)
+        ),
+        key=int,
+    )
+    if not identifiers:
+        return ""
+    listed = ", ".join(identifiers)
+    return f"本对话已记录的后台任务 ID：{listed}（{BACKGROUND_LIST_NOTE}）。{BACKGROUND_REMINDER}"
+
+
+def run_post(text: str) -> dict[str, Any]:
+    """postToolUse：记录后台 Shell 的 ID，取走排队的消息，用户回复后提醒清点后台任务
+
+    Args:
+        text: Cursor 通过标准输入传来的 JSON
+
+    Returns:
+        附加上下文；没有可附加的内容时为空字典
+    """
+    conversation_id = extract_conversation_id(text)
+    if conversation_id is None or is_terminal_poll(text):
+        return {}
+    home = feedback_home()
+    directory = home / "background-jobs" / conversation_id
+    tool_name = extract_tool_name(text) or ""
+    is_shell = tool_name == "Shell"
+    is_feedback = tool_name.rsplit(":", 1)[-1] == FEEDBACK_TOOL
+    data = (parse_object(text) if is_shell or is_feedback else None) or {}
+    succeeded = data.get("hook_event_name") == "postToolUse"
+    if is_shell and succeeded:
+        with contextlib.suppress(OSError):
+            record_background_shell(data, directory)
+    response = take_queued_context(home / "queue" / conversation_id)
+    if is_feedback and succeeded:
+        reminder = ""
+        with contextlib.suppress(OSError):
+            reminder = background_reminder(directory)
+        if reminder:
+            context = response.get("additional_context")
+            prefix = f"{context}\n\n" if isinstance(context, str) and context else ""
+            response["additional_context"] = prefix + reminder
+    return response
 
 
 def run_log(text: str) -> dict[str, Any]:

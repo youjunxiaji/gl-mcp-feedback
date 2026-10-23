@@ -874,6 +874,34 @@ def read_payload(
     }
 
 
+def shell_payload(
+    output: object,
+    conversation_id: str = CONVERSATION_A,
+    event: str = "postToolUse",
+) -> dict[str, Any]:
+    return {
+        "conversation_id": conversation_id,
+        "tool_name": "Shell",
+        "tool_input": {"command": "uv run pytest", "block_until_ms": 0},
+        "tool_output": output,
+        "hook_event_name": event,
+    }
+
+
+def feedback_payload(
+    conversation_id: str = CONVERSATION_A,
+    event: str = "postToolUse",
+    tool_name: str = "MCP:interactive_feedback",
+) -> dict[str, Any]:
+    return {
+        "conversation_id": conversation_id,
+        "tool_name": tool_name,
+        "tool_input": {"summary": "汇报"},
+        "tool_output": "用户的回复",
+        "hook_event_name": event,
+    }
+
+
 def write_hook_file(home: Path, folder: str, room_id: str, url: str, pid: int) -> Path:
     path = home / folder / room_id
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1282,6 +1310,170 @@ class TestHookPost:
 
         assert not marker.exists()
         assert lookalike.exists()
+
+
+class TestHookBackgroundIds:
+    """Shell 返回的后台任务 ID 按对话记下来，用户回复 interactive_feedback 后附上"""
+
+    @staticmethod
+    def record(
+        home: Path,
+        shell_id: int,
+        conversation_id: str = CONVERSATION_A,
+        *,
+        as_text: bool = False,
+    ) -> None:
+        output: object = {"shell_id": shell_id, "pid": 2120}
+        payload = shell_payload(
+            json.dumps(output) if as_text else output, conversation_id
+        )
+        assert run_hook("post", payload, home) == {}
+
+    @staticmethod
+    def context(output: dict[str, Any]) -> str:
+        context = output.get("additional_context")
+        assert isinstance(context, str)
+        return context
+
+    def test_ids_are_listed_after_the_user_replies(self, tmp_path: Path):
+        self.record(tmp_path, 606846)
+        self.record(tmp_path, 606845, as_text=True)
+        self.record(tmp_path, 606846)
+
+        context = self.context(run_hook("post", feedback_payload(), tmp_path))
+
+        assert context.startswith("本对话已记录的后台任务 ID：606845, 606846（")
+        assert "累计清单" in context
+        assert "AwaitShell" in context
+        assert "block_until_ms" in context
+        directory = tmp_path / "background-jobs" / CONVERSATION_A
+        assert {path.name: path.read_text() for path in directory.iterdir()} == {
+            "606845": "",
+            "606846": "",
+        }
+
+    def test_ids_are_sorted_by_number(self, tmp_path: Path):
+        for shell_id in (100, 99, 1000):
+            self.record(tmp_path, shell_id)
+
+        context = self.context(run_hook("post", feedback_payload(), tmp_path))
+
+        assert context.startswith("本对话已记录的后台任务 ID：99, 100, 1000（")
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        [
+            "interactive_feedback",
+            "MCP:interactive_feedback",
+            "MCP:gl:interactive_feedback",
+        ],
+    )
+    def test_the_tool_name_may_carry_a_server_prefix(
+        self, tmp_path: Path, tool_name: str
+    ):
+        self.record(tmp_path, 606845)
+
+        output = run_hook("post", feedback_payload(tool_name=tool_name), tmp_path)
+
+        assert self.context(output).startswith("本对话已记录的后台任务 ID：606845（")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            read_payload("/p/a.py"),
+            shell_payload({"exit_code": 0}),
+            feedback_payload(event="postToolUseFailure"),
+            feedback_payload(tool_name="MCP:other"),
+            feedback_payload(tool_name="MCP:interactive_feedback_extra"),
+            feedback_payload(CONVERSATION_B),
+            read_payload("/p/terminals/606845.txt"),
+        ],
+        ids=[
+            "other-tool",
+            "shell-without-id",
+            "failed-reply",
+            "other-mcp-tool",
+            "lookalike-tool",
+            "other-conversation",
+            "terminal-poll",
+        ],
+    )
+    def test_nothing_else_carries_the_ids(
+        self, tmp_path: Path, payload: dict[str, Any]
+    ):
+        self.record(tmp_path, 606845)
+
+        assert run_hook("post", payload, tmp_path) == {}
+
+    def test_nothing_is_added_without_ids(self, tmp_path: Path):
+        assert run_hook("post", feedback_payload(), tmp_path) == {}
+        assert not (tmp_path / "background-jobs").exists()
+
+    def test_the_ids_outlive_a_turn(self, tmp_path: Path):
+        self.record(tmp_path, 606845)
+
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+        output = run_hook("post", feedback_payload(), tmp_path)
+        assert self.context(output).startswith("本对话已记录的后台任务 ID：606845（")
+
+    @pytest.mark.parametrize("storage_error", [False, True])
+    def test_ids_follow_the_queued_messages_on_a_reply(
+        self, tmp_path: Path, stub_server: StubQueueServer, storage_error: bool
+    ):
+        if storage_error:
+            (tmp_path / "background-jobs").write_text("占位文件")
+        run_hook("post", shell_payload({"shell_id": 606845}), tmp_path)
+        stub_server.reply = (200, '{"additional_context": "继续处理"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        context = self.context(run_hook("post", feedback_payload(), tmp_path))
+
+        if storage_error:
+            assert context == "继续处理"
+        else:
+            assert context.startswith("继续处理\n\n本对话已记录的后台任务 ID：606845（")
+
+    def test_other_tools_deliver_the_messages_without_the_ids(
+        self, tmp_path: Path, stub_server: StubQueueServer
+    ):
+        self.record(tmp_path, 606845)
+        stub_server.reply = (200, '{"additional_context": "继续处理"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        output = run_hook("post", read_payload("/p/a.py"), tmp_path)
+
+        assert output == {"additional_context": "继续处理"}
+
+    @pytest.mark.parametrize(
+        "event, tool, output",
+        [
+            ("postToolUseFailure", "Shell", {"shell_id": 606845}),
+            ("postToolUse", "MCP:other", {"shell_id": 606845}),
+            ("postToolUse", "Shell", {"shell_id": "../outside"}),
+            ("postToolUse", "Shell", {"shell_id": True}),
+            ("postToolUse", "Shell", {"shell_id": 0}),
+            ("postToolUse", "Shell", {"exit_code": 0}),
+            ("postToolUse", "Shell", "not json"),
+            ("postToolUse", "Shell", None),
+        ],
+    )
+    def test_only_successful_background_shell_ids_are_recorded(
+        self, tmp_path: Path, event: str, tool: str, output: object
+    ):
+        payload = {
+            "conversation_id": CONVERSATION_A,
+            "tool_name": tool,
+            "tool_output": output,
+            "hook_event_name": event,
+        }
+
+        assert run_hook("post", payload, tmp_path) == {}
+        assert not (tmp_path / "background-jobs").exists()
 
 
 class TestHookLog:

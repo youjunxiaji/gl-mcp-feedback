@@ -493,11 +493,16 @@ async def interactive_feedback(
         - When the user skips without feedback, re-call this tool to ask
           why; only stop on explicit termination
           (``结束`` / ``不用了`` / ``stop`` / ``done``). Before stopping,
-          check the background jobs you started in this conversation
-          (``Shell`` with ``block_until_ms: 0``, or commands Cursor moved
-          to the background after the timeout): call ``AwaitShell`` with
-          each ``shell_id`` and ``block_until_ms: 0``. Wait for one-off
-          jobs (tests, builds) that are still running; do not stop
+          check EVERY background job you started in this conversation,
+          including ones you think already exited or were killed (Cursor
+          tracks the job, not your process: a launcher that returned
+          within seconds is still a job). That means each ``Shell`` with
+          ``block_until_ms: 0``, or command Cursor moved to the
+          background after the timeout. When a line starting with
+          "本对话已记录的后台任务 ID" is attached to the result of this
+          tool, check exactly those IDs. Call ``AwaitShell`` with each
+          ``shell_id`` and ``block_until_ms: 0``. Wait for one-off jobs
+          (tests, builds) that are still running; do not stop
           long-lived processes (dev servers, watchers) on your own, tell
           the user they are still running. A finished job you never
           observed makes Cursor wake you up with a "task completed"
