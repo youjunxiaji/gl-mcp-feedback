@@ -205,7 +205,29 @@
         <div class="w-px h-4 bg-white/[0.06] mx-1.5"></div>
         <button class="tab-btn px-4 py-2 text-[14px] font-medium rounded-full text-slate-500 hover:text-slate-400 hover:bg-surface-overlay transition-all"
                 data-tab="about">关于</button>
+        <button id="soundSettingsBtn" type="button" aria-expanded="false" aria-controls="soundSettingsPanel"
+                class="ml-auto shrink-0 inline-flex items-center gap-1.5 px-3 py-2 text-xs text-slate-400 rounded-lg hover:text-blue-400 hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 transition">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>
+            自定义声音
+        </button>
     </nav>
+
+    <section id="soundSettingsPanel" aria-label="提示音设置" class="hidden shrink-0 max-h-[40vh] overflow-y-auto px-5 py-4 bg-surface-raised border-b border-white/[0.06]">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0 flex-1 basis-48">
+                <p class="text-xs text-slate-500">当前提示音</p>
+                <p id="soundCurrent" class="mt-1 text-sm text-slate-200 break-all">默认电话铃声</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <input id="soundFileInput" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" class="hidden" aria-label="选择自定义提示音">
+                <button id="soundUploadBtn" type="button" class="px-3 py-2 rounded-lg text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition">选择音频</button>
+                <button id="soundPreviewBtn" type="button" class="px-3 py-2 rounded-lg text-xs text-slate-300 bg-surface-overlay hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition">试听当前声音</button>
+                <button id="soundResetBtn" type="button" disabled class="px-3 py-2 rounded-lg text-xs text-slate-400 border border-white/10 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition">恢复默认</button>
+            </div>
+        </div>
+        <p class="mt-3 text-xs text-slate-500 leading-relaxed">支持 MP3、WAV 等浏览器可播放的音频，最大 5 MB。仅保存在当前浏览器，不上传服务器；同一地址下各对话共用，清除浏览器数据后需重新选择。</p>
+        <p id="soundNotice" role="status" aria-live="polite" class="mt-1.5 text-xs text-slate-400 leading-relaxed">选择音频后自动保存，可随时恢复默认电话铃声。</p>
+    </section>
 
     <!-- ===== CONTENT AREA: flex-1, min-h-0 so children can fill ===== -->
     <div class="flex-1 min-h-0 flex flex-col">
@@ -383,38 +405,7 @@
         };
 
         // --- Alert / 提醒（声音 + 桌面通知 + 标签页未读标记） ---
-        // 新反馈请求到达时把在后台标签/最小化窗口的用户「叫」回来。默认始终开启，无开关。
-        var alertAudioCtx = null;
-
-        // 浏览器的自动播放与通知授权都要求用户手势，这里在首次交互时解锁
-        function setupAlertOnFirstGesture() {
-            function requestNotifyPermission() {
-                if (('Notification' in window) && Notification.permission === 'default') {
-                    try { Notification.requestPermission(); } catch (e) {}
-                }
-            }
-            var unlocked = false;
-            function unlock() {
-                if (unlocked) return;
-                unlocked = true;
-                try {
-                    var AC = window.AudioContext || window.webkitAudioContext;
-                    if (AC) {
-                        if (!alertAudioCtx) alertAudioCtx = new AC();
-                        if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume();
-                    }
-                } catch (e) {}
-                requestNotifyPermission();
-                document.removeEventListener('click', unlock);
-                document.removeEventListener('keydown', unlock);
-            }
-            document.addEventListener('click', unlock);
-            document.addEventListener('keydown', unlock);
-            // 部分浏览器允许非手势直接请求授权，先尝试一次
-            requestNotifyPermission();
-        }
-
-        // 提示音是电话铃式的「嘀铃铃」：1400Hz 与 1100Hz 的方波按段交替成颤音，整段响两遍，用 Web Audio 合成，无需音频文件
+        // 新反馈请求到达时把在后台标签/最小化窗口的用户「叫」回来。有待回复的新提问触发提醒，声音可在设置面板自定义。
         const ALERT_RING_FREQS = [1400, 1100];
         const ALERT_RING_SEGMENTS = 10;
         const ALERT_RING_SEGMENT_SECONDS = 0.055;
@@ -422,43 +413,300 @@
         // 两遍起点的间隔
         const ALERT_RING_REPEAT_GAP_SECONDS = 0.75;
         const ALERT_RING_PEAK = 0.3;
-        // 方波的高次谐波很刺耳，每一段都过一遍低通
         const ALERT_RING_LOWPASS_HZ = 3500;
-        // 每一段 4 毫秒升到峰值、保持到段尾前 6 毫秒再收掉：段与段之间不留缝，听起来是连着的颤音
         const ALERT_RING_ATTACK_SECONDS = 0.004;
         const ALERT_RING_RELEASE_SECONDS = 0.006;
+        const CUSTOM_SOUND_VOLUME = 0.45;
+        const CUSTOM_SOUND_MAX_BYTES = 5 * 1024 * 1024;
+        const SOUND_DATABASE_NAME = 'gl_mcp_feedback_preferences';
+        const SOUND_STORE_NAME = 'sounds';
+        let alertAudioCtx = null;
+        let customAlertSound = null;
+        let customAlertBuffer = null;
+        let alertSoundSettingsReady = Promise.resolve();
+        let alertSoundSettingsBusy = false;
+        let alertSoundPlaybackId = 0;
+        let alertSoundTimer = null;
+        const alertSoundSources = new Set();
+        const alertSoundChannel = typeof BroadcastChannel === 'undefined'
+            ? null : new BroadcastChannel('gl_mcp_feedback_sound_settings');
 
-        const playAlertSound = () => {
-            try {
+        const getAlertAudioContext = () => {
+            if (!alertAudioCtx) {
                 const AC = window.AudioContext || window.webkitAudioContext;
-                if (!AC) return;
-                if (!alertAudioCtx) alertAudioCtx = new AC();
-                if (alertAudioCtx.state === 'suspended') alertAudioCtx.resume();
-                const base = alertAudioCtx.currentTime + 0.02;
-                for (let ring = 0; ring < ALERT_RING_REPEATS; ring++) {
-                    for (let i = 0; i < ALERT_RING_SEGMENTS; i++) {
-                        const t = base + ring * ALERT_RING_REPEAT_GAP_SECONDS + i * ALERT_RING_SEGMENT_SECONDS;
-                        const osc = alertAudioCtx.createOscillator();
-                        const filter = alertAudioCtx.createBiquadFilter();
-                        const gain = alertAudioCtx.createGain();
-                        osc.type = 'square';
-                        osc.frequency.value = ALERT_RING_FREQS[i % ALERT_RING_FREQS.length];
-                        filter.type = 'lowpass';
-                        filter.frequency.value = ALERT_RING_LOWPASS_HZ;
-                        gain.gain.setValueAtTime(0.0001, t);
-                        gain.gain.exponentialRampToValueAtTime(ALERT_RING_PEAK, t + ALERT_RING_ATTACK_SECONDS);
-                        gain.gain.setValueAtTime(ALERT_RING_PEAK, t + ALERT_RING_SEGMENT_SECONDS - ALERT_RING_RELEASE_SECONDS);
-                        gain.gain.exponentialRampToValueAtTime(0.0001, t + ALERT_RING_SEGMENT_SECONDS);
-                        osc.connect(filter);
-                        filter.connect(gain);
-                        gain.connect(alertAudioCtx.destination);
-                        osc.start(t);
-                        osc.stop(t + ALERT_RING_SEGMENT_SECONDS + 0.02);
-                    }
-                }
-            } catch (e) {
-                console.warn('playAlertSound failed', e);
+                if (!AC) return null;
+                alertAudioCtx = new AC();
             }
+            return alertAudioCtx;
+        };
+
+        const setSoundNotice = (message) => {
+            document.getElementById('soundNotice').textContent = message;
+        };
+
+        const updateSoundControls = () => {
+            document.getElementById('soundCurrent').textContent = customAlertSound
+                ? customAlertSound.name : '默认电话铃声';
+            document.getElementById('soundUploadBtn').disabled = alertSoundSettingsBusy;
+            document.getElementById('soundPreviewBtn').disabled = alertSoundSettingsBusy;
+            document.getElementById('soundResetBtn').disabled = alertSoundSettingsBusy || !customAlertSound;
+        };
+
+        // 音频仅存当前源的浏览器数据库；事务提交后才视为保存成功。
+        const withSoundStore = (mode, action) => new Promise((resolve, reject) => {
+            const opening = indexedDB.open(SOUND_DATABASE_NAME, 1);
+            opening.onupgradeneeded = () => opening.result.createObjectStore(SOUND_STORE_NAME);
+            opening.onerror = () => reject(opening.error);
+            opening.onblocked = () => reject(new Error('声音存储被其他页面占用，请关闭旧页面后重试'));
+            opening.onsuccess = () => {
+                const database = opening.result;
+                try {
+                    const transaction = database.transaction(SOUND_STORE_NAME, mode);
+                    const request = action(transaction.objectStore(SOUND_STORE_NAME));
+                    transaction.oncomplete = () => {
+                        database.close();
+                        resolve(request.result);
+                    };
+                    transaction.onabort = () => {
+                        database.close();
+                        reject(transaction.error || new Error('无法保存声音设置'));
+                    };
+                } catch (error) {
+                    database.close();
+                    reject(error);
+                }
+            };
+        });
+
+        const stopAlertSound = () => {
+            alertSoundPlaybackId += 1;
+            clearTimeout(alertSoundTimer);
+            alertSoundSources.forEach((source) => {
+                try { source.stop(); } catch (e) {}
+            });
+            alertSoundSources.clear();
+            document.getElementById('soundPreviewBtn').textContent = '试听当前声音';
+        };
+
+        const trackAlertSource = (source, nodes) => {
+            alertSoundSources.add(source);
+            source.onended = () => {
+                alertSoundSources.delete(source);
+                nodes.forEach((node) => node.disconnect());
+            };
+        };
+
+        const restoreAlertSoundSetting = async () => {
+            alertSoundSettingsBusy = true;
+            updateSoundControls();
+            try {
+                const saved = await withSoundStore('readonly', (store) => store.get('alertSound'));
+                if (saved && (!(saved.data instanceof ArrayBuffer) || !saved.data.byteLength || saved.data.byteLength > CUSTOM_SOUND_MAX_BYTES)) {
+                    throw new Error('保存的音频无效，请重新选择');
+                }
+                if (saved?.revision !== customAlertSound?.revision) {
+                    if (alertSoundSources.size || customAlertSound) stopAlertSound();
+                    customAlertSound = saved || null;
+                    customAlertBuffer = null;
+                    setSoundNotice('声音设置已载入。');
+                }
+            } catch (error) {
+                setSoundNotice('无法读取声音设置，当前使用' + (customAlertSound ? '已载入的音频' : '默认电话铃声') + '。');
+                console.warn('读取声音设置失败', error);
+            } finally {
+                alertSoundSettingsBusy = false;
+                updateSoundControls();
+            }
+        };
+
+        // 1400Hz 与 1100Hz 的方波交替成颤音，过低通后响两遍，总长约 1.32 秒。
+        const playDefaultAlertSound = (audioContext) => {
+            const base = audioContext.currentTime + 0.02;
+            for (let ring = 0; ring < ALERT_RING_REPEATS; ring++) {
+                for (let i = 0; i < ALERT_RING_SEGMENTS; i++) {
+                    const t = base + ring * ALERT_RING_REPEAT_GAP_SECONDS + i * ALERT_RING_SEGMENT_SECONDS;
+                    const osc = audioContext.createOscillator();
+                    const filter = audioContext.createBiquadFilter();
+                    const gain = audioContext.createGain();
+                    osc.type = 'square';
+                    osc.frequency.value = ALERT_RING_FREQS[i % ALERT_RING_FREQS.length];
+                    filter.type = 'lowpass';
+                    filter.frequency.value = ALERT_RING_LOWPASS_HZ;
+                    gain.gain.setValueAtTime(0.0001, t);
+                    gain.gain.exponentialRampToValueAtTime(ALERT_RING_PEAK, t + ALERT_RING_ATTACK_SECONDS);
+                    gain.gain.setValueAtTime(ALERT_RING_PEAK, t + ALERT_RING_SEGMENT_SECONDS - ALERT_RING_RELEASE_SECONDS);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + ALERT_RING_SEGMENT_SECONDS);
+                    osc.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(audioContext.destination);
+                    trackAlertSource(osc, [osc, filter, gain]);
+                    osc.start(t);
+                    osc.stop(t + ALERT_RING_SEGMENT_SECONDS + 0.02);
+                }
+            }
+            return 1.32;
+        };
+
+        const playAlertSound = async () => {
+            stopAlertSound();
+            const playbackId = alertSoundPlaybackId;
+            try {
+                const audioContext = getAlertAudioContext();
+                if (!audioContext) throw new Error('当前浏览器不支持声音播放');
+                if (audioContext.state === 'suspended') await audioContext.resume();
+                await alertSoundSettingsReady;
+                if (playbackId !== alertSoundPlaybackId) return;
+                let duration;
+                if (customAlertSound) {
+                    try {
+                        if (!customAlertBuffer) {
+                            const buffer = await audioContext.decodeAudioData(customAlertSound.data.slice(0));
+                            if (playbackId !== alertSoundPlaybackId) return;
+                            customAlertBuffer = buffer;
+                        }
+                        const source = audioContext.createBufferSource();
+                        const gain = audioContext.createGain();
+                        source.buffer = customAlertBuffer;
+                        gain.gain.value = CUSTOM_SOUND_VOLUME;
+                        source.connect(gain);
+                        gain.connect(audioContext.destination);
+                        trackAlertSource(source, [source, gain]);
+                        source.start();
+                        duration = customAlertBuffer.duration;
+                    } catch (error) {
+                        if (playbackId !== alertSoundPlaybackId) return;
+                        setSoundNotice('自定义音频无法播放，本次使用默认电话铃声；可以重新选择音频。');
+                        console.warn('自定义提示音播放失败', error);
+                        duration = playDefaultAlertSound(audioContext);
+                    }
+                } else {
+                    duration = playDefaultAlertSound(audioContext);
+                }
+                document.getElementById('soundPreviewBtn').textContent = '停止播放';
+                alertSoundTimer = setTimeout(() => {
+                    if (playbackId === alertSoundPlaybackId) {
+                        document.getElementById('soundPreviewBtn').textContent = '试听当前声音';
+                    }
+                }, (duration + 0.05) * 1000);
+            } catch (error) {
+                setSoundNotice('提示音播放失败，请点击页面后重试。');
+                console.warn('playAlertSound failed', error);
+            }
+        };
+
+        const saveCustomAlertSound = async (file) => {
+            if (!file || alertSoundSettingsBusy) return;
+            if (!file.size || file.size > CUSTOM_SOUND_MAX_BYTES) {
+                setSoundNotice('请选择非空且不超过 5 MB 的音频文件。');
+                return;
+            }
+            alertSoundSettingsBusy = true;
+            updateSoundControls();
+            setSoundNotice('正在检查并保存音频…');
+            try {
+                const audioContext = getAlertAudioContext();
+                if (!audioContext) throw new Error('当前浏览器不支持声音播放');
+                const data = await file.arrayBuffer();
+                let buffer;
+                try {
+                    buffer = await audioContext.decodeAudioData(data.slice(0));
+                } catch (error) {
+                    throw new Error('无法读取这份音频，请换用浏览器支持的 MP3、WAV 等格式');
+                }
+                if (!Number.isFinite(buffer.duration) || buffer.duration <= 0) throw new Error('音频中没有可播放的内容');
+                const saved = { name: file.name, data, revision: Date.now() + '-' + Math.random().toString(36).slice(2) };
+                await withSoundStore('readwrite', (store) => store.put(saved, 'alertSound'));
+                stopAlertSound();
+                customAlertSound = saved;
+                customAlertBuffer = buffer;
+                setSoundNotice('已保存：' + buffer.duration.toFixed(2) + ' 秒。新提问将使用这份音频。');
+                alertSoundChannel?.postMessage('changed');
+            } catch (error) {
+                setSoundNotice('设置失败：' + error.message + '。当前声音保持不变。');
+            } finally {
+                alertSoundSettingsBusy = false;
+                updateSoundControls();
+            }
+        };
+
+        const resetAlertSound = async () => {
+            if (alertSoundSettingsBusy) return;
+            alertSoundSettingsBusy = true;
+            updateSoundControls();
+            try {
+                await withSoundStore('readwrite', (store) => store.delete('alertSound'));
+                stopAlertSound();
+                customAlertSound = null;
+                customAlertBuffer = null;
+                setSoundNotice('已恢复默认电话铃声。');
+                alertSoundChannel?.postMessage('changed');
+            } catch (error) {
+                setSoundNotice('恢复失败，请重试。当前声音保持不变。');
+                console.warn('恢复默认提示音失败', error);
+            } finally {
+                alertSoundSettingsBusy = false;
+                updateSoundControls();
+            }
+        };
+
+        const setupAlertSoundSettings = () => {
+            const button = document.getElementById('soundSettingsBtn');
+            const panel = document.getElementById('soundSettingsPanel');
+            const input = document.getElementById('soundFileInput');
+            button.addEventListener('click', () => {
+                const opening = panel.classList.contains('hidden');
+                panel.classList.toggle('hidden', !opening);
+                button.setAttribute('aria-expanded', String(opening));
+            });
+            document.getElementById('soundUploadBtn').addEventListener('click', () => input.click());
+            input.addEventListener('change', () => {
+                const file = input.files[0];
+                input.value = '';
+                void saveCustomAlertSound(file);
+            });
+            document.getElementById('soundPreviewBtn').addEventListener('click', () => {
+                if (alertSoundSources.size) stopAlertSound();
+                else void playAlertSound();
+            });
+            document.getElementById('soundResetBtn').addEventListener('click', () => { void resetAlertSound(); });
+            alertSoundSettingsReady = restoreAlertSoundSetting();
+            if (alertSoundChannel) {
+                alertSoundChannel.onmessage = () => {
+                    if (!alertSoundSettingsBusy) alertSoundSettingsReady = restoreAlertSoundSetting();
+                };
+            }
+            window.addEventListener('focus', () => {
+                if (!alertSoundSettingsBusy) alertSoundSettingsReady = restoreAlertSoundSetting();
+            });
+            window.addEventListener('pagehide', stopAlertSound);
+        };
+
+        // 浏览器的自动播放与通知授权都要求用户手势，这里在首次交互时解锁。
+        const setupAlertOnFirstGesture = () => {
+            const requestNotifyPermission = () => {
+                if (('Notification' in window) && Notification.permission === 'default') {
+                    try { Notification.requestPermission(); } catch (e) {}
+                }
+            };
+            let unlocked = false;
+            const unlock = () => {
+                if (unlocked) return;
+                unlocked = true;
+                try {
+                    const audioContext = getAlertAudioContext();
+                    if (audioContext && audioContext.state === 'suspended') {
+                        audioContext.resume().catch((error) => console.warn('提示音解锁失败', error));
+                    }
+                } catch (error) {
+                    console.warn('提示音初始化失败', error);
+                }
+                requestNotifyPermission();
+                document.removeEventListener('click', unlock);
+                document.removeEventListener('keydown', unlock);
+            };
+            document.addEventListener('click', unlock);
+            document.addEventListener('keydown', unlock);
+            requestNotifyPermission();
         };
 
         // 仅在页面不可见（后台标签/最小化）时弹系统通知，前台靠声音即可
@@ -1477,6 +1725,9 @@
             // 加载对话记录（首次进入页面直接定位，不做滚动动画）
             applyComposerState();
             loadHistory('auto');
+
+            // 载入当前浏览器的提示音设置
+            setupAlertSoundSettings();
 
             // Connect WebSocket
             connectWebSocket();
