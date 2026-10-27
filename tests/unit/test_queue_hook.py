@@ -1342,8 +1342,8 @@ class TestHookBackgroundIds:
 
         context = self.context(run_hook("post", feedback_payload(), tmp_path))
 
-        assert context.startswith("本对话已记录的后台任务 ID：606845, 606846（")
-        assert "累计清单" in context
+        assert context.startswith("后台任务：606845, 606846（")
+        assert "累计" in context
         assert "AwaitShell" in context
         assert "block_until_ms" in context
         directory = tmp_path / "background-jobs" / CONVERSATION_A
@@ -1358,7 +1358,7 @@ class TestHookBackgroundIds:
 
         context = self.context(run_hook("post", feedback_payload(), tmp_path))
 
-        assert context.startswith("本对话已记录的后台任务 ID：99, 100, 1000（")
+        assert context.startswith("后台任务：99, 100, 1000（")
 
     @pytest.mark.parametrize(
         "tool_name",
@@ -1375,13 +1375,16 @@ class TestHookBackgroundIds:
 
         output = run_hook("post", feedback_payload(tool_name=tool_name), tmp_path)
 
-        assert self.context(output).startswith("本对话已记录的后台任务 ID：606845（")
+        assert self.context(output).startswith("后台任务：606845（")
 
     @pytest.mark.parametrize(
         "payload",
         [
             read_payload("/p/a.py"),
-            shell_payload({"exit_code": 0}),
+            {
+                **shell_payload({"exit_code": 0}),
+                "tool_input": {"command": "uv run pytest", "block_until_ms": 8000},
+            },
             feedback_payload(event="postToolUseFailure"),
             feedback_payload(tool_name="MCP:other"),
             feedback_payload(tool_name="MCP:interactive_feedback_extra"),
@@ -1415,7 +1418,7 @@ class TestHookBackgroundIds:
         assert run_hook("stop", stop_payload(), tmp_path) == {}
 
         output = run_hook("post", feedback_payload(), tmp_path)
-        assert self.context(output).startswith("本对话已记录的后台任务 ID：606845（")
+        assert self.context(output).startswith("后台任务：606845（")
 
     @pytest.mark.parametrize("storage_error", [False, True])
     def test_ids_follow_the_queued_messages_on_a_reply(
@@ -1434,7 +1437,7 @@ class TestHookBackgroundIds:
         if storage_error:
             assert context == "继续处理"
         else:
-            assert context.startswith("继续处理\n\n本对话已记录的后台任务 ID：606845（")
+            assert context.startswith("继续处理\n\n后台任务：606845（")
 
     def test_other_tools_deliver_the_messages_without_the_ids(
         self, tmp_path: Path, stub_server: StubQueueServer
@@ -1474,6 +1477,147 @@ class TestHookBackgroundIds:
 
         assert run_hook("post", payload, tmp_path) == {}
         assert not (tmp_path / "background-jobs").exists()
+
+    @pytest.mark.parametrize("as_text", [False, True])
+    def test_cursor_internal_background_id_is_recorded(
+        self, tmp_path: Path, as_text: bool
+    ):
+        result = {"output": "started", "exitCode": 0, "backgroundShellId": 151216}
+        payload = shell_payload(json.dumps(result) if as_text else result)
+
+        assert run_hook("post", payload, tmp_path) == {}
+        context = self.context(run_hook("post", feedback_payload(), tmp_path))
+
+        assert "后台任务：151216（" in context
+        assert "可能不全" in context
+        assert "其他后台任务" in context
+        assert "可能漏记" not in context
+
+    def test_launcher_with_known_ids_records_them_without_a_missing_id_warning(
+        self, tmp_path: Path
+    ):
+        payload = shell_payload({"shell_id": "151218", "backgroundShellId": 151216})
+        payload["tool_input"] = {"command": "npm run type-check &", "timeout": 8000}
+
+        assert run_hook("post", payload, tmp_path) == {}
+        context = self.context(run_hook("post", feedback_payload(), tmp_path))
+
+        assert "后台任务：151216, 151218（" in context
+        assert "可能漏记" not in context
+
+    def test_launcher_without_id_warns_immediately_and_on_later_replies(
+        self, tmp_path: Path
+    ):
+        # Cursor 3.27.14 的实际返回：内部任务有 ID，钩子只收到 stdout 和退出码。
+        payload = shell_payload('{"output":"v24.20.0\\nstarted\\n","exitCode":0}')
+        payload["tool_input"] = {
+            "command": "(npm run type-check > /tmp/fe_typecheck.log 2>&1) &\nsleep 1; echo started",
+            "timeout": 8000,
+        }
+
+        context = self.context(run_hook("post", payload, tmp_path))
+
+        assert "可能漏记" in context
+        assert "真实 ID" in context
+        assert "AwaitShell" in context
+        assert "本回合" in context
+        assert "勿猜 ID" in context
+        assert "重跑不能代替" in context
+        directory = tmp_path / "background-jobs" / CONVERSATION_A
+        assert {path.name for path in directory.iterdir()} == {"unidentified"}
+        assert run_hook("post", read_payload("/p/a.py"), tmp_path) == {}
+        assert run_hook("post", feedback_payload(CONVERSATION_B), tmp_path) == {}
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+        assert self.context(run_hook("post", feedback_payload(), tmp_path)) == context
+
+        self.record(tmp_path, 151218)
+        reminder = self.context(run_hook("post", feedback_payload(), tmp_path))
+        assert reminder.startswith("后台任务：151218（")
+        assert reminder.endswith(context)
+
+    @pytest.mark.parametrize("input_as_text", [False, True])
+    @pytest.mark.parametrize("timeout_key", ["block_until_ms", "timeout"])
+    def test_explicit_background_request_without_id_warns(
+        self, tmp_path: Path, timeout_key: str, input_as_text: bool
+    ):
+        payload = shell_payload({"output": "started", "exitCode": 0})
+        tool_input = {"command": "npm run type-check", timeout_key: 0}
+        payload["tool_input"] = json.dumps(tool_input) if input_as_text else tool_input
+
+        assert "可能漏记" in self.context(run_hook("post", payload, tmp_path))
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "npm run test &",
+            "(npm run test) &\necho started",
+            "nohup npm run dev > /tmp/dev.log 2>&1 &",
+            "sleep 1&echo started",
+            'echo "quoted &"; npm run test &',
+            "echo 'quoted &'; npm run test &",
+            "# comment &\nnpm run test &",
+        ],
+    )
+    def test_suspected_background_operator_warns(self, tmp_path: Path, command: str):
+        payload = shell_payload({"exitCode": 0})
+        payload["tool_input"] = {"command": command, "timeout": 8000}
+
+        assert "可能漏记" in self.context(run_hook("post", payload, tmp_path))
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "npm run check && npm run test",
+            "npm run test > /tmp/test.log 2>&1",
+            "npm run test &> /tmp/test.log",
+            "npm run test &>> /tmp/test.log",
+            "npm run test |& cat",
+            "cat <&0",
+            "echo 'a & b'",
+            'echo "a & b"',
+            'echo "escaped \\" & quoted"',
+            r"echo a\&b",
+            "echo ok # run tests &",
+            "# run tests &\necho ok",
+        ],
+    )
+    def test_other_ampersands_do_not_trigger_a_warning(
+        self, tmp_path: Path, command: str
+    ):
+        payload = shell_payload({"output": "ok", "exitCode": 0})
+        payload["tool_input"] = {"command": command, "timeout": 8000}
+
+        assert run_hook("post", payload, tmp_path) == {}
+        assert not (tmp_path / "background-jobs").exists()
+
+    @pytest.mark.parametrize("storage_error", [False, True])
+    def test_warning_preserves_queued_context_even_if_storage_fails(
+        self, tmp_path: Path, stub_server: StubQueueServer, storage_error: bool
+    ):
+        if storage_error:
+            (tmp_path / "background-jobs").write_text("占位文件")
+        stub_server.reply = (200, '{"additional_context":"继续处理"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        context = self.context(
+            run_hook("post", shell_payload({"exitCode": 0}), tmp_path)
+        )
+
+        assert context.startswith("继续处理\n\n后台任务可能漏记")
+
+    @pytest.mark.parametrize("shell_id", ["../outside", True, 0, -1, 1.5])
+    def test_invalid_ids_on_a_background_request_warn_without_recording_the_id(
+        self, tmp_path: Path, shell_id: object
+    ):
+        context = self.context(
+            run_hook("post", shell_payload({"backgroundShellId": shell_id}), tmp_path)
+        )
+
+        assert "可能漏记" in context
+        directory = tmp_path / "background-jobs" / CONVERSATION_A
+        assert {path.name for path in directory.iterdir()} == {"unidentified"}
 
 
 class TestHookLog:

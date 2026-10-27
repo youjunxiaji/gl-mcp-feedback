@@ -490,25 +490,23 @@ async def interactive_feedback(
           numbered list.
         - DO NOT end the turn with a plain-text reply when there is
           substantive content for the user to read. Put it in ``summary``.
-        - When the user skips without feedback, re-call this tool to ask
-          why; only stop on explicit termination
-          (``结束`` / ``不用了`` / ``stop`` / ``done``). Before stopping,
-          check EVERY background job you started in this conversation,
-          including ones you think already exited or were killed (Cursor
-          tracks the job, not your process: a launcher that returned
-          within seconds is still a job). That means each ``Shell`` with
-          ``block_until_ms: 0``, or command Cursor moved to the
-          background after the timeout. When a line starting with
-          "本对话已记录的后台任务 ID" is attached to the result of this
-          tool, check exactly those IDs. Call ``AwaitShell`` with each
-          ``shell_id`` and ``block_until_ms: 0``. Wait for one-off jobs
-          (tests, builds) that are still running; do not stop
-          long-lived processes (dev servers, watchers) on your own, tell
-          the user they are still running. A finished job you never
-          observed makes Cursor wake you up with a "task completed"
-          notification after the conversation has ended. If that happens
-          anyway, reply with one plain sentence and do NOT call this tool
-          again (it would open a new page).
+        - To run a command in the background, use ``Shell`` with ``block_until_ms: 0``.
+          Do not background commands inside the shell using ``&``, ``nohup ... &`` or similar launchers.
+          Cursor can register a task for such a launcher while sending the hook only stdout and an exit code, without its task ID.
+          Keep track of the actual task ID returned by Cursor, including commands moved to the background after a timeout.
+        - When the user skips without feedback, re-call this tool to ask why; only stop on explicit termination (``结束`` / ``不用了`` / ``stop`` / ``done``).
+          Before stopping, check EVERY background job you started in this conversation, including ones you think already exited or were killed.
+          Cursor tracks the job, not your process: a launcher that returned within seconds is still a job.
+          That means each ``Shell`` with ``block_until_ms: 0``, or command Cursor moved to the background after the timeout.
+          When a line starting with "后台任务：" is attached to the result of this tool, these are only the KNOWN tasks: check AT LEAST those IDs and review other background calls in this conversation.
+          If the hook warns about an unidentified task, find its real ID from the corresponding tool result or terminal task record and call ``AwaitShell`` for it in THIS turn, before stopping.
+          Never invent an ID or substitute a PID, exit code, log read or rerun of the command for observing the original task.
+          Call ``AwaitShell`` with each ``shell_id`` and ``block_until_ms: 0``.
+          Complete this check before ending the current turn: a completion notification that starts another turn can cost the user another paid request.
+          Do not defer cleanup to a follow-up turn.
+          Wait for one-off jobs (tests, builds) that are still running; do not stop long-lived processes (dev servers, watchers) on your own, tell the user they are still running.
+          A finished job you never observed makes Cursor wake you up with a "task completed" notification after the conversation has ended.
+          If that happens anyway, reply with one plain sentence and do NOT call this tool again (it would open a new page).
         - Allowed parameters: ``project_directory``, ``summary``,
           ``timeout``, plus ``conversation_id``, which a Cursor hook fills
           in: never set it yourself. Names like ``question`` / ``choices`` /
