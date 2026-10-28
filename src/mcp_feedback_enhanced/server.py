@@ -481,8 +481,7 @@ async def interactive_feedback(
 
     This tool is the PRIMARY communication channel with the user. The full
     list of "when to call" scenarios lives in the project's gl-mcp-feedback
-    user rules; this docstring only covers the runtime contract that the
-    tool itself enforces.
+    user rules; this docstring covers how to use this tool.
 
     Strict prohibitions:
         - While this tool is available, DO NOT invoke Cursor's built-in
@@ -498,7 +497,7 @@ async def interactive_feedback(
           Before stopping, check EVERY background job you started in this conversation, including ones you think already exited or were killed.
           Cursor tracks the job, not your process: a launcher that returned within seconds is still a job.
           That means each ``Shell`` with ``block_until_ms: 0``, or command Cursor moved to the background after the timeout.
-          When a line starting with "后台任务：" is attached to the result of this tool, these are only the KNOWN tasks: check AT LEAST those IDs and review other background calls in this conversation.
+          When a line starting with "后台任务：" is attached to a Shell result or this tool's result, these are only the KNOWN tasks: check AT LEAST those IDs and review other background calls in this conversation.
           If the hook warns about an unidentified task, find its real ID from the corresponding tool result or terminal task record and call ``AwaitShell`` for it in THIS turn, before stopping.
           Never invent an ID or substitute a PID, exit code, log read or rerun of the command for observing the original task.
           Call ``AwaitShell`` with each ``shell_id`` and ``block_until_ms: 0``.

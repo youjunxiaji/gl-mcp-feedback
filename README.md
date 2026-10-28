@@ -72,7 +72,7 @@
 
 - 给每次 `interactive_feedback` 填上 Cursor 的对话 ID，让每个对话用自己的页面
 - AI 调用完任意一次工具时，把用户排队的消息取走，附在那次工具结果后面交给 AI；消息带图片时，图片存成本地文件，路径写在文字里，AI 用 Read 查看；对话的房间销毁时这些图片一并删除，没被删掉的（比如服务异常退出）24 小时后清理
-- 记下 AI 后台命令的已知任务 ID，并提示可能漏记的任务；你在页面上回复 `interactive_feedback` 时，把累计清单和提示附在回复后面，提醒 AI 在结束当前回合前核对所有后台调用并用 `AwaitShell` 查看，避免完成通知再起一轮、增加一次计费请求
+- 记下 AI 后台命令的已知任务 ID，并在该次 Shell 结果后立即提醒；可能漏记的任务同样即时提示，你在页面上回复 `interactive_feedback` 时再附累计清单和提示，提醒 AI 在结束当前回合前核对所有后台调用并用 `AwaitShell` 查看，避免完成通知再起一轮、增加一次计费请求
 - 对话正常结束时（`stop`），通知服务销毁这个对话的房间，页面显示「对话已结束」，已有的记录留在页面上，由你自己关掉
 
 没装钩子，所有对话共用一个页面，排队的消息要等 AI 下次调用 `interactive_feedback` 才送达。
@@ -101,7 +101,7 @@ Windows 上同样用这条命令，不过作者没有 Windows 环境，没有在
 
 `pre` 给所有项目的对话填对话 ID。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
 
-`post` 在每次工具调用结束时触发，送达排队的消息之外，还按对话记下 Shell 结果里的 `shell_id` 或 `backgroundShellId`（`GL_FEEDBACK_HOME/background-jobs/<对话 ID>/` 下每个 ID 一个空文件，只增不减，不清理）。你回复 `interactive_feedback` 之后，它把已知任务的累计清单附在回复后面，要求结束当前回合前至少对这些 ID 用 `AwaitShell` 查看，并核对其他后台调用；这份清单可能不完整。其他工具的结果不带清单。
+`post` 在每次工具调用结束时触发，送达排队的消息之外，还按对话记下 Shell 结果里的 `shell_id` 或 `backgroundShellId`（`GL_FEEDBACK_HOME/background-jobs/<对话 ID>/` 下每个 ID 一个空文件，只增不减，不清理）。拿到合法 ID 的当次 Shell 结果就附上这些 ID 和清点短提示，即使之后直接结束、不再调用 MCP，也能在当前回合收到。你回复 `interactive_feedback` 之后，它再附上已知任务的累计清单。两处都要求结束当前回合前对任务用 `AwaitShell` 查看，并核对其他后台调用；累计清单可能不完整。其他工具不重复附清单。
 
 后台执行统一用 `Shell` 的 `block_until_ms: 0`，命令里不用 `&` 或 `nohup ... &` 自己放后台。Cursor 可能给启动器登记任务，却只把输出和退出码交给钩子，不给任务 ID。钩子发现疑似后台操作符 `&`（词法检查跳过引号、转义、注释、`&&` 和重定向），或后台等待参数为 0，但结果没有合法 ID 时，会在当次 Shell 结果后立即提醒，并在上述目录写 `unidentified` 空文件，让后续 `interactive_feedback` 回复继续带提示。标记表示出现过这类调用，不判断 AI 是否已核对，不含命令内容。
 

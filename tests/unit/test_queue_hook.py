@@ -1313,7 +1313,7 @@ class TestHookPost:
 
 
 class TestHookBackgroundIds:
-    """Shell 返回的后台任务 ID 按对话记下来，用户回复 interactive_feedback 后附上"""
+    """Shell 即时提醒清点本次后台任务，interactive_feedback 返回时附上累计清单。"""
 
     @staticmethod
     def record(
@@ -1327,7 +1327,12 @@ class TestHookBackgroundIds:
         payload = shell_payload(
             json.dumps(output) if as_text else output, conversation_id
         )
-        assert run_hook("post", payload, home) == {}
+        output = run_hook("post", payload, home)
+        context = TestHookBackgroundIds.context(output)
+        assert context.startswith(f"后台任务：{shell_id}。")
+        assert "AwaitShell(shell_id=ID, block_until_ms=0)" in context
+        assert "结束本回合前" in context
+        assert "日志或重跑不能代替" in context
 
     @staticmethod
     def context(output: dict[str, Any]) -> str:
@@ -1351,6 +1356,57 @@ class TestHookBackgroundIds:
             "606845": "",
             "606846": "",
         }
+
+    def test_shell_reminds_after_the_last_feedback_before_a_direct_stop(
+        self, tmp_path: Path
+    ):
+        assert run_hook("post", feedback_payload(), tmp_path) == {}
+        # 后台测试启动后直接收尾，没有下一次 interactive_feedback。
+        payload = shell_payload('{"shell_id":809796,"pid":6349}')
+        payload["tool_input"] = {
+            "command": "uv run python manage.py test 2>&1 | tail -15 > /tmp/tmb_backend_test.log",
+            "cwd": "",
+        }
+
+        context = self.context(run_hook("post", payload, tmp_path))
+
+        assert context.startswith("后台任务：809796。")
+        assert "AwaitShell(shell_id=ID, block_until_ms=0)" in context
+        assert "日志或重跑不能代替" in context
+        assert (
+            run_hook("post", read_payload("/tmp/tmb_backend_test.log"), tmp_path) == {}
+        )
+        assert run_hook("stop", stop_payload(), tmp_path) == {}
+
+    def test_shell_reminder_only_lists_ids_from_that_call(self, tmp_path: Path):
+        self.record(tmp_path, 606845)
+
+        context = self.context(
+            run_hook("post", shell_payload({"shell_id": 809796}), tmp_path)
+        )
+
+        assert context.startswith("后台任务：809796。")
+        assert "606845" not in context
+        cumulative = self.context(run_hook("post", feedback_payload(), tmp_path))
+        assert cumulative.startswith("后台任务：606845, 809796（")
+
+    @pytest.mark.parametrize("storage_error", [False, True])
+    def test_immediate_ids_follow_queued_context_even_if_storage_fails(
+        self, tmp_path: Path, stub_server: StubQueueServer, storage_error: bool
+    ):
+        if storage_error:
+            (tmp_path / "background-jobs").write_text("占位文件")
+        stub_server.reply = (200, '{"additional_context":"继续处理"}')
+        write_marker(
+            tmp_path, CONVERSATION_A, stub_server.room_url(CONVERSATION_A), os.getpid()
+        )
+
+        context = self.context(
+            run_hook("post", shell_payload({"shell_id": 809796}), tmp_path)
+        )
+
+        assert context.startswith("继续处理\n\n后台任务：809796。")
+        assert "AwaitShell" in context
 
     def test_ids_are_sorted_by_number(self, tmp_path: Path):
         for shell_id in (100, 99, 1000):
@@ -1485,7 +1541,9 @@ class TestHookBackgroundIds:
         result = {"output": "started", "exitCode": 0, "backgroundShellId": 151216}
         payload = shell_payload(json.dumps(result) if as_text else result)
 
-        assert run_hook("post", payload, tmp_path) == {}
+        immediate = self.context(run_hook("post", payload, tmp_path))
+        assert immediate.startswith("后台任务：151216。")
+        assert "AwaitShell" in immediate
         context = self.context(run_hook("post", feedback_payload(), tmp_path))
 
         assert "后台任务：151216（" in context
@@ -1499,7 +1557,9 @@ class TestHookBackgroundIds:
         payload = shell_payload({"shell_id": "151218", "backgroundShellId": 151216})
         payload["tool_input"] = {"command": "npm run type-check &", "timeout": 8000}
 
-        assert run_hook("post", payload, tmp_path) == {}
+        immediate = self.context(run_hook("post", payload, tmp_path))
+        assert immediate.startswith("后台任务：151216, 151218。")
+        assert "可能漏记" not in immediate
         context = self.context(run_hook("post", feedback_payload(), tmp_path))
 
         assert "后台任务：151216, 151218（" in context

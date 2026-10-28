@@ -12,7 +12,7 @@ gl-mcp-feedback 的 Cursor 钩子，用法：gl-feedback.py <模式>
           preToolUse 的输入里没有 MCP 服务器名，只能按工具名匹配：
           别的 MCP 服务器如果也有叫 interactive_feedback 的工具，它的调用同样会被改写。
     post  postToolUse 和 postToolUseFailure，挂在所有工具上：
-          Shell 返回后台任务的 ID 时，按对话记下来；可能放到后台却没返回 ID 时立即提醒，并按对话保留提示标记；
+          Shell 返回后台任务的 ID 时，按对话记下来并立即提醒清点；可能放到后台却没返回 ID 时立即提醒，并按对话保留提示标记；
           这个对话有排队的消息就向服务端取走，用 additional_context 附在工具结果后面交给 AI；
           interactive_feedback 返回（用户回复了）时，再附上本对话已记录的后台任务 ID，
           提醒结束对话前对每个 ID 用 AwaitShell 看一眼。
@@ -96,9 +96,7 @@ FEEDBACK_TOOL = "interactive_feedback"
 # 清单是累计的，看过的任务也一直列着；说明这一点，免得 AI 看到已结束的任务还在清单里觉得奇怪
 BACKGROUND_LIST_NOTE = "累计，可能不全"
 # 附在后台任务 ID 后面的清点要求：Cursor 记的是任务，不是进程，进程没了任务也算数
-BACKGROUND_REMINDER = (
-    "结束本回合前逐个 AwaitShell(shell_id=ID, block_until_ms=0)，并核对其他后台任务。"
-)
+BACKGROUND_REMINDER = "结束本回合前逐个 AwaitShell(shell_id=ID, block_until_ms=0)，并核对其他后台任务；日志或重跑不能代替。"
 UNIDENTIFIED_BACKGROUND_REMINDER = (
     "后台任务可能漏记。若未核对，本回合补查真实 ID 并 AwaitShell；"
     "勿猜 ID，PID、退出码、日志或重跑不能代替。"
@@ -348,14 +346,14 @@ def take_queued_context(marker: Path) -> dict[str, Any]:
 
 
 def record_background_shell(data: dict[str, Any], directory: Path) -> str:
-    """记录 Shell 的后台任务 ID，可能漏记时保留标记并返回当次提醒。
+    """记录 Shell 的后台任务或漏记标记，并返回当次清点提醒。
 
     Args:
         data: 解析后的钩子输入
         directory: 这个对话保存后台任务 ID 的目录
 
     Returns:
-        可能漏记任务时的提醒文字；已有合法 ID 或没有后台迹象时为空串。
+        本次任务 ID 和清点要求，或可能漏记的提醒；没有后台迹象时为空串。
     """
     output = data.get("tool_output")
     if isinstance(output, str):
@@ -385,7 +383,7 @@ def record_background_shell(data: dict[str, Any], directory: Path) -> str:
         else ""
     )
     if identifiers or warning:
-        # 存储失败也把当次警告交给 AI，且不影响排队消息送达。
+        # 存储失败也把当次提醒交给 AI，且不影响排队消息送达。
         with contextlib.suppress(OSError):
             directory.mkdir(parents=True, exist_ok=True)
             for shell_id in identifiers:
@@ -394,6 +392,9 @@ def record_background_shell(data: dict[str, Any], directory: Path) -> str:
                 (directory / UNIDENTIFIED_BACKGROUND_MARKER).touch(
                     mode=0o600, exist_ok=True
                 )
+    if identifiers:
+        listed = ", ".join(sorted(identifiers, key=int))
+        return f"后台任务：{listed}。{BACKGROUND_REMINDER}"
     return warning
 
 
@@ -426,7 +427,7 @@ def background_reminder(directory: Path) -> str:
 
 
 def run_post(text: str) -> dict[str, Any]:
-    """postToolUse：记录后台 Shell 的 ID，取走排队的消息，用户回复后提醒清点后台任务
+    """postToolUse：取走排队消息，Shell 即时提醒清点，用户回复时附上累计提醒。
 
     Args:
         text: Cursor 通过标准输入传来的 JSON
@@ -444,9 +445,11 @@ def run_post(text: str) -> dict[str, Any]:
     is_feedback = tool_name.rsplit(":", 1)[-1] == FEEDBACK_TOOL
     data = (parse_object(text) if is_shell or is_feedback else None) or {}
     succeeded = data.get("hook_event_name") == "postToolUse"
-    warning = record_background_shell(data, directory) if is_shell and succeeded else ""
+    shell_reminder = (
+        record_background_shell(data, directory) if is_shell and succeeded else ""
+    )
     response = take_queued_context(home / "queue" / conversation_id)
-    reminders = [warning] if warning else []
+    reminders = [shell_reminder] if shell_reminder else []
     if is_feedback and succeeded:
         reminder = ""
         with contextlib.suppress(OSError):
