@@ -6,30 +6,22 @@
 """
 gl-mcp-feedback 的 Cursor 钩子，用法：gl-feedback.py <模式>
 
-    pre   preToolUse，挂在 Shell 和 interactive_feedback 上：
-          Shell 在执行前拒绝能明确识别的命令内后台 &，不改写命令；
-          interactive_feedback 先删掉入参里 AI 自己填的 conversation_id（对话标识只认钩子填的），
+    pre   preToolUse，只挂在 interactive_feedback 上：
+          先删掉入参里 AI 自己填的 conversation_id（对话标识只认钩子填的），
           再把本次对话的标识写进 conversation_id，所有项目的对话都填。
           preToolUse 的输入里没有 MCP 服务器名，只能按工具名匹配：
           别的 MCP 服务器如果也有叫 interactive_feedback 的工具，它的调用同样会被改写。
     post  postToolUse 和 postToolUseFailure，挂在所有工具上：
-          Shell 返回后台任务的 ID 时，按对话记下来并立即提醒清点；可能放到后台却没返回 ID 时立即提醒，并按对话保留提示标记；
-          这个对话有排队的消息就向服务端取走，用 additional_context 附在工具结果后面交给 AI；
-          interactive_feedback 返回（用户回复了）时，再附上本对话已记录的后台任务 ID，
-          提醒结束对话前对每个 ID 用 AwaitShell 看一眼。
+          这个对话有排队的消息就向服务端取走，用 additional_context 附在工具结果后面交给 AI。
     log   sessionStart：只把事件写进 hook-events.log。
     stop  stop（agent 每个回合结束时触发）：先写进 hook-events.log，
           再看这个对话有没有房间，有就向服务端报告回合结束（带上 status：completed、aborted、error）。
           正常结束（completed）的房间几秒后销毁，页面显示「对话已结束」；其他状态只给房间标上已结束。
 
 post 在每次工具调用结束时都会触发，要尽快返回：
-只从输入开头取对话标识和工具名，工具不是 Shell、也不是 interactive_feedback 时不解析整段输入；
+只从输入开头取对话标识和内部轮询信息；
 看标记文件 $GL_FEEDBACK_HOME/queue/<对话标识> 在不在，不在就不取排队消息；
 真的要联网时才导入 http.client（导入它要 9 毫秒左右，是整个脚本最大的一笔启动开销）。
-后台任务 ID（shell_id 或 backgroundShellId）按对话存在 $GL_FEEDBACK_HOME/background-jobs/<对话标识>/<shell_id>，每个 ID 一个空文件，重复记录去重；
-命令里有疑似后台操作符 &，或请求立即后台执行，却没返回合法 ID 时，在同一目录写 unidentified 标记；
-当次 Shell 和后续 interactive_feedback 回复都提醒在当前回合补查任务，标记只表示出现过这种调用，不判断是否已经核对。
-记录只增不减，不判断任务是否已经看过（钩子分不清 AwaitShell 的内部读取和 AI 自己读终端输出文件）。
 stop 靠登记文件 $GL_FEEDBACK_HOME/rooms/<对话标识> 找到房间，房间存在期间一直在，不在说明这个对话没有房间。
 两种文件都是两行：房间的地址、写它的服务进程号；进程已经不在了，说明文件是过期的，删掉。
 
@@ -43,7 +35,7 @@ AwaitShell 等后台任务时，Cursor 每秒几次对终端输出文件发起�
 只依赖 Python 标准库，由 `uv run --script` 运行。脚本头里的 requires-python 和项目一致，uv 选的就是运行 MCP 服务的那个解释器。
 
 环境变量：
-    GL_FEEDBACK_HOME  标记文件、登记文件、后台任务 ID、图片和事件日志所在目录，默认 ~/.cache/gl-mcp-feedback，服务端读的是同一个变量
+    GL_FEEDBACK_HOME  标记文件、登记文件、图片和事件日志所在目录，默认 ~/.cache/gl-mcp-feedback，服务端读的是同一个变量
 """
 
 import contextlib
@@ -61,7 +53,7 @@ from urllib.parse import urlsplit
 LOG_MAX_BYTES = 1024 * 1024
 # 对话标识一般在输入开头，工具输出特别大时不必整段扫描
 HEAD_CHARS = 65536
-# 工具名和入参紧跟在对话标识后面，认内部轮询、取工具名只看开头这一小段
+# 工具名和入参紧跟在对话标识后面，认内部轮询只看开头这一小段
 POLL_SCAN_CHARS = 4096
 # 连接房间的超时，以及连上之后等回复的超时（秒）
 CONNECT_TIMEOUT_SECONDS = 1
@@ -75,37 +67,12 @@ CONVERSATION_ID = re.compile(r"[0-9A-Za-z_-]{1,128}")
 CONVERSATION_ID_FIELD = re.compile(r'"conversation_id"\s*:\s*"([0-9A-Za-z_-]{1,128})"')
 # stop 报告的状态只认字母和下划线，其余写成 unknown
 STATUS = re.compile(r"[A-Za-z_]{1,32}")
-# 输入开头一段里的 "tool_name": "<工具名>"，它排在工具的入参和输出之前
-TOOL_NAME_FIELD = re.compile(r'"tool_name"\s*:\s*"([^"]*)"')
 # 内部轮询：工具是 Read，读的是 .../terminals/<编号>.txt。JSON 里 Windows 路径的反斜杠写成两个
 TOOL_IS_READ = re.compile(r'"tool_name"\s*:\s*"Read"')
 TERMINAL_FILE = re.compile(
     r'"file_path"\s*:\s*"[^"]*(?:/|\\\\)terminals(?:/|\\\\)[^"/\\]*\.txt"'
 )
-# 后台任务 ID 是 Cursor 给的正整数，只认这个格式，它会被用作文件名
-BACKGROUND_SHELL_ID = re.compile(r"[1-9][0-9]{0,19}")
-# 只识别简单的 Unix shell 后台操作符；复杂语法标为 uncertain，整条命令放行。
-# 引号内的内容作为整体跳过，不展开命令替换。Windows 不使用这个检查。
-SHELL_OPERATORS = re.compile(
-    r"'(?:[^']*)'|\"(?:\\.|[^\"\\])*\"|\\.|(?:^|(?<=[\s;|&()]))\#[^\n]*"
-    r"|(?P<uncertain><<|`|\$[({'\"]|\(\(|\[\[|['\"])"
-    r"|&&|&>>?|[<>]&[0-9-]*|\|&|(?P<background>&)",
-    re.MULTILINE | re.DOTALL,
-)
-UNIDENTIFIED_BACKGROUND_MARKER = "unidentified"
-# 用户在页面上回复后返回的工具；工具名在 MCP 服务器名后面，比如 MCP:interactive_feedback
 FEEDBACK_TOOL = "interactive_feedback"
-# 清单是累计的，看过的任务也一直列着；说明这一点，免得 AI 看到已结束的任务还在清单里觉得奇怪
-BACKGROUND_LIST_NOTE = "累计，可能不全"
-# 没有任务 ID 时只要求核对本对话对应调用，不从共享目录猜编号。
-UNIDENTIFIED_BACKGROUND_REMINDER = (
-    "未取得后台任务 ID。若未核对，本回合仅从本对话对应调用补查真实 ID 并 AwaitShell；"
-    "勿猜 ID，日志或重跑不能代替。"
-)
-BACKGROUND_DENIAL = (
-    "gl-mcp-feedback：请移除后台 &；允许前台或 Shell(block_until_ms=0)，"
-    "测试和重定向不受此规则限制。"
-)
 
 # 事件日志只记这几个字段：（日志里的名字，输入里的名字）。不含用户输入、AI 的摘要、命令和文件内容
 LOG_FIELDS = (
@@ -161,19 +128,6 @@ def extract_conversation_id(text: str) -> str | None:
     if isinstance(conversation_id, str) and CONVERSATION_ID.fullmatch(conversation_id):
         return conversation_id
     return None
-
-
-def extract_tool_name(text: str) -> str | None:
-    """从输入开头一段里取工具名
-
-    Args:
-        text: 钩子的输入
-
-    Returns:
-        工具名；开头一段里找不到时为 None
-    """
-    match = TOOL_NAME_FIELD.search(text[:POLL_SCAN_CHARS])
-    return match.group(1) if match else None
 
 
 def is_terminal_poll(text: str) -> bool:
@@ -302,28 +256,8 @@ def request_room(
         connection.close()
 
 
-def has_explicit_background(command: object) -> bool:
-    """识别简单 Unix shell 命令中的后台 &；Windows 或含复杂语法时放行。
-
-    Args:
-        command: Shell 的命令参数
-
-    Returns:
-        是否能明确识别命令内后台执行；不确定时返回 False。
-    """
-    if sys.platform == "win32" or not isinstance(command, str):
-        return False
-    found = False
-    for match in SHELL_OPERATORS.finditer(command):
-        if match.lastgroup == "uncertain":
-            return False
-        if match.lastgroup == "background":
-            found = True
-    return found
-
-
 def run_pre(text: str) -> dict[str, Any]:
-    """preToolUse：拒绝明确的 Shell 后台 &，或给反馈工具填 Cursor 的对话标识。"""
+    """preToolUse：给反馈工具填 Cursor 的对话标识。"""
     allow: dict[str, Any] = {"permission": "allow"}
     data = parse_object(text)
     if data is None:
@@ -334,15 +268,6 @@ def run_pre(text: str) -> dict[str, Any]:
     if not isinstance(tool_input, dict):
         return allow
     tool_name = data.get("tool_name")
-    if tool_name == "Shell":
-        if has_explicit_background(tool_input.get("command")):
-            # Cursor 的拒绝结果从 user_message 取原因；agent_message 兼容其他执行路径。
-            return {
-                "permission": "deny",
-                "user_message": BACKGROUND_DENIAL,
-                "agent_message": BACKGROUND_DENIAL,
-            }
-        return allow
     if not isinstance(tool_name, str) or tool_name.rsplit(":", 1)[-1] != FEEDBACK_TOOL:
         return allow
     cleaned = {
@@ -382,95 +307,8 @@ def take_queued_context(marker: Path) -> dict[str, Any]:
     return parse_object(body.decode("utf-8", errors="replace")) or {}
 
 
-def record_background_shell(data: dict[str, Any], directory: Path) -> str:
-    """记录 Shell 的后台任务或漏记标记，并返回当次清点提醒。
-
-    Args:
-        data: 解析后的钩子输入
-        directory: 这个对话保存后台任务 ID 的目录
-
-    Returns:
-        本次任务 ID 和清点要求，或可能漏记的提醒；没有后台迹象时为空串。
-    """
-    output = data.get("tool_output")
-    if isinstance(output, str):
-        output = parse_object(output)
-    identifiers = {
-        str(output[key])
-        for key in ("shell_id", "backgroundShellId")
-        if isinstance(output, dict)
-        and key in output
-        and BACKGROUND_SHELL_ID.fullmatch(str(output[key]))
-    }
-    tool_input = data.get("tool_input")
-    if isinstance(tool_input, str):
-        tool_input = parse_object(tool_input)
-    tool_input = tool_input if isinstance(tool_input, dict) else {}
-    command = tool_input.get("command")
-    uses_background_operator = has_explicit_background(command)
-    requests_background = any(
-        type(tool_input.get(key)) is int and tool_input[key] == 0
-        for key in ("block_until_ms", "timeout")
-    )
-    warning = (
-        UNIDENTIFIED_BACKGROUND_REMINDER
-        if not identifiers and (uses_background_operator or requests_background)
-        else ""
-    )
-    if identifiers or warning:
-        # 存储失败也把当次提醒交给 AI，且不影响排队消息送达。
-        with contextlib.suppress(OSError):
-            directory.mkdir(parents=True, exist_ok=True)
-            for shell_id in identifiers:
-                (directory / shell_id).touch(mode=0o600, exist_ok=True)
-            if warning:
-                (directory / UNIDENTIFIED_BACKGROUND_MARKER).touch(
-                    mode=0o600, exist_ok=True
-                )
-    if identifiers:
-        listed = ", ".join(sorted(identifiers, key=int))
-        return f"后台任务：{listed}。{background_calls(sorted(identifiers, key=int))}"
-    return warning
-
-
-def background_calls(identifiers: list[str]) -> str:
-    """把本对话已记录的任务 ID 写成可直接调用的清点参数。"""
-    calls = "; ".join(
-        f"AwaitShell(shell_id={shell_id}, block_until_ms=0)" for shell_id in identifiers
-    )
-    return f"结束本回合前执行 {calls}；日志或重跑不能代替。"
-
-
-def background_reminder(directory: Path) -> str:
-    """本对话已知的后台任务 ID、可能漏记的提示和当前回合内的清点要求。
-
-    Args:
-        directory: 这个对话保存后台任务 ID 的目录
-
-    Returns:
-        提醒文字；没有任务 ID 也没有提示标记时为空串。
-    """
-    identifiers = sorted(
-        (
-            path.name
-            for path in directory.glob("*")
-            if BACKGROUND_SHELL_ID.fullmatch(path.name)
-        ),
-        key=int,
-    )
-    reminders = []
-    if identifiers:
-        listed = ", ".join(identifiers)
-        reminders.append(
-            f"后台任务：{listed}（{BACKGROUND_LIST_NOTE}）。{background_calls(identifiers)}"
-        )
-    if (directory / UNIDENTIFIED_BACKGROUND_MARKER).is_file():
-        reminders.append(UNIDENTIFIED_BACKGROUND_REMINDER)
-    return "\n\n".join(reminders)
-
-
 def run_post(text: str) -> dict[str, Any]:
-    """postToolUse：取走排队消息，Shell 即时提醒清点，用户回复时附上累计提醒。
+    """postToolUse：取走排队消息，随工具结果送达。
 
     Args:
         text: Cursor 通过标准输入传来的 JSON
@@ -482,28 +320,7 @@ def run_post(text: str) -> dict[str, Any]:
     if conversation_id is None or is_terminal_poll(text):
         return {}
     home = feedback_home()
-    directory = home / "background-jobs" / conversation_id
-    tool_name = extract_tool_name(text) or ""
-    is_shell = tool_name == "Shell"
-    is_feedback = tool_name.rsplit(":", 1)[-1] == FEEDBACK_TOOL
-    data = (parse_object(text) if is_shell or is_feedback else None) or {}
-    succeeded = data.get("hook_event_name") == "postToolUse"
-    shell_reminder = (
-        record_background_shell(data, directory) if is_shell and succeeded else ""
-    )
-    response = take_queued_context(home / "queue" / conversation_id)
-    reminders = [shell_reminder] if shell_reminder else []
-    if is_feedback and succeeded:
-        reminder = ""
-        with contextlib.suppress(OSError):
-            reminder = background_reminder(directory)
-        if reminder:
-            reminders.append(reminder)
-    if reminders:
-        context = response.get("additional_context")
-        prefix = f"{context}\n\n" if isinstance(context, str) and context else ""
-        response["additional_context"] = prefix + "\n\n".join(reminders)
-    return response
+    return take_queued_context(home / "queue" / conversation_id)
 
 
 def run_log(text: str) -> dict[str, Any]:

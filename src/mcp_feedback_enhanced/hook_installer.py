@@ -48,7 +48,7 @@ class HookSpec(NamedTuple):
 
 
 HOOK_SPECS = (
-    HookSpec("preToolUse", "pre", "^(Shell|.*interactive_feedback)$"),
+    HookSpec("preToolUse", "pre", ".*interactive_feedback.*"),
     HookSpec("postToolUse", "post"),
     HookSpec("postToolUseFailure", "post"),
     HookSpec("sessionStart", "log"),
@@ -232,13 +232,13 @@ class HookInstaller:
                     if (
                         spec.mode == "pre"
                         and entry.get("command") == self.command_for("pre")
-                        and entry.get("matcher") == ".*interactive_feedback.*"
+                        and entry.get("matcher") == "^(Shell|.*interactive_feedback)$"
                     ):
                         entry["matcher"] = spec.matcher
                         upgraded = True
                 if upgraded:
                     changed = True
-                    lines.append("✔ preToolUse 已更新 Shell 执行前检查")
+                    lines.append("✔ preToolUse 已限定为反馈工具")
                     continue
                 lines.append(
                     f"• {spec.event} 已登记，未改动：{entries[matching[0]]['command']}"
@@ -247,7 +247,7 @@ class HookInstaller:
                     entries[index].get("matcher") != spec.matcher for index in matching
                 ):
                     lines.append(
-                        "• 自定义 preToolUse 登记未升级；使用 --force 安装 Shell 执行前检查"
+                        "• 自定义 preToolUse 登记保持不动；使用 --force 替换为标准登记"
                     )
                 continue
             new_entry = self._build_entry(spec)

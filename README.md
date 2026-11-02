@@ -68,11 +68,10 @@
 
 ### Cursor 钩子
 
-钩子是可选的。它是一个 Python 脚本（仓库里的 `hooks/gl-feedback.py`，随包发布），管四件事：
+钩子是可选的。它是一个 Python 脚本（仓库里的 `hooks/gl-feedback.py`，随包发布），管三件事：
 
 - 给每次 `interactive_feedback` 填上 Cursor 的对话 ID，让每个对话用自己的页面
 - AI 调用完任意一次工具时，把用户排队的消息取走，附在那次工具结果后面交给 AI；消息带图片时，图片存成本地文件，路径写在文字里，AI 用 Read 查看；对话的房间销毁时这些图片一并删除，没被删掉的（比如服务异常退出）24 小时后清理
-- 记下 AI 后台命令的已知任务 ID，并在该次 Shell 结果后立即提醒；可能漏记的任务同样即时提示，你在页面上回复 `interactive_feedback` 时再附累计清单和提示，提醒 AI 在结束当前回合前核对所有后台调用并用 `AwaitShell` 查看，避免完成通知再起一轮、增加一次计费请求
 - 对话正常结束时（`stop`），通知服务销毁这个对话的房间，页面显示「对话已结束」，已有的记录留在页面上，由你自己关掉
 
 没装钩子，所有对话共用一个页面，排队的消息要等 AI 下次调用 `interactive_feedback` 才送达。
@@ -99,17 +98,13 @@ Windows 上同样用这条命令，不过作者没有 Windows 环境，没有在
 
 #### 各项钩子做什么
 
-`pre` 给 `interactive_feedback` 填对话 ID，并在 Shell 执行前拒绝能明确识别的命令内后台 `&`，拒绝原因明确允许前台或 `Shell(block_until_ms=0)`，测试和重定向不受此规则限制，不修改命令。同一句原因同时填入 `user_message` 和 `agent_message`：当前 Cursor 从前者拼接工具拒绝结果，后者用于兼容其他执行路径。检查适用于 macOS、Linux 的简单 shell 语法；Windows 不做这项拦截，避免把 PowerShell 调用操作符误认为后台执行。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
+`pre` 给 `interactive_feedback` 填对话 ID。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
 
-`post` 在每次工具调用结束时触发，送达排队的消息之外，还按对话记下 Shell 结果里的 `shell_id` 或 `backgroundShellId`（`GL_FEEDBACK_HOME/background-jobs/<对话 ID>/` 下每个 ID 一个空文件，只增不减，不清理）。拿到合法 ID 的当次 Shell 结果就附上这些 ID 和清点短提示，即使之后直接结束、不再调用 MCP，也能在当前回合收到。你回复 `interactive_feedback` 之后，它再附上已知任务的累计清单。两处都提供填入真实 ID 的 `AwaitShell(shell_id=编号, block_until_ms=0)`，要求在当前回合完成；累计清单可能不完整，其他后台调用也需要核对。其他工具不重复附清单。
-
-后台执行统一用 `Shell` 的 `block_until_ms: 0`，命令里不用 `&` 或 `nohup ... &` 自己放后台。Cursor 可能给启动器登记任务，却只把输出和退出码交给钩子，不给任务 ID。钩子发现明确的后台操作符 `&`（跳过引号、转义、注释、`&&` 和重定向），或后台等待参数为 0，但结果没有合法 ID 时，会在当次 Shell 结果后立即提醒「未取得后台任务 ID」，并在上述目录写 `unidentified` 空文件，让后续 `interactive_feedback` 回复继续带提示。标记表示出现过这类调用，不判断 AI 是否已核对，不含命令内容。
-
-清点在当前回合内完成：只从本对话对应工具调用及其任务记录补查真实任务 ID，不从共享终端目录随意挑编号，再用 `AwaitShell` 查看原任务；PID、退出码、读日志和重跑命令都不能代替。Cursor 的完成通知可能再起一轮、增加一次计费请求。检查不展开引号内的命令；遇到 heredoc、命令替换、变量展开、算术表达式、`[[ ]]` 或不完整引号等不确定语法时整条命令放行，不能保证拦住所有后台写法。普通 Shell 超时转后台时的字段完整性也需实测；钩子不能凭空补出 Cursor 没传来的 ID。
+`post` 在每次工具调用结束时触发，取走本对话排队的消息，通过 `additional_context` 随工具结果送达。内部终端轮询的输出不会交给 AI，因此跳过这些事件，把消息留给下一次真正的工具调用。
 
 `stop` 在 AI 的每个回合结束时触发：先记一条事件，再把回合的结束状态报告给这个对话的房间。状态是 `completed`（正常结束）时，房间 3 秒后销毁（它送达过的图片文件一并删除），页面收到「对话已结束」，输入框锁定，已有的记录留在页面上，页面不会自己关闭；这 3 秒里对话再提问，房间就留下。房间里还有排队中的消息时也留下，等对话下次提问或调用工具时送达。状态是 `aborted`（被中断）或 `error`（出错）时，房间只标成「已结束」，不销毁。不管有没有收到 `stop`，闲置超过 2 小时的房间都会销毁。
 
-标记文件、登记文件、后台任务 ID、图片和事件日志都放在 `GL_FEEDBACK_HOME`（默认 `~/.cache/gl-mcp-feedback`），服务端和钩子读同一个变量，一般不用改。
+标记文件、登记文件、图片和事件日志都放在 `GL_FEEDBACK_HOME`（默认 `~/.cache/gl-mcp-feedback`），服务端和钩子读同一个变量，一般不用改。
 
 ## 推荐的 AI 规则
 
