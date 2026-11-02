@@ -48,7 +48,7 @@ class HookSpec(NamedTuple):
 
 
 HOOK_SPECS = (
-    HookSpec("preToolUse", "pre", ".*interactive_feedback.*"),
+    HookSpec("preToolUse", "pre", "^(Shell|.*interactive_feedback)$"),
     HookSpec("postToolUse", "post"),
     HookSpec("postToolUseFailure", "post"),
     HookSpec("sessionStart", "log"),
@@ -137,7 +137,7 @@ class HookInstaller:
     def install(self, force: bool = False) -> HookReport:
         """复制脚本、试跑、登记钩子
 
-        已经登记了 `gl-feedback.py` 的条目（比如开发时指向仓库里的脚本）默认不动。
+        标准安装的 pre matcher 自动升级；自定义登记（比如指向仓库里的脚本）默认不动。
         没有要登记的条目、脚本也没装过时，不复制脚本，免得留下没有人引用的拷贝。
 
         Args:
@@ -226,9 +226,29 @@ class HookInstaller:
                 if self.entry_mode(entry) == spec.mode
             ]
             if matching and not force:
+                upgraded = False
+                for index in matching:
+                    entry = entries[index]
+                    if (
+                        spec.mode == "pre"
+                        and entry.get("command") == self.command_for("pre")
+                        and entry.get("matcher") == ".*interactive_feedback.*"
+                    ):
+                        entry["matcher"] = spec.matcher
+                        upgraded = True
+                if upgraded:
+                    changed = True
+                    lines.append("✔ preToolUse 已更新 Shell 执行前检查")
+                    continue
                 lines.append(
                     f"• {spec.event} 已登记，未改动：{entries[matching[0]]['command']}"
                 )
+                if spec.mode == "pre" and any(
+                    entries[index].get("matcher") != spec.matcher for index in matching
+                ):
+                    lines.append(
+                        "• 自定义 preToolUse 登记未升级；使用 --force 安装 Shell 执行前检查"
+                    )
                 continue
             new_entry = self._build_entry(spec)
             if matching:

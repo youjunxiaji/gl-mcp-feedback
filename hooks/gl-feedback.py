@@ -6,8 +6,9 @@
 """
 gl-mcp-feedback 的 Cursor 钩子，用法：gl-feedback.py <模式>
 
-    pre   preToolUse，只挂在 interactive_feedback 上：
-          先删掉入参里 AI 自己填的 conversation_id（对话标识只认钩子填的），
+    pre   preToolUse，挂在 Shell 和 interactive_feedback 上：
+          Shell 在执行前拒绝能明确识别的命令内后台 &，不改写命令；
+          interactive_feedback 先删掉入参里 AI 自己填的 conversation_id（对话标识只认钩子填的），
           再把本次对话的标识写进 conversation_id，所有项目的对话都填。
           preToolUse 的输入里没有 MCP 服务器名，只能按工具名匹配：
           别的 MCP 服务器如果也有叫 interactive_feedback 的工具，它的调用同样会被改写。
@@ -83,23 +84,27 @@ TERMINAL_FILE = re.compile(
 )
 # 后台任务 ID 是 Cursor 给的正整数，只认这个格式，它会被用作文件名
 BACKGROUND_SHELL_ID = re.compile(r"[1-9][0-9]{0,19}")
-# 跳过引号、转义、注释、逻辑运算和重定向中的 &，只提示疑似命令内后台执行。
-# 这是保守的词法检查，不解析 shell 语法；引号里的命令替换、heredoc 等情况仍由 AI 核对。
+# 只识别简单的 Unix shell 后台操作符；复杂语法标为 uncertain，整条命令放行。
+# 引号内的内容作为整体跳过，不展开命令替换。Windows 不使用这个检查。
 SHELL_OPERATORS = re.compile(
-    r"'(?:[^']*)'|\"(?:\\.|[^\"\\])*\"|\\.|(?:^|(?<=\s))\#[^\n]*"
+    r"'(?:[^']*)'|\"(?:\\.|[^\"\\])*\"|\\.|(?:^|(?<=[\s;|&()]))\#[^\n]*"
+    r"|(?P<uncertain><<|`|\$[({'\"]|\(\(|\[\[|['\"])"
     r"|&&|&>>?|[<>]&[0-9-]*|\|&|(?P<background>&)",
-    re.MULTILINE,
+    re.MULTILINE | re.DOTALL,
 )
 UNIDENTIFIED_BACKGROUND_MARKER = "unidentified"
 # 用户在页面上回复后返回的工具；工具名在 MCP 服务器名后面，比如 MCP:interactive_feedback
 FEEDBACK_TOOL = "interactive_feedback"
 # 清单是累计的，看过的任务也一直列着；说明这一点，免得 AI 看到已结束的任务还在清单里觉得奇怪
 BACKGROUND_LIST_NOTE = "累计，可能不全"
-# 附在后台任务 ID 后面的清点要求：Cursor 记的是任务，不是进程，进程没了任务也算数
-BACKGROUND_REMINDER = "结束本回合前逐个 AwaitShell(shell_id=ID, block_until_ms=0)，并核对其他后台任务；日志或重跑不能代替。"
+# 没有任务 ID 时只要求核对本对话对应调用，不从共享目录猜编号。
 UNIDENTIFIED_BACKGROUND_REMINDER = (
-    "后台任务可能漏记。若未核对，本回合补查真实 ID 并 AwaitShell；"
-    "勿猜 ID，PID、退出码、日志或重跑不能代替。"
+    "未取得后台任务 ID。若未核对，本回合仅从本对话对应调用补查真实 ID 并 AwaitShell；"
+    "勿猜 ID，日志或重跑不能代替。"
+)
+BACKGROUND_DENIAL = (
+    "gl-mcp-feedback：请移除后台 &；允许前台或 Shell(block_until_ms=0)，"
+    "测试和重定向不受此规则限制。"
 )
 
 # 事件日志只记这几个字段：（日志里的名字，输入里的名字）。不含用户输入、AI 的摘要、命令和文件内容
@@ -297,8 +302,28 @@ def request_room(
         connection.close()
 
 
+def has_explicit_background(command: object) -> bool:
+    """识别简单 Unix shell 命令中的后台 &；Windows 或含复杂语法时放行。
+
+    Args:
+        command: Shell 的命令参数
+
+    Returns:
+        是否能明确识别命令内后台执行；不确定时返回 False。
+    """
+    if sys.platform == "win32" or not isinstance(command, str):
+        return False
+    found = False
+    for match in SHELL_OPERATORS.finditer(command):
+        if match.lastgroup == "uncertain":
+            return False
+        if match.lastgroup == "background":
+            found = True
+    return found
+
+
 def run_pre(text: str) -> dict[str, Any]:
-    """preToolUse：删掉入参里 AI 自己填的 conversation_id，再填上 Cursor 给的对话标识"""
+    """preToolUse：拒绝明确的 Shell 后台 &，或给反馈工具填 Cursor 的对话标识。"""
     allow: dict[str, Any] = {"permission": "allow"}
     data = parse_object(text)
     if data is None:
@@ -307,6 +332,18 @@ def run_pre(text: str) -> dict[str, Any]:
     if isinstance(tool_input, str):
         tool_input = parse_object(tool_input)
     if not isinstance(tool_input, dict):
+        return allow
+    tool_name = data.get("tool_name")
+    if tool_name == "Shell":
+        if has_explicit_background(tool_input.get("command")):
+            # Cursor 的拒绝结果从 user_message 取原因；agent_message 兼容其他执行路径。
+            return {
+                "permission": "deny",
+                "user_message": BACKGROUND_DENIAL,
+                "agent_message": BACKGROUND_DENIAL,
+            }
+        return allow
+    if not isinstance(tool_name, str) or tool_name.rsplit(":", 1)[-1] != FEEDBACK_TOOL:
         return allow
     cleaned = {
         key: value for key, value in tool_input.items() if key != "conversation_id"
@@ -370,9 +407,7 @@ def record_background_shell(data: dict[str, Any], directory: Path) -> str:
         tool_input = parse_object(tool_input)
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     command = tool_input.get("command")
-    uses_background_operator = isinstance(command, str) and any(
-        match.lastgroup == "background" for match in SHELL_OPERATORS.finditer(command)
-    )
+    uses_background_operator = has_explicit_background(command)
     requests_background = any(
         type(tool_input.get(key)) is int and tool_input[key] == 0
         for key in ("block_until_ms", "timeout")
@@ -394,8 +429,16 @@ def record_background_shell(data: dict[str, Any], directory: Path) -> str:
                 )
     if identifiers:
         listed = ", ".join(sorted(identifiers, key=int))
-        return f"后台任务：{listed}。{BACKGROUND_REMINDER}"
+        return f"后台任务：{listed}。{background_calls(sorted(identifiers, key=int))}"
     return warning
+
+
+def background_calls(identifiers: list[str]) -> str:
+    """把本对话已记录的任务 ID 写成可直接调用的清点参数。"""
+    calls = "; ".join(
+        f"AwaitShell(shell_id={shell_id}, block_until_ms=0)" for shell_id in identifiers
+    )
+    return f"结束本回合前执行 {calls}；日志或重跑不能代替。"
 
 
 def background_reminder(directory: Path) -> str:
@@ -419,7 +462,7 @@ def background_reminder(directory: Path) -> str:
     if identifiers:
         listed = ", ".join(identifiers)
         reminders.append(
-            f"后台任务：{listed}（{BACKGROUND_LIST_NOTE}）。{BACKGROUND_REMINDER}"
+            f"后台任务：{listed}（{BACKGROUND_LIST_NOTE}）。{background_calls(identifiers)}"
         )
     if (directory / UNIDENTIFIED_BACKGROUND_MARKER).is_file():
         reminders.append(UNIDENTIFIED_BACKGROUND_REMINDER)

@@ -91,7 +91,7 @@ uvx gl-mcp-feedback@latest hooks install
 2. 用将要登记的命令试跑一次脚本，确认 uv 和 Python 都能用；试跑不通就停下，不改配置
 3. 把五项钩子合并登记进同一个目录的 `hooks.json`，别的钩子原样保留，改动前先把原文件备份成 `hooks.json.bak`
 
-登记的命令是 `uv run --quiet --no-project --script ./hooks/gl-feedback.py <模式>`，脚本路径是相对的（用户级钩子从 `.cursor` 目录运行），每个人登记的内容都一样。重复执行不会重复登记；已经登记了 `gl-feedback.py` 的条目（比如你自己指向仓库脚本的）默认不动，加 `--force` 才改成新位置。升级之后再执行一次，脚本就更新到新版。从源码运行时，在仓库里执行 `uv run gl-mcp-feedback hooks install`。卸载：`uvx gl-mcp-feedback@latest hooks uninstall`。
+登记的命令是 `uv run --quiet --no-project --script ./hooks/gl-feedback.py <模式>`，脚本路径是相对的（用户级钩子从 `.cursor` 目录运行），每个人登记的内容都一样。重复执行不会重复登记；标准安装的 `pre` 工具匹配范围会自动升级；自定义登记（比如你自己指向仓库脚本的）保持不动，需要加 `--force` 才替换为标准登记。升级之后再执行一次，脚本就更新到新版。从源码运行时，在仓库里执行 `uv run gl-mcp-feedback hooks install`。卸载：`uvx gl-mcp-feedback@latest hooks uninstall`。
 
 脚本只依赖 uv（用 `uvx` 启动 MCP 的话已经有了），macOS、Linux 和 Windows 通用。
 
@@ -99,13 +99,13 @@ Windows 上同样用这条命令，不过作者没有 Windows 环境，没有在
 
 #### 各项钩子做什么
 
-`pre` 给所有项目的对话填对话 ID。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
+`pre` 给 `interactive_feedback` 填对话 ID，并在 Shell 执行前拒绝能明确识别的命令内后台 `&`，拒绝原因明确允许前台或 `Shell(block_until_ms=0)`，测试和重定向不受此规则限制，不修改命令。同一句原因同时填入 `user_message` 和 `agent_message`：当前 Cursor 从前者拼接工具拒绝结果，后者用于兼容其他执行路径。检查适用于 macOS、Linux 的简单 shell 语法；Windows 不做这项拦截，避免把 PowerShell 调用操作符误认为后台执行。Cursor 给 `preToolUse` 的输入里没有 MCP 服务器名，`matcher` 只能按工具名匹配，别的 MCP 服务器如果也有叫 `interactive_feedback` 的工具，它的调用同样会被改写。`log` 把会话事件的几个字段记进 `~/.cache/gl-mcp-feedback/hook-events.log`。
 
-`post` 在每次工具调用结束时触发，送达排队的消息之外，还按对话记下 Shell 结果里的 `shell_id` 或 `backgroundShellId`（`GL_FEEDBACK_HOME/background-jobs/<对话 ID>/` 下每个 ID 一个空文件，只增不减，不清理）。拿到合法 ID 的当次 Shell 结果就附上这些 ID 和清点短提示，即使之后直接结束、不再调用 MCP，也能在当前回合收到。你回复 `interactive_feedback` 之后，它再附上已知任务的累计清单。两处都要求结束当前回合前对任务用 `AwaitShell` 查看，并核对其他后台调用；累计清单可能不完整。其他工具不重复附清单。
+`post` 在每次工具调用结束时触发，送达排队的消息之外，还按对话记下 Shell 结果里的 `shell_id` 或 `backgroundShellId`（`GL_FEEDBACK_HOME/background-jobs/<对话 ID>/` 下每个 ID 一个空文件，只增不减，不清理）。拿到合法 ID 的当次 Shell 结果就附上这些 ID 和清点短提示，即使之后直接结束、不再调用 MCP，也能在当前回合收到。你回复 `interactive_feedback` 之后，它再附上已知任务的累计清单。两处都提供填入真实 ID 的 `AwaitShell(shell_id=编号, block_until_ms=0)`，要求在当前回合完成；累计清单可能不完整，其他后台调用也需要核对。其他工具不重复附清单。
 
-后台执行统一用 `Shell` 的 `block_until_ms: 0`，命令里不用 `&` 或 `nohup ... &` 自己放后台。Cursor 可能给启动器登记任务，却只把输出和退出码交给钩子，不给任务 ID。钩子发现疑似后台操作符 `&`（词法检查跳过引号、转义、注释、`&&` 和重定向），或后台等待参数为 0，但结果没有合法 ID 时，会在当次 Shell 结果后立即提醒，并在上述目录写 `unidentified` 空文件，让后续 `interactive_feedback` 回复继续带提示。标记表示出现过这类调用，不判断 AI 是否已核对，不含命令内容。
+后台执行统一用 `Shell` 的 `block_until_ms: 0`，命令里不用 `&` 或 `nohup ... &` 自己放后台。Cursor 可能给启动器登记任务，却只把输出和退出码交给钩子，不给任务 ID。钩子发现明确的后台操作符 `&`（跳过引号、转义、注释、`&&` 和重定向），或后台等待参数为 0，但结果没有合法 ID 时，会在当次 Shell 结果后立即提醒「未取得后台任务 ID」，并在上述目录写 `unidentified` 空文件，让后续 `interactive_feedback` 回复继续带提示。标记表示出现过这类调用，不判断 AI 是否已核对，不含命令内容。
 
-清点在当前回合内完成：从工具结果或终端任务记录补查真实任务 ID，再用 `AwaitShell` 查看原任务；PID、退出码、读日志和重跑命令都不能代替。Cursor 的完成通知可能再起一轮、增加一次计费请求。引号内的命令替换、heredoc 等不在词法检查的保证范围内，普通 Shell 超时转后台时的字段完整性也需实测；钩子不能凭空补出 Cursor 没传来的 ID。
+清点在当前回合内完成：只从本对话对应工具调用及其任务记录补查真实任务 ID，不从共享终端目录随意挑编号，再用 `AwaitShell` 查看原任务；PID、退出码、读日志和重跑命令都不能代替。Cursor 的完成通知可能再起一轮、增加一次计费请求。检查不展开引号内的命令；遇到 heredoc、命令替换、变量展开、算术表达式、`[[ ]]` 或不完整引号等不确定语法时整条命令放行，不能保证拦住所有后台写法。普通 Shell 超时转后台时的字段完整性也需实测；钩子不能凭空补出 Cursor 没传来的 ID。
 
 `stop` 在 AI 的每个回合结束时触发：先记一条事件，再把回合的结束状态报告给这个对话的房间。状态是 `completed`（正常结束）时，房间 3 秒后销毁（它送达过的图片文件一并删除），页面收到「对话已结束」，输入框锁定，已有的记录留在页面上，页面不会自己关闭；这 3 秒里对话再提问，房间就留下。房间里还有排队中的消息时也留下，等对话下次提问或调用工具时送达。状态是 `aborted`（被中断）或 `error`（出错）时，房间只标成「已结束」，不销毁。不管有没有收到 `stop`，闲置超过 2 小时的房间都会销毁。
 

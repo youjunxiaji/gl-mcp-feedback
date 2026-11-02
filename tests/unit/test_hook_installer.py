@@ -100,7 +100,7 @@ def our_entries() -> dict[str, list[dict[str, Any]]]:
         "preToolUse": [
             {
                 "command": f"{launcher} pre",
-                "matcher": ".*interactive_feedback.*",
+                "matcher": "^(Shell|.*interactive_feedback)$",
                 "timeout": TIMEOUT,
             }
         ],
@@ -202,6 +202,37 @@ class TestInstall:
         config = read_config(cursor_dir)
         assert config["version"] == 1
         assert config["hooks"]["afterFileEdit"] == other_hooks()["afterFileEdit"]
+
+    def test_upgrades_standard_pre_matcher_and_preserves_custom_options(
+        self, cursor_dir: Path
+    ) -> None:
+        hooks = our_entries()
+        hooks["preToolUse"][0].update(
+            matcher=".*interactive_feedback.*", timeout=7, custom_option="keep"
+        )
+        hooks["preToolUse"].insert(0, other_hooks()["preToolUse"][0])
+        original = write_config(cursor_dir, {"version": 1, "hooks": hooks})
+
+        assert HookInstaller(cursor_dir).install().ok
+
+        hooks["preToolUse"][1]["matcher"] = "^(Shell|.*interactive_feedback)$"
+        assert read_config(cursor_dir)["hooks"] == hooks
+        assert backup_file(cursor_dir).read_text() == original
+        assert installed_script(cursor_dir).read_bytes() == HOOK_SCRIPT.read_bytes()
+        before = read_config_text(cursor_dir)
+        assert HookInstaller(cursor_dir).install().ok
+        assert read_config_text(cursor_dir) == before
+
+    def test_preserves_custom_pre_matcher(self, cursor_dir: Path) -> None:
+        hooks = our_entries()
+        hooks["preToolUse"][0]["matcher"] = "MCP:interactive_feedback"
+        original = write_config(cursor_dir, {"version": 1, "hooks": hooks})
+
+        report = HookInstaller(cursor_dir).install()
+
+        assert report.ok
+        assert read_config_text(cursor_dir) == original
+        assert any("--force" in line for line in report.lines)
 
     def test_keeps_other_hooks_and_backs_up_the_original(
         self, cursor_dir: Path

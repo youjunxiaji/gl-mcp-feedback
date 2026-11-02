@@ -1095,6 +1095,98 @@ class TestHookPre:
         assert run_hook("pre", payload, tmp_path) == {"permission": "allow"}
 
 
+class TestHookShellPre:
+    """拦截明确的后台启动器，放行正常 Shell 和无法可靠解析的语法。"""
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="只检查 Unix shell 语法")
+    @pytest.mark.parametrize("as_text", [False, True])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "npm run test &",
+            "(npm run test > /tmp/tests.log 2>&1) &\nsleep 2; echo started",
+            "nohup npm run dev > /tmp/dev.log 2>&1 &",
+            "sleep 1&echo started",
+            "echo 'literal &'; npm run test &",
+            'echo "literal &"; npm run test &',
+            "# comment &\nnpm run test &",
+            "cd /project/backend && (uv run python manage.py test --noinput > /tmp/tests_all.log 2>&1; echo EXIT:$? >> /tmp/tests_all.log) &\nsleep 2; echo started",
+        ],
+    )
+    def test_denies_background_launchers(
+        self, tmp_path: Path, command: str, as_text: bool
+    ):
+        tool_input = {"command": command, "timeout": 5000}
+        payload = {
+            **pre_payload(json.dumps(tool_input) if as_text else tool_input),
+            "tool_name": "Shell",
+        }
+
+        output = run_hook("pre", payload, tmp_path)
+
+        assert output == {
+            "permission": "deny",
+            "user_message": "gl-mcp-feedback：请移除后台 &；允许前台或 Shell(block_until_ms=0)，测试和重定向不受此规则限制。",
+            "agent_message": "gl-mcp-feedback：请移除后台 &；允许前台或 Shell(block_until_ms=0)，测试和重定向不受此规则限制。",
+        }
+        assert not list(tmp_path.iterdir())
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "npm run test",
+            "npm run check && npm run test",
+            "npm run test > /tmp/test.log 2>&1",
+            "npm run test &> /tmp/test.log",
+            "npm run test &>> /tmp/test.log",
+            "npm run test |& cat",
+            "cat <&0",
+            'echo "a & b"',
+            "echo 'a & b'",
+            r"echo a\&b",
+            "echo ok;# comment &",
+            "python -c \"print('a & b')\"",
+            "cat <<'EOF'\nnpm run test &\nEOF",
+            "cat <<-EOF\n\tnpm run test &\n\tEOF",
+            'echo "$(echo literal) &"',
+            "echo ${value//x/&}",
+            "echo `printf '&'`",
+            r"echo $'quoted \' & literal'",
+            "(( mask = mask & 1 ))",
+            "[[ $value == a&b ]]",
+            "echo 'unterminated &",
+            # 不把复杂语法中的部分词法结果当作可靠的拒绝依据。
+            "npm run test &\ncat <<EOF\ntext\nEOF",
+            None,
+        ],
+    )
+    def test_allows_safe_or_uncertain_commands(self, tmp_path: Path, command: object):
+        payload = {
+            **pre_payload({"command": command, "block_until_ms": 0}),
+            "tool_name": "Shell",
+        }
+
+        assert run_hook("pre", payload, tmp_path) == {"permission": "allow"}
+
+    @pytest.mark.parametrize("tool_name", ["Read", "MCP:other", "ShellExtra", ""])
+    def test_does_not_modify_unrelated_tools(self, tmp_path: Path, tool_name: str):
+        payload = {
+            **pre_payload({"command": "npm test &", "conversation_id": "keep"}),
+            "tool_name": tool_name,
+        }
+
+        assert run_hook("pre", payload, tmp_path) == {"permission": "allow"}
+
+    @pytest.mark.parametrize("command", ['& "C:/Program Files/tool.exe"', "npm test &"])
+    def test_does_not_apply_unix_syntax_to_windows(
+        self, hook_module: ModuleType, monkeypatch: pytest.MonkeyPatch, command: str
+    ):
+        monkeypatch.setattr(hook_module.sys, "platform", "win32")
+        payload = {**pre_payload({"command": command}), "tool_name": "Shell"}
+
+        assert hook_module.run_pre(json.dumps(payload)) == {"permission": "allow"}
+
+
 class TestHookPost:
     """postToolUse：这个对话有排队的消息就取走，交给 AI"""
 
@@ -1330,7 +1422,7 @@ class TestHookBackgroundIds:
         output = run_hook("post", payload, home)
         context = TestHookBackgroundIds.context(output)
         assert context.startswith(f"后台任务：{shell_id}。")
-        assert "AwaitShell(shell_id=ID, block_until_ms=0)" in context
+        assert f"AwaitShell(shell_id={shell_id}, block_until_ms=0)" in context
         assert "结束本回合前" in context
         assert "日志或重跑不能代替" in context
 
@@ -1351,6 +1443,9 @@ class TestHookBackgroundIds:
         assert "累计" in context
         assert "AwaitShell" in context
         assert "block_until_ms" in context
+        assert "AwaitShell(shell_id=606845, block_until_ms=0)" in context
+        assert "AwaitShell(shell_id=606846, block_until_ms=0)" in context
+        assert "shell_id=ID" not in context
         directory = tmp_path / "background-jobs" / CONVERSATION_A
         assert {path.name: path.read_text() for path in directory.iterdir()} == {
             "606845": "",
@@ -1371,7 +1466,7 @@ class TestHookBackgroundIds:
         context = self.context(run_hook("post", payload, tmp_path))
 
         assert context.startswith("后台任务：809796。")
-        assert "AwaitShell(shell_id=ID, block_until_ms=0)" in context
+        assert "AwaitShell(shell_id=809796, block_until_ms=0)" in context
         assert "日志或重跑不能代替" in context
         assert (
             run_hook("post", read_payload("/tmp/tmb_backend_test.log"), tmp_path) == {}
@@ -1548,8 +1643,8 @@ class TestHookBackgroundIds:
 
         assert "后台任务：151216（" in context
         assert "可能不全" in context
-        assert "其他后台任务" in context
-        assert "可能漏记" not in context
+        assert "累计，可能不全" in context
+        assert "未取得后台任务 ID" not in context
 
     def test_launcher_with_known_ids_records_them_without_a_missing_id_warning(
         self, tmp_path: Path
@@ -1559,12 +1654,13 @@ class TestHookBackgroundIds:
 
         immediate = self.context(run_hook("post", payload, tmp_path))
         assert immediate.startswith("后台任务：151216, 151218。")
-        assert "可能漏记" not in immediate
+        assert "未取得后台任务 ID" not in immediate
         context = self.context(run_hook("post", feedback_payload(), tmp_path))
 
         assert "后台任务：151216, 151218（" in context
-        assert "可能漏记" not in context
+        assert "未取得后台任务 ID" not in context
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="只检查 Unix shell 语法")
     def test_launcher_without_id_warns_immediately_and_on_later_replies(
         self, tmp_path: Path
     ):
@@ -1577,8 +1673,9 @@ class TestHookBackgroundIds:
 
         context = self.context(run_hook("post", payload, tmp_path))
 
-        assert "可能漏记" in context
+        assert "未取得后台任务 ID" in context
         assert "真实 ID" in context
+        assert "仅从本对话对应调用" in context
         assert "AwaitShell" in context
         assert "本回合" in context
         assert "勿猜 ID" in context
@@ -1604,7 +1701,7 @@ class TestHookBackgroundIds:
         tool_input = {"command": "npm run type-check", timeout_key: 0}
         payload["tool_input"] = json.dumps(tool_input) if input_as_text else tool_input
 
-        assert "可能漏记" in self.context(run_hook("post", payload, tmp_path))
+        assert "未取得后台任务 ID" in self.context(run_hook("post", payload, tmp_path))
 
     @pytest.mark.parametrize(
         "command",
@@ -1618,11 +1715,12 @@ class TestHookBackgroundIds:
             "# comment &\nnpm run test &",
         ],
     )
+    @pytest.mark.skipif(sys.platform == "win32", reason="只检查 Unix shell 语法")
     def test_suspected_background_operator_warns(self, tmp_path: Path, command: str):
         payload = shell_payload({"exitCode": 0})
         payload["tool_input"] = {"command": command, "timeout": 8000}
 
-        assert "可能漏记" in self.context(run_hook("post", payload, tmp_path))
+        assert "未取得后台任务 ID" in self.context(run_hook("post", payload, tmp_path))
 
     @pytest.mark.parametrize(
         "command",
@@ -1665,7 +1763,7 @@ class TestHookBackgroundIds:
             run_hook("post", shell_payload({"exitCode": 0}), tmp_path)
         )
 
-        assert context.startswith("继续处理\n\n后台任务可能漏记")
+        assert context.startswith("继续处理\n\n未取得后台任务 ID")
 
     @pytest.mark.parametrize("shell_id", ["../outside", True, 0, -1, 1.5])
     def test_invalid_ids_on_a_background_request_warn_without_recording_the_id(
@@ -1675,7 +1773,7 @@ class TestHookBackgroundIds:
             run_hook("post", shell_payload({"backgroundShellId": shell_id}), tmp_path)
         )
 
-        assert "可能漏记" in context
+        assert "未取得后台任务 ID" in context
         directory = tmp_path / "background-jobs" / CONVERSATION_A
         assert {path.name for path in directory.iterdir()} == {"unidentified"}
 

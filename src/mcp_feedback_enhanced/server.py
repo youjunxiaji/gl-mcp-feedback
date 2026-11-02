@@ -491,18 +491,14 @@ async def interactive_feedback(
           substantive content for the user to read. Put it in ``summary``.
         - To run a command in the background, use ``Shell`` with ``block_until_ms: 0``.
           Do not background commands inside the shell using ``&``, ``nohup ... &`` or similar launchers.
-          Cursor can register a task for such a launcher while sending the hook only stdout and an exit code, without its task ID.
           Keep track of the actual task ID returned by Cursor, including commands moved to the background after a timeout.
         - When the user skips without feedback, re-call this tool to ask why; only stop on explicit termination (``结束`` / ``不用了`` / ``stop`` / ``done``).
           Before stopping, check EVERY background job you started in this conversation, including ones you think already exited or were killed.
-          Cursor tracks the job, not your process: a launcher that returned within seconds is still a job.
-          That means each ``Shell`` with ``block_until_ms: 0``, or command Cursor moved to the background after the timeout.
-          When a line starting with "后台任务：" is attached to a Shell result or this tool's result, these are only the KNOWN tasks: check AT LEAST those IDs and review other background calls in this conversation.
-          If the hook warns about an unidentified task, find its real ID from the corresponding tool result or terminal task record and call ``AwaitShell`` for it in THIS turn, before stopping.
-          Never invent an ID or substitute a PID, exit code, log read or rerun of the command for observing the original task.
-          Call ``AwaitShell`` with each ``shell_id`` and ``block_until_ms: 0``.
-          Complete this check before ending the current turn: a completion notification that starts another turn can cost the user another paid request.
-          Do not defer cleanup to a follow-up turn.
+          Use ``AwaitShell(shell_id=<actual ID>, block_until_ms=0)`` for each job in THIS turn.
+          Hook reminders provide concrete calls for known IDs; the cumulative list may be incomplete and includes previously observed jobs.
+          If an ID is missing, match the original tool call in THIS conversation to its task record; never pick IDs from a shared terminal directory without confirming ownership.
+          A PID, exit code, log read or rerun cannot replace AwaitShell. Never invent an ID.
+          Finish checking before stopping: a completion notification can start another paid turn. Do not defer cleanup.
           Wait for one-off jobs (tests, builds) that are still running; do not stop long-lived processes (dev servers, watchers) on your own, tell the user they are still running.
           A finished job you never observed makes Cursor wake you up with a "task completed" notification after the conversation has ended.
           If that happens anyway, reply with one plain sentence and do NOT call this tool again (it would open a new page).
