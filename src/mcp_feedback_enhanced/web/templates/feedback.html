@@ -167,9 +167,13 @@
         .md a { color: #60a5fa; text-decoration: none; }
         .md a:hover { text-decoration: underline; }
         .md hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 1.2em 0; }
-        .md table { width: 100%; border-collapse: collapse; margin: 0.6em 0; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; overflow: hidden; }
-        .md th { background: #171d2b; font-weight: 600; color: #e2e8f0; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.06); text-align: left; }
-        .md td { padding: 6px 12px; border: 1px solid rgba(255,255,255,0.06); color: #8494a7; }
+        /* 表格按内容展开，超出气泡时只在表格容器内横向滚动 */
+        .md .table-scroll { max-width: 100%; margin: 0.6em 0; overflow-x: auto; overscroll-behavior-x: contain; border-radius: 8px; }
+        .md .table-scroll:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+        .md table { width: max-content; min-width: 100%; table-layout: auto; border-collapse: collapse; margin: 0; border: 1px solid rgba(255,255,255,0.06); overflow-wrap: normal; word-break: normal; }
+        .md th { background: #171d2b; font-weight: 600; color: #e2e8f0; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.06); text-align: left; white-space: nowrap; }
+        .md td { max-width: 32rem; padding: 6px 12px; border: 1px solid rgba(255,255,255,0.06); color: #8494a7; }
+        .md th code, .md td code { white-space: nowrap; }
         .md tr:nth-child(2n) { background: rgba(255,255,255,0.02); }
         .md > *:first-child { margin-top: 0; }
         .md > *:last-child { margin-bottom: 0; }
@@ -369,6 +373,20 @@
                 });
 
                 wrap.appendChild(btn);
+            });
+        };
+
+        const enhanceTables = (rootEl) => {
+            if (!rootEl) return;
+            rootEl.querySelectorAll('table').forEach((table) => {
+                if (table.parentElement && table.parentElement.classList.contains('table-scroll')) return;
+                const wrap = document.createElement('div');
+                wrap.className = 'table-scroll';
+                wrap.tabIndex = 0;
+                wrap.setAttribute('role', 'region');
+                wrap.setAttribute('aria-label', '表格，可横向滚动');
+                table.parentNode.insertBefore(wrap, table);
+                wrap.appendChild(table);
             });
         };
 
@@ -1170,7 +1188,7 @@
 
         const createAiBubble = (round, awaiting) => {
             const bubble = document.createElement('div');
-            // 气泡在纵向 flex 的外层里按内容定宽，代码块的长行会把它撑开；max-w-full 把它限制在外层的宽度（最宽 2/3）里，长行在代码块内横向滚动
+            // 气泡在纵向 flex 的外层里按内容定宽；max-w-full 将它限制在外层宽度（最宽 2/3）内，宽表格和代码块各自在内部横向滚动
             bubble.className = 'bubble-ai min-w-0 max-w-full px-4 py-3 text-[15px] leading-relaxed break-words';
             if (awaiting) {
                 const header = document.createElement('div');
@@ -1186,6 +1204,7 @@
             if (typeof marked !== 'undefined') {
                 body.innerHTML = marked.parse(round.summary || '');
                 enhanceCodeBlocks(body);
+                enhanceTables(body);
             } else {
                 body.classList.add('whitespace-pre-wrap');
                 body.textContent = round.summary || '';
