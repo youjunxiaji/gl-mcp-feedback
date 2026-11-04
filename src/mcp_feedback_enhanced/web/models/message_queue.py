@@ -43,7 +43,7 @@ class QueueFullError(Exception):
 
 
 class MessageNotPendingError(Exception):
-    """消息不存在，或者已经被 AI 取走，不能再修改或撤回"""
+    """消息不存在，或者已经被 AI 取走，不能再撤回或删除"""
 
 
 @dataclass
@@ -81,7 +81,7 @@ class QueuedMessage:
 class MessageQueue:
     """线程安全的用户消息队列
 
-    Web 线程（WebSocket 与接口）负责写入、修改和撤回，MCP 线程在 AI 发起新一轮提问时取走，
+    Web 线程（WebSocket 与接口）负责写入、撤回和删除，MCP 线程在 AI 发起新一轮提问时取走，
     钩子的请求由 Web 线程处理，也会取走。
     数据只放在内存里，服务重启后清空。
     """
@@ -94,7 +94,7 @@ class MessageQueue:
         """
         Args:
             max_pending: 同时排队的消息上限。
-            on_pending_changed: 排队中的消息数量可能变了（加入、撤回、取走）之后调用，
+            on_pending_changed: 排队中的消息数量可能变了（加入、撤回、删除、取走）之后调用，
                 在队列的锁之外执行，出错只记日志，不影响队列操作。
         """
         self.max_pending = max_pending
@@ -143,30 +143,14 @@ class MessageQueue:
         self._notify_pending_changed()
         return message
 
-    def update_text(self, message_id: str, text: str) -> None:
-        """修改一条排队中的消息的文字
+    def remove(self, message_id: str) -> QueuedMessage:
+        """移除一条排队中的消息，供撤回或删除使用。
 
         Args:
             message_id: 消息标识。
-            text: 新的文字。
 
-        Raises:
-            MessageNotPendingError: 消息不存在，或已经被 AI 取走。
-            ValueError: 新文字为空，并且消息没有附带图片。
-        """
-        text = text.strip()
-        with self._lock:
-            message = self._find_pending(message_id)
-            if not text and message.image_count == 0:
-                raise ValueError("消息内容不能为空")
-            message.text = text
-        debug_log(f"排队消息已修改: {message_id}")
-
-    def cancel(self, message_id: str) -> None:
-        """撤回一条排队中的消息
-
-        Args:
-            message_id: 消息标识。
+        Returns:
+            移除的消息，包含原文字和图片，撤回时用于恢复输入框。
 
         Raises:
             MessageNotPendingError: 消息不存在，或已经被 AI 取走。
@@ -174,8 +158,9 @@ class MessageQueue:
         with self._lock:
             message = self._find_pending(message_id)
             self._messages.remove(message)
-        debug_log(f"排队消息已撤回: {message_id}")
+        debug_log(f"排队消息已移除: {message_id}")
         self._notify_pending_changed()
+        return message
 
     def deliver_with_question(self, session_id: str) -> list[QueuedMessage]:
         """AI 发起新一轮提问时，取走所有排队中的消息，标记为随这个会话送达

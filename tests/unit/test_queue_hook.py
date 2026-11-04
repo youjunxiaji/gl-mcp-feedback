@@ -37,6 +37,7 @@ from websockets.exceptions import InvalidStatus
 from mcp_feedback_enhanced.web.main import WebUIManager, launch_web_feedback_ui
 from mcp_feedback_enhanced.web.models import (
     DeliveryChannel,
+    MessageNotPendingError,
     MessageQueue,
     QueueMarker,
     Room,
@@ -239,13 +240,40 @@ class TestMessageQueueChannels:
 
         first = queue.enqueue("甲", [], [])
         queue.enqueue("乙", [], [])
-        queue.update_text(first.message_id, "改过")
-        queue.cancel(first.message_id)
+        queue.remove(first.message_id)
         queue.deliver_with_tool_call()
         queue.deliver_with_tool_call()
 
-        # 加入两次、撤回一次、取走一次；改文字和空取不触发
+        # 加入两次、移除一次、取走一次；空取不触发
         assert counts == [1, 2, 1, 0]
+
+    def test_removal_racing_delivery_keeps_one_owner_of_the_original_images(self):
+        queue = MessageQueue()
+        message = queue.enqueue("原文", [image(PNG)], [])
+        barrier = threading.Barrier(2)
+        owners: list[bytes] = []
+
+        def remove() -> None:
+            barrier.wait()
+            try:
+                removed = queue.remove(message.message_id)
+            except MessageNotPendingError:
+                return
+            owners.append(removed.images[0]["data"])
+
+        def deliver() -> None:
+            barrier.wait()
+            for delivered in queue.deliver_with_tool_call():
+                owners.append(delivered.images[0]["data"])
+
+        threads = [threading.Thread(target=remove), threading.Thread(target=deliver)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert owners == [PNG]
+        assert queue.pending_count() == 0
 
     def test_callback_errors_do_not_break_the_queue(self):
         def explode() -> None:
@@ -255,7 +283,7 @@ class TestMessageQueueChannels:
 
         message = queue.enqueue("甲", [], [])
         assert queue.pending_count() == 1
-        queue.cancel(message.message_id)
+        queue.remove(message.message_id)
         assert queue.pending_count() == 0
 
 
@@ -306,9 +334,9 @@ class TestQueueMarker:
         first = room.message_queue.enqueue("甲", [], [])
         assert path.read_text(encoding="utf-8") == f"{ROOM_URL}\n{os.getpid()}\n"
         second = room.message_queue.enqueue("乙", [], [])
-        room.message_queue.cancel(first.message_id)
+        room.message_queue.remove(first.message_id)
         assert path.exists()
-        room.message_queue.cancel(second.message_id)
+        room.message_queue.remove(second.message_id)
         assert not path.exists()
         assert list(path.parent.iterdir()) == []
 
@@ -366,7 +394,7 @@ class TestQueueMarker:
 
         message = room.message_queue.enqueue("甲", [], [])
         assert room.message_queue.pending_count() == 1
-        room.message_queue.cancel(message.message_id)
+        room.message_queue.remove(message.message_id)
         assert room.message_queue.pending_count() == 0
 
     def test_default_room_has_no_marker(self, web_ui_manager: WebUIManager):

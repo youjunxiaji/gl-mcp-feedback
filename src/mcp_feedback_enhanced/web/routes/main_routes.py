@@ -9,7 +9,9 @@
 - ``/c/{room_id}/`` 是一个对话的页面，页面用到的接口和 WebSocket 都在这个前缀下
 """
 
+import base64
 import json
+import mimetypes
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
@@ -208,21 +210,15 @@ def setup_routes(manager: "WebUIManager"):
                 },
             )
 
-    @router.put("/api/queue/{message_id}")
-    async def update_queued_message(room_id: str, message_id: str, request: Request):
-        """修改一条还在排队的消息的文字"""
+    @router.post("/api/queue/{message_id}/recall")
+    async def recall_queued_message(room_id: str, message_id: str):
+        """撤回排队中的消息，返回原文字和图片供用户重新编辑。"""
         room = manager.get_room(room_id)
         if room is None:
             return room_not_found()
 
         try:
-            data = await request.json()
-        except ValueError:
-            data = {}
-        text = str(data.get("feedback", "")) if isinstance(data, dict) else ""
-
-        try:
-            room.message_queue.update_text(message_id, text)
+            message = room.message_queue.remove(message_id)
         except MessageNotPendingError:
             return JSONResponse(
                 status_code=409,
@@ -231,18 +227,26 @@ def setup_routes(manager: "WebUIManager"):
                     "messageCode": get_msg_code("QUEUE_MESSAGE_NOT_PENDING"),
                 },
             )
-        except ValueError:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "status": "error",
-                    "messageCode": get_msg_code("QUEUE_MESSAGE_EMPTY"),
-                },
-            )
         return JSONResponse(
             content={
                 "status": "success",
-                "messageCode": get_msg_code("QUEUE_MESSAGE_UPDATED"),
+                "messageCode": get_msg_code("QUEUE_MESSAGE_RECALLED"),
+                "feedback": message.text,
+                "images": [
+                    {
+                        "name": image["name"],
+                        "data": (
+                            "data:"
+                            + (
+                                mimetypes.guess_type(image["name"])[0]
+                                or "application/octet-stream"
+                            )
+                            + ";base64,"
+                            + base64.b64encode(image["data"]).decode("ascii")
+                        ),
+                    }
+                    for image in message.images
+                ],
             }
         )
 
@@ -284,14 +288,14 @@ def setup_routes(manager: "WebUIManager"):
         return JSONResponse(content={"ended": manager.end_turn(room, status)})
 
     @router.delete("/api/queue/{message_id}")
-    async def cancel_queued_message(room_id: str, message_id: str):
-        """撤回一条还在排队的消息"""
+    async def delete_queued_message(room_id: str, message_id: str):
+        """删除一条还在排队的消息。"""
         room = manager.get_room(room_id)
         if room is None:
             return room_not_found()
 
         try:
-            room.message_queue.cancel(message_id)
+            room.message_queue.remove(message_id)
         except MessageNotPendingError:
             return JSONResponse(
                 status_code=409,
@@ -303,7 +307,7 @@ def setup_routes(manager: "WebUIManager"):
         return JSONResponse(
             content={
                 "status": "success",
-                "messageCode": get_msg_code("QUEUE_MESSAGE_CANCELLED"),
+                "messageCode": get_msg_code("QUEUE_MESSAGE_DELETED"),
             }
         )
 

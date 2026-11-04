@@ -48,8 +48,8 @@ class MessageCodes:
     # ========== 消息队列相关 ==========
     QUEUE_MESSAGE_QUEUED = "queue.messageQueued"
     QUEUE_FULL = "queue.full"
-    QUEUE_MESSAGE_UPDATED = "queue.messageUpdated"
-    QUEUE_MESSAGE_CANCELLED = "queue.messageCancelled"
+    QUEUE_MESSAGE_RECALLED = "queue.messageRecalled"
+    QUEUE_MESSAGE_DELETED = "queue.messageDeleted"
     QUEUE_MESSAGE_NOT_PENDING = "queue.messageNotPending"
     QUEUE_MESSAGE_EMPTY = "queue.messageEmpty"
 

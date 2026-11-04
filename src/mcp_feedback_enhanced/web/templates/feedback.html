@@ -955,10 +955,8 @@
         let renderedKeys = new Set();
         let deferredScroll = null;
         let savedChatScrollTop = 0;
-        // 正在编辑的排队消息：id、编辑框里的内容、编辑框元素
-        let editingQueueId = '';
-        let editingDraft = '';
-        let editorTextarea = null;
+        // 正在处理的队列操作；请求结束前禁用操作按钮，避免重复撤回或删除
+        let pendingQueueAction = null;
         // 最近一次发送的内容，被服务端拒绝（队列已满、没有可发送的内容）时放回输入框
         let lastSubmission = null;
         // 已经发出、还没收到服务端回应的消息，按发送顺序；每条消息服务端都会回应一次。
@@ -1010,7 +1008,7 @@
         const isQueueFull = () => !isAwaitingReply() && getPendingQueued().length >= queueLimit;
 
         const queueFullText = () =>
-            '队列已满（最多 ' + queueLimit + ' 条），请等 AI 读取，或编辑、撤回已排队的消息';
+            '队列已满（最多 ' + queueLimit + ' 条），请等 AI 读取，或撤回、删除已排队的消息';
 
         // 返回输入框的锁定原因，空字符串表示可以输入
         const getComposerLock = () => {
@@ -1235,13 +1233,14 @@
         const createQueueAction = (text, handler) => {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'text-slate-300 hover:text-blue-300 hover:underline underline-offset-2 transition';
+            btn.className = 'text-slate-300 hover:text-blue-300 hover:underline underline-offset-2 transition disabled:opacity-50 disabled:cursor-wait';
+            btn.disabled = pendingQueueAction !== null;
             btn.textContent = text;
             btn.addEventListener('click', handler);
             return btn;
         };
 
-        // 排队消息的状态：排队中（可编辑、撤回）或已送达（区分随工具调用送达还是随提问送达）
+        // 排队消息的状态：排队中（可撤回、删除）或已送达（区分随工具调用送达还是随提问送达）
         const appendQueuedStatus = (line, message) => {
             const label = document.createElement('span');
             if (message.delivered_at) {
@@ -1250,7 +1249,7 @@
                 line.append(label);
                 return;
             }
-            // 连接断开后页面不再知道这条消息有没有送达，也不再提供编辑、撤回
+            // 连接断开后页面不再知道这条消息有没有送达，也不再提供撤回、删除
             if (connectionLost) {
                 label.className = 'text-red-300';
                 label.textContent = '未确认送达 · 连接已断开';
@@ -1260,11 +1259,12 @@
             label.className = 'text-amber-300';
             label.textContent = '排队中 · AI 下次调用工具或提问时送达';
             line.append(label);
-            // 本地先行显示、还没得到服务端确认的消息，以及正在编辑别的消息时，不提供操作
-            if (!message.local && !editingQueueId) {
+            // 本地先行显示、还没得到服务端确认的消息，以及输入框锁定时，不提供操作
+            if (!message.local && !getComposerLock()) {
+                const active = pendingQueueAction && pendingQueueAction.id === message.id;
                 line.append(
-                    createQueueAction('编辑', () => startQueuedEdit(message.id)),
-                    createQueueAction('撤回', () => cancelQueuedMessage(message.id))
+                    createQueueAction(active && pendingQueueAction.recall ? '撤回中…' : '撤回', () => recallQueuedMessage(message.id)),
+                    createQueueAction(active && !pendingQueueAction.recall ? '删除中…' : '删除', () => deleteQueuedMessage(message.id))
                 );
             }
         };
@@ -1284,65 +1284,17 @@
             return line;
         };
 
-        const createEditorButton = (text, primary, handler) => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = primary
-                ? 'text-[13px] font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-3.5 py-1.5 transition'
-                : 'text-[13px] font-medium text-slate-300 border border-white/10 hover:text-slate-100 hover:border-white/20 rounded-lg px-3.5 py-1.5 transition';
-            btn.textContent = text;
-            btn.addEventListener('click', handler);
-            return btn;
-        };
-
-        // 排队消息的就地编辑框：Ctrl/⌘ + Enter 保存，Esc 取消
-        const createQueuedEditor = () => {
-            const box = document.createElement('div');
-            box.className = 'w-full rounded-2xl rounded-tr-sm border border-violet-400/50 bg-surface-base p-2.5';
-            const textarea = document.createElement('textarea');
-            textarea.rows = 3;
-            textarea.value = editingDraft;
-            textarea.setAttribute('aria-label', '编辑排队中的消息');
-            textarea.className = 'block w-full min-h-[4.5rem] max-h-[40vh] resize-none bg-transparent px-2 py-1.5 text-[15px] leading-relaxed text-slate-100 outline-none';
-            textarea.addEventListener('input', () => {
-                editingDraft = textarea.value;
-                autoGrowTextarea(textarea);
-            });
-            textarea.addEventListener('keydown', (e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                    e.preventDefault();
-                    saveQueuedEdit();
-                } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    cancelQueuedEdit();
-                }
-            });
-            editorTextarea = textarea;
-            const actions = document.createElement('div');
-            actions.className = 'mt-1.5 flex justify-end gap-2';
-            actions.append(
-                createEditorButton('取消', false, cancelQueuedEdit),
-                createEditorButton('保存', true, saveQueuedEdit)
-            );
-            box.append(textarea, actions);
-            return box;
-        };
-
         const createMessageRow = (item) => {
             const isAi = item.role === 'ai';
             const isQueued = item.role === 'queued';
-            const editing = isQueued && item.message.id === editingQueueId;
             const row = document.createElement('div');
             row.className = 'flex items-start gap-3 ' + (isAi ? 'justify-start' : 'justify-end');
             if (isAi && item.open) row.dataset.awaiting = '1';
             const wrap = document.createElement('div');
             wrap.className = 'min-w-0 max-w-[90%] sm:max-w-[66.667%] flex flex-col '
-                + (isAi ? 'items-start' : 'items-end')
-                + (editing ? ' w-full' : '');
+                + (isAi ? 'items-start' : 'items-end');
             if (isAi) {
                 wrap.append(createAiBubble(item.round, item.open), createMessageMeta(item));
-            } else if (editing) {
-                wrap.append(createQueuedEditor());
             } else if (isQueued) {
                 wrap.append(createUserBubble(item.message), createMessageMeta(item));
             } else {
@@ -1400,15 +1352,10 @@
             const previousTop = scroller.scrollTop;
             // 重绘前贴着底部的话，重绘后继续贴着：服务端确认、状态行、图片让内容变高，最新的消息不会落到输入框后面
             const wasNearBottom = scroller.scrollHeight - scroller.clientHeight - previousTop < NEAR_BOTTOM_PX;
-            // 正在编辑排队消息时，重绘后要把光标放回原处
-            const caret = editorTextarea && document.activeElement === editorTextarea
-                ? [editorTextarea.selectionStart, editorTextarea.selectionEnd]
-                : null;
             const previousKeys = renderedKeys;
             const firstRender = !hasRendered;
             renderedKeys = new Set();
             hasRendered = true;
-            editorTextarea = null;
 
             const timeline = buildTimeline();
             const fragment = document.createDocumentFragment();
@@ -1424,105 +1371,65 @@
             list.replaceChildren(fragment);
             scroller.scrollTop = scrollMode === 'keep' && wasNearBottom ? scroller.scrollHeight : previousTop;
 
-            if (editorTextarea) {
-                autoGrowTextarea(editorTextarea);
-                if (caret) {
-                    editorTextarea.focus();
-                    editorTextarea.setSelectionRange(caret[0], caret[1]);
-                }
-            }
             applyComposerState();
             updateConversationBadge(getLatestRound());
             scrollChat(scrollMode, firstRender);
         };
 
-        // --- 排队消息的编辑与撤回 ---
-        const stopEditing = () => {
-            editingQueueId = '';
-            editingDraft = '';
-            editorTextarea = null;
-        };
-
-        // 编辑中的内容放回主输入框，避免丢失
-        const moveDraftToComposer = (text) => {
+        // --- 排队消息的撤回与删除 ---
+        const restoreRecalledMessage = async (message) => {
+            const images = await Promise.all(message.images.map(async (image) => ({
+                name: image.name,
+                data: image.data,
+                thumb: await createThumbnail(image.data)
+            })));
             const textarea = document.getElementById('feedbackText');
-            if (!textarea || !text) return;
-            textarea.value = textarea.value ? textarea.value + '\n' + text : text;
-            autoGrowTextarea(textarea);
-        };
-
-        const startQueuedEdit = (id) => {
-            const message = queued.find((item) => item.id === id && !item.delivered_at);
-            if (!message) return;
-            editingQueueId = id;
-            editingDraft = message.feedback || '';
-            renderChat('keep');
-            if (editorTextarea) {
-                const end = editorTextarea.value.length;
-                editorTextarea.focus();
-                editorTextarea.setSelectionRange(end, end);
+            if (textarea && message.feedback) {
+                textarea.value = textarea.value ? message.feedback + '\n' + textarea.value : message.feedback;
+                autoGrowTextarea(textarea);
+            }
+            pendingImages = images.concat(pendingImages);
+            renderImagePreviews();
+            if (textarea) {
+                textarea.focus();
+                const end = (message.feedback || '').length;
+                textarea.setSelectionRange(end, end);
             }
         };
 
-        const cancelQueuedEdit = () => {
-            stopEditing();
+        const performQueueAction = async (id, recall) => {
+            if (pendingQueueAction || getComposerLock()) return;
+            pendingQueueAction = { id, recall };
+            const action = recall ? '撤回' : '删除';
             renderChat('keep');
-        };
-
-        const saveQueuedEdit = async () => {
-            const id = editingQueueId;
-            if (!id) return;
-            const text = editingDraft.trim();
-            const message = queued.find((item) => item.id === id);
-            const hasImages = !!message && (message.feedback_images || []).length > 0;
-            if (!text && !hasImages) {
-                setComposerNotice('消息内容不能为空；不需要的话请点「撤回」');
-                return;
-            }
             try {
-                const response = await fetch(ROOM_BASE + '/api/queue/' + encodeURIComponent(id), {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ feedback: text })
+                const response = await fetch(ROOM_BASE + '/api/queue/' + encodeURIComponent(id) + (recall ? '/recall' : ''), {
+                    method: recall ? 'POST' : 'DELETE'
                 });
                 if (response.ok) {
-                    stopEditing();
-                    await loadHistory('keep');
+                    if (recall) await restoreRecalledMessage(await response.json());
+                    // 使操作之前发出的历史请求失效，避免把已移除的消息画回来
+                    ++loadSeq;
+                    queued = queued.filter((message) => message.id !== id);
+                    renderChat('keep');
+                    setComposerNotice(recall ? '已撤回，文字和图片已放回输入框，可重新编辑' : '已删除排队的消息');
                 } else if (response.status === 409) {
-                    stopEditing();
-                    moveDraftToComposer(text);
-                    setComposerNotice('这条消息已送达 AI，修改的内容已放回输入框');
-                    await loadHistory('keep');
+                    setComposerNotice('这条消息已被 AI 读取或已被移除，无法' + action);
                 } else {
-                    setComposerNotice('保存失败，请重试');
+                    setComposerNotice(action + '失败，请重试');
                 }
             } catch (err) {
-                console.warn('saveQueuedEdit failed', err);
-                setComposerNotice('保存失败，请重试');
-            }
-        };
-
-        const cancelQueuedMessage = async (id) => {
-            try {
-                const response = await fetch(ROOM_BASE + '/api/queue/' + encodeURIComponent(id), { method: 'DELETE' });
-                if (response.ok) announceToScreenReader('已撤回排队的消息');
-                else if (response.status === 409) setComposerNotice('这条消息已被 AI 读取，无法撤回');
-                else setComposerNotice('撤回失败，请重试');
-            } catch (err) {
-                console.warn('cancelQueuedMessage failed', err);
-                setComposerNotice('撤回失败，请重试');
+                console.warn('performQueueAction failed', err);
+                setComposerNotice(action + '未确认成功，请检查对话记录后重试');
+            } finally {
+                pendingQueueAction = null;
+                renderChat('keep');
             }
             await loadHistory('keep');
         };
 
-        // 正在编辑的消息被 AI 取走（或在别处撤回）了：退出编辑，把编辑中的内容放回输入框
-        const releaseDeliveredEditor = () => {
-            if (!editingQueueId) return;
-            if (queued.some((message) => message.id === editingQueueId && !message.delivered_at)) return;
-            moveDraftToComposer(editingDraft.trim());
-            stopEditing();
-            setComposerNotice('这条消息已送达 AI，修改中的内容已放回输入框');
-        };
+        const recallQueuedMessage = (id) => performQueueAction(id, true);
+        const deleteQueuedMessage = (id) => performQueueAction(id, false);
 
         const renderChatError = () => {
             const list = document.getElementById('chatList');
@@ -1556,9 +1463,8 @@
                     .concat(unconfirmed);
                 queueLimit = data.queue_limit || queueLimit;
                 historyLoaded = true;
-                // 「队列已满」的提示只在队列确实还是满的时候保留，撤回、被取走之后不该再提示
+                // 「队列已满」的提示只在队列确实还是满的时候保留，撤回、删除、被取走之后不该再提示
                 if (composerNotice === queueFullText() && !isQueueFull()) clearComposerNotice();
-                releaseDeliveredEditor();
                 renderChat(scrollMode);
             } catch (err) {
                 console.warn('loadHistory failed', err);

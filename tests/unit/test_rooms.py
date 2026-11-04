@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -423,33 +424,86 @@ class TestRoomRoutes:
         assert response.status_code == 404
         assert response.json()["messageCode"] == "room.notFound"
 
+    @pytest.mark.parametrize("recall", [True, False])
     def test_queue_endpoints_only_touch_their_own_room(
-        self, client: TestClient, web_ui_manager: WebUIManager
+        self, client: TestClient, web_ui_manager: WebUIManager, recall: bool
     ):
         room_a = web_ui_manager.get_room(CONVERSATION_A)
         assert room_a is not None
         message = room_a.message_queue.enqueue("排队中", [], [])
-        path = f"api/queue/{message.message_id}"
+        path = f"api/queue/{message.message_id}" + ("/recall" if recall else "")
+        request = client.post if recall else client.delete
 
-        # 别的对话改不了、撤不回
-        other = client.put(f"/c/{CONVERSATION_B}/{path}", json={"feedback": "篡改"})
-        assert other.status_code == 409
-        assert client.delete(f"/c/{CONVERSATION_B}/{path}").status_code == 409
-        assert client.put("/c/not-created/" + path, json={}).status_code == 404
+        assert request(f"/c/{CONVERSATION_B}/{path}").status_code == 409
+        assert request("/c/not-created/" + path).status_code == 404
+        assert room_a.message_queue.pending_count() == 1
 
-        # 自己的房间可以改、可以撤回
-        assert (
-            client.put(
-                f"/c/{CONVERSATION_A}/{path}", json={"feedback": "改过"}
-            ).status_code
-            == 200
+        response = request(f"/c/{CONVERSATION_A}/{path}")
+        assert response.status_code == 200
+        assert response.json()["messageCode"] == (
+            "queue.messageRecalled" if recall else "queue.messageDeleted"
         )
-        queued = client.get(f"/c/{CONVERSATION_A}/api/all-sessions").json()[
-            "queued_messages"
-        ]
-        assert [item["feedback"] for item in queued] == ["改过"]
-        assert client.delete(f"/c/{CONVERSATION_A}/{path}").status_code == 200
         assert room_a.message_queue.pending_count() == 0
+        assert room_a.message_queue.deliver_with_tool_call() == []
+        assert request(f"/c/{CONVERSATION_A}/{path}").status_code == 409
+        if not recall:
+            assert "feedback" not in response.json()
+            assert "images" not in response.json()
+
+    @pytest.mark.parametrize("text", ["原始文字\n继续编辑", ""])
+    def test_recall_restores_original_images_and_text(
+        self, client: TestClient, web_ui_manager: WebUIManager, text: str
+    ):
+        room = web_ui_manager.get_room(CONVERSATION_A)
+        assert room is not None
+        original = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+        message = room.message_queue.enqueue(
+            text,
+            [{"name": "原图.png", "data": original, "size": len(original)}],
+            [{"name": "原图.png", "thumbnail": "data:image/jpeg;base64,AA=="}],
+        )
+
+        response = client.post(
+            f"/c/{CONVERSATION_A}/api/queue/{message.message_id}/recall"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["feedback"] == text
+        [restored] = response.json()["images"]
+        assert restored["name"] == "原图.png"
+        assert restored["data"].startswith("data:image/png;base64,")
+        assert base64.b64decode(restored["data"].split(",", 1)[1]) == original
+        assert room.message_queue.visible_messages(set()) == []
+        assert room.marker is not None
+        assert not room.marker.path.exists()
+
+    @pytest.mark.parametrize("recall", [True, False])
+    @pytest.mark.parametrize("via_question", [True, False])
+    def test_delivered_messages_cannot_be_recalled_or_deleted(
+        self,
+        client: TestClient,
+        web_ui_manager: WebUIManager,
+        recall: bool,
+        via_question: bool,
+    ):
+        room = web_ui_manager.get_room(CONVERSATION_A)
+        assert room is not None
+        message = room.message_queue.enqueue("已送达", [], [])
+        if via_question:
+            session = room.current_session
+            assert session is not None
+            room.message_queue.deliver_with_question(session.session_id)
+        else:
+            room.message_queue.deliver_with_tool_call()
+        path = f"/c/{CONVERSATION_A}/api/queue/{message.message_id}"
+
+        response = client.post(path + "/recall") if recall else client.delete(path)
+
+        assert response.status_code == 409
+        assert response.json()["messageCode"] == "queue.messageNotPending"
+        assert (
+            room.message_queue.visible_messages(set(room.sessions))[0].text == "已送达"
+        )
 
 
 class TestRoomWebSocket:
